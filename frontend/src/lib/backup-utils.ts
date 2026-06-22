@@ -392,11 +392,10 @@ function importLocalStorage(data: unknown): void {
                     continue;
                 }
                 const record = parsed as Record<string, unknown>;
-                const hasProviders = typeof record.providers === 'object' && record.providers !== null;
                 const hasImageModels = Array.isArray(record.imageModels);
                 const hasTextModels = Array.isArray(record.textModels);
                 const hasDefaults = typeof record.defaults === 'object' && record.defaults !== null;
-                if (!hasProviders || !hasImageModels || !hasTextModels || !hasDefaults) {
+                if (!hasImageModels || !hasTextModels || !hasDefaults) {
                     continue;
                 }
             } catch {
