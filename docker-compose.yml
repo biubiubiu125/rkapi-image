@@ -10,6 +10,5 @@ services:
       - ./data/nova-tasks.sqlite:/app/backend/nova-tasks.sqlite
       - ./backend/blacklist.json:/app/backend/blacklist.json
       - ./backend/prompts.json:/app/backend/prompts.json
-    env_file:
-      - ./backend/.env
+      - ./backend/.env:/app/backend/.env
     restart: unless-stopped
