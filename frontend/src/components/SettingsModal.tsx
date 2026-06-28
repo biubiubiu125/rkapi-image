@@ -6,6 +6,8 @@ import {
   Database,
   Download,
   ExternalLink,
+  Eye,
+  EyeOff,
   ImageIcon,
   Info,
   Plus,
@@ -105,12 +107,12 @@ function isCompleteTextModel(model: TextModelConfig): boolean {
   return Boolean(model.name.trim() && model.modelId.trim() && model.apiKey.trim() && model.baseUrl.trim());
 }
 
-function getImageModelLabel(models: ImageModelConfig[], id: string): string {
-  return models.find((model) => model.id === id)?.name || id;
+function getImageModelLabel(models: ImageModelConfig[], id: string): string | undefined {
+  return models.find((model) => model.id === id)?.name;
 }
 
-function getTextModelLabel(models: TextModelConfig[], id: string): string {
-  return models.find((model) => model.id === id)?.name || id;
+function getTextModelLabel(models: TextModelConfig[], id: string): string | undefined {
+  return models.find((model) => model.id === id)?.name;
 }
 
 function normalizeDefaults(
@@ -144,6 +146,8 @@ export function SettingsModal({ isOpen, onClose, onApiKeyChange }: SettingsModal
   const [checkingModels, setCheckingModels] = useState(false);
   const [modelStatuses, setModelStatuses] = useState<ModelStatus[] | null>(null);
   const [modelCheckError, setModelCheckError] = useState<string | null>(null);
+  const [showImageApiKey, setShowImageApiKey] = useState(false);
+  const [showTextApiKey, setShowTextApiKey] = useState(false);
 
   const [backupProgress, setBackupProgress] = useState<BackupProgressType>({ percent: 0, message: '' });
   const [isBackupActive, setIsBackupActive] = useState(false);
@@ -469,7 +473,22 @@ export function SettingsModal({ isOpen, onClose, onApiKeyChange }: SettingsModal
                     </div>
                     <div className="space-y-2">
                       <label className="text-xs text-muted-foreground">API Key</label>
-                      <Input type="password" value={selectedImageModel.apiKey} onChange={(event) => handleUpdateImageModel(selectedImageModel.id, { apiKey: event.target.value })} />
+                      <div className="relative">
+                        <Input
+                          type={showImageApiKey ? "text" : "password"}
+                          value={selectedImageModel.apiKey}
+                          onChange={(event) => handleUpdateImageModel(selectedImageModel.id, { apiKey: event.target.value })}
+                          className="pr-8"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setShowImageApiKey(!showImageApiKey)}
+                          className="absolute right-1 top-1/2 -translate-y-1/2 flex items-center justify-center w-6 h-6 rounded text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+                          tabIndex={-1}
+                        >
+                          {showImageApiKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                        </button>
+                      </div>
                     </div>
                     <div className="space-y-2">
                       <label className="text-xs text-muted-foreground">最大参考图数量</label>
@@ -564,7 +583,22 @@ export function SettingsModal({ isOpen, onClose, onApiKeyChange }: SettingsModal
                     </div>
                     <div className="space-y-2">
                       <label className="text-xs text-muted-foreground">API Key</label>
-                      <Input type="password" value={selectedTextModel.apiKey} onChange={(event) => handleUpdateTextModel(selectedTextModel.id, { apiKey: event.target.value })} />
+                      <div className="relative">
+                        <Input
+                          type={showTextApiKey ? "text" : "password"}
+                          value={selectedTextModel.apiKey}
+                          onChange={(event) => handleUpdateTextModel(selectedTextModel.id, { apiKey: event.target.value })}
+                          className="pr-8"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setShowTextApiKey(!showTextApiKey)}
+                          className="absolute right-1 top-1/2 -translate-y-1/2 flex items-center justify-center w-6 h-6 rounded text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+                          tabIndex={-1}
+                        >
+                          {showTextApiKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                        </button>
+                      </div>
                     </div>
                     <div className="space-y-2 md:col-span-2">
                       <label className="text-xs text-muted-foreground">协议描述</label>
@@ -626,7 +660,7 @@ export function SettingsModal({ isOpen, onClose, onApiKeyChange }: SettingsModal
                   {modelStatuses.map((status) => (
                     <div key={status.modelId} className="flex items-center justify-between rounded-lg bg-muted/50 px-3 py-2 text-sm">
                       <div className="min-w-0">
-                        <div className="truncate font-medium">{getTextModelLabel(textModels, status.modelId) || getImageModelLabel(imageModels, status.modelId)}</div>
+                        <div className="truncate font-medium">{getTextModelLabel(textModels, status.modelId) ?? getImageModelLabel(imageModels, status.modelId) ?? status.actualName ?? status.modelId}</div>
                         <div className="truncate text-xs text-muted-foreground">{status.message || status.actualName || status.modelId}</div>
                       </div>
                       {status.available ? <CheckCircle2 className="w-4 h-4 text-emerald-600" /> : <XCircle className="w-4 h-4 text-destructive" />}

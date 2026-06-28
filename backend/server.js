@@ -1584,6 +1584,114 @@ async function handleApi(req, res, pathname) {
       return true;
     }
 
+    // ===== 文本 AI 代理（流式 + 非流式，OpenAI / Google 协议） =====
+    if (req.method === 'POST' && apiPathname === '/api/nova/proxy/text') {
+      try {
+        const body = await readJsonBody(req);
+        const { protocol, baseUrl, apiKey, model, stream, requestBody } = body;
+        if (!baseUrl || !apiKey) {
+          sendJson(res, 400, { error: 'Missing baseUrl or apiKey' });
+          return true;
+        }
+
+        const normalizedBaseUrl = normalizeProtocolBaseUrl(protocol, baseUrl);
+        let targetUrl;
+        const authHeaders = { 'Content-Type': 'application/json' };
+
+        if (protocol === 'google') {
+          targetUrl = `${normalizedBaseUrl}/v1beta/models/${encodeURIComponent(model || '')}:streamGenerateContent?alt=sse`;
+          authHeaders['x-goog-api-key'] = apiKey;
+          authHeaders['Authorization'] = `Bearer ${apiKey}`;
+        } else {
+          targetUrl = `${normalizedBaseUrl}/v1/responses`;
+          authHeaders['Authorization'] = `Bearer ${apiKey}`;
+        }
+
+        if (stream) {
+          authHeaders['Accept'] = 'text/event-stream';
+        }
+
+        let forwardedBody;
+        if (requestBody) {
+          forwardedBody = requestBody;
+        } else {
+          const clean = { ...body };
+          delete clean.protocol;
+          delete clean.baseUrl;
+          delete clean.apiKey;
+          delete clean.model;
+          delete clean.stream;
+          delete clean.requestBody;
+          forwardedBody = clean;
+        }
+
+        const upstream = await fetchWithTimeout(targetUrl, {
+          method: 'POST',
+          headers: authHeaders,
+          body: JSON.stringify(forwardedBody),
+        });
+
+        if (stream && upstream.ok) {
+          res.writeHead(upstream.status, {
+            'Content-Type': 'text/event-stream',
+            'Cache-Control': 'no-cache',
+            'Connection': 'keep-alive',
+            'X-Accel-Buffering': 'no',
+          });
+          const reader = upstream.body.getReader();
+          try {
+            while (true) {
+              const { done, value } = await reader.read();
+              if (done) { res.end(); return true; }
+              res.write(value);
+            }
+          } catch {
+            res.end();
+          }
+          return true;
+        }
+
+        let data = null;
+        try { data = await upstream.json(); } catch { /* ignore */ }
+        sendJson(res, upstream.status, data || { error: `上游返回 ${upstream.status}` });
+      } catch (error) {
+        if (error && error.message && /abort|timeout/i.test(error.message)) {
+          sendJson(res, 504, { error: '代理请求上游超时' });
+        } else {
+          sendJson(res, 502, { error: normalizeError(error) });
+        }
+      }
+      return true;
+    }
+
+    // ===== 模型检查代理（统一使用 /v1/models） =====
+    if (req.method === 'GET' && apiPathname === '/api/nova/proxy/models') {
+      try {
+        const parsed = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
+        const baseUrl = parsed.searchParams.get('baseUrl');
+        const apiKey = parsed.searchParams.get('apiKey');
+        const protocol = parsed.searchParams.get('protocol') || 'openai';
+        if (!baseUrl || !apiKey) {
+          sendJson(res, 400, { error: 'Missing baseUrl or apiKey' });
+          return true;
+        }
+
+        const normalizedBaseUrl = normalizeProtocolBaseUrl(protocol, baseUrl);
+        const modelsUrl = `${normalizedBaseUrl}/v1/models`;
+        // 模型列表查询只发送 Authorization 头。x-goog-api-key 仅用于 Gemini 生成端点，
+        // 对 /v1/models (兼容 OpenAI 格式的 NewAPI 等) 会引发错误或返回空列表。
+        const headers = { Authorization: `Bearer ${apiKey}` };
+
+        const response = await fetchWithTimeout(modelsUrl, { method: 'GET', headers });
+        let data = null;
+        try { data = await response.json(); } catch { /* ignore */ }
+        sendJson(res, response.status, data);
+      } catch (error) {
+        sendJson(res, 502, { error: normalizeError(error) });
+      }
+      return true;
+    }
+
     if (req.method === 'POST' && apiPathname === '/api/nova/tasks') {
       const body = await readJsonBody(req);
       const taskId = createTask(body, req);
@@ -1640,7 +1748,7 @@ const startServer = () => {
     const parsedUrl = new URL(req.url || '/', `http://${req.headers.host || `${HOSTNAME}:${PORT}`}`);
     if (parsedUrl.pathname?.startsWith('/api/nova/')) {
       const handled = await handleApi(req, res, parsedUrl.pathname);
-      if (handled) return;
+      if (handled || res.headersSent || res.writableEnded) return;
     }
     if (!IS_DEV) {
       if (serveStatic(req, res, parsedUrl.pathname || '/')) return;

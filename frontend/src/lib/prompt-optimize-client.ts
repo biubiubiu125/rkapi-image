@@ -230,14 +230,17 @@ async function runAttempt(
   }, OPTIMIZE_TIMEOUT_MS);
 
   try {
-    const response = await fetch(`${baseUrl}/v1/responses`, {
+    const response = await fetch('/api/nova/proxy/text', {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${input.apiKey}`,
-        Accept: 'text/event-stream',
-      },
-      body: JSON.stringify(body),
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        protocol: 'openai',
+        baseUrl,
+        apiKey: input.apiKey,
+        model: OPTIMIZE_MODEL,
+        stream: true,
+        requestBody: body,
+      }),
       signal,
     });
 

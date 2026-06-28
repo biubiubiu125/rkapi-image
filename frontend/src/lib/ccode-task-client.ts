@@ -9,8 +9,6 @@ import {
   type ProviderProtocol,
 } from '@/lib/nova-models';
 import {
-  buildGeminiStreamGenerateContentUrl,
-  buildResponsesApiUrl,
   normalizeModelBaseUrl,
 } from '@/lib/model-endpoints';
 
@@ -206,7 +204,6 @@ export async function checkModelsAvailability(
     const registry = loadRegistry();
     const completeImageModels = getCompleteImageModels(registry);
     const completeTextModels = getCompleteTextModels(registry);
-    const imageModelIds = new Set(completeImageModels.map((model) => model.id));
     const configuredModels = [
       ...completeImageModels.map((model) => ({
         id: model.id,
@@ -246,56 +243,9 @@ export async function checkModelsAvailability(
           };
         }
 
-        if (imageModelIds.has(model.id)) {
-          const listUrl = model.protocol === 'google'
-            ? `${normalizedBaseUrl}/v1beta/models`
-            : `${normalizedBaseUrl}/v1/models`;
-          const response = await fetchWithTimeout(listUrl, {
-            method: 'GET',
-            headers: model.protocol === 'google'
-              ? {
-                  'x-goog-api-key': model.apiKey,
-                  Authorization: `Bearer ${model.apiKey}`,
-                }
-              : {
-                  Authorization: `Bearer ${model.apiKey}`,
-                },
-          });
-          if (!response.ok) {
-            const detail = await response.text().catch(() => '');
-            return {
-              modelId: model.id,
-              actualName: model.name,
-              available: false,
-              message: `${response.status}${detail ? ` ${detail.slice(0, 120)}` : ''}`,
-            };
-          }
-          const data = await response.json().catch(() => ({})) as { data?: Array<{ id?: string; model?: string }>; models?: Array<{ name?: string }> };
-          const exists = model.protocol === 'google'
-            ? Array.isArray(data.models) && data.models.some((item) => String(item?.name || '').includes(model.modelId))
-            : Array.isArray(data.data) && data.data.some((item) => String(item?.id || item?.model || '') === model.modelId);
-          return {
-            modelId: model.id,
-            actualName: model.name,
-            available: exists,
-            message: exists ? model.modelId : `未在 /models 中找到 ${model.modelId}`,
-          };
-        }
-
-        const response = await fetchWithTimeout(buildResponsesApiUrl(normalizedBaseUrl), {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${model.apiKey}`,
-            Accept: 'application/json',
-          },
-          body: JSON.stringify({
-            model: model.modelId,
-            stream: false,
-            input: 'hi',
-            max_output_tokens: 4,
-          }),
-        });
+        // 统一通过后端代理使用 /v1/models（NewAPI 兼容）
+        const proxyUrl = `/api/nova/proxy/models?baseUrl=${encodeURIComponent(normalizedBaseUrl)}&apiKey=${encodeURIComponent(model.apiKey)}&protocol=${model.protocol}`;
+        const response = await fetch(proxyUrl, { method: 'GET', cache: 'no-store' });
         if (!response.ok) {
           const detail = await response.text().catch(() => '');
           return {
@@ -305,11 +255,15 @@ export async function checkModelsAvailability(
             message: `${response.status}${detail ? ` ${detail.slice(0, 120)}` : ''}`,
           };
         }
+        const data = await response.json().catch(() => ({})) as { data?: Array<{ id?: string; model?: string }> };
+        const exists = Array.isArray(data.data) && data.data.some(
+          (item) => String(item?.id || item?.model || '') === model.modelId,
+        );
         return {
           modelId: model.id,
           actualName: model.name,
-          available: true,
-          message: '文本响应正常',
+          available: exists,
+          message: exists ? model.modelId : `未在 /models 中找到 ${model.modelId}`,
         };
       } catch (error) {
         return {

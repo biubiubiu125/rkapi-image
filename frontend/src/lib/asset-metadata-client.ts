@@ -78,13 +78,17 @@ export async function generateAssetMetadata(input: GenerateAssetMetadataInput): 
   };
 
   const baseUrl = input.baseUrl || 'https://api.openai.com';
-  const response = await fetch(`${baseUrl}/v1/responses`, {
+  const response = await fetch('/api/nova/proxy/text', {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${input.apiKey}`,
-    },
-    body: JSON.stringify(body),
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      protocol: 'openai',
+      baseUrl,
+      apiKey: input.apiKey,
+      model: input.model || ASSET_METADATA_MODEL,
+      stream: false,
+      requestBody: body,
+    }),
   });
 
   if (!response.ok) {
