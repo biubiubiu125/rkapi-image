@@ -33,6 +33,9 @@ backend/ccode-images/
 .cursor/
 .codebuddy/
 .trae/
+.codex/
+.agents/
+
 data/
 # debug
 npm-debug.log*

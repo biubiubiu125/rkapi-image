@@ -1,13 +1,11 @@
 services:
   nova-image-studio:
-    build: .
     image: tianjiangqiji/nova-image-studio:latest
     container_name: nova-image-studio
     ports:
       - "3000:3000"
     volumes:
-      - ./data/images:/app/backend/nova-images
-      - ./data/nova-tasks.sqlite:/app/backend/nova-tasks.sqlite
+      - ./data:/app/backend/data
       - ./blacklist.json:/app/backend/blacklist.json
       - ./prompts.json:/app/backend/prompts.json
       - ./.env:/app/backend/.env

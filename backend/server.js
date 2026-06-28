@@ -782,6 +782,12 @@ function getSupportedGptImageSize(model, outputSize, aspectRatio) {
   return getGptImageSize(outputSize, aspectRatio);
 }
 
+function resolveGptImageRequestSize(request) {
+  const customSize = normalizeCustomImageSize(request.customSize, 4096);
+  if (customSize) return customSize;
+  return getSupportedGptImageSize(request.model, request.outputSize, request.aspectRatio);
+}
+
 function getGptImageRequestAdvancedParams(request) {
   return normalizeGptImageAdvancedParams(request);
 }
@@ -1074,7 +1080,7 @@ async function generateNovaImage(apiKey, request) {
   // 开源版：根据前端传入的 protocol 字段路由到对应的 API 协议
   const baseUrl = request.baseUrl || resolveNovaApiBaseUrl();
   if (request.protocol === 'openai') {
-    return requestGptImage(apiKey, request, undefined, { baseUrl });
+    return requestGptImage(apiKey, request, resolveGptImageRequestSize(request), { baseUrl });
   }
   // 默认走 Google Gemini 协议
   return generateNovaGeminiImage(apiKey, request, { baseUrl });

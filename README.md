@@ -193,6 +193,16 @@ docker compose up -d
 docker compose restart
 ```
 
+### 升级
+
+拉取最新镜像并重建容器：
+
+```bash
+docker compose down
+docker compose pull
+docker compose up -d --force-recreate
+```
+
 ### 数据持久化
 
 以下目录自动挂载到 `./data/`：
