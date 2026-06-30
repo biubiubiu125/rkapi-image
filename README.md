@@ -18,7 +18,7 @@
 
 FlyReq Image Studio（简称 FlyReq Image）是一个面向个人/团队的 AI 图像生成工作台。前端使用 Next.js 16 + React 19 静态导出（PWA），后端是轻量 Node.js 服务（`server.js` + SQLite + WebSocket），统一调度任务并代理图像生成 API。
 
-本项目基于 [tianjiangqiji/flyreq-image-studio](https://github.com/tianjiangqiji/flyreq-image-studio) 修改而来，当前维护仓库为 [doudou770/flyreq-image-studio](https://github.com/doudou770/flyreq-image-studio)。
+本项目基于 [tianjiangqiji/nova-image-studio](https://github.com/tianjiangqiji/nova-image-studio) 修改而来，当前维护仓库为 [doudou770/flyreq-image-studio](https://github.com/doudou770/flyreq-image-studio)。
 
 **开源版特性：**
 - 支持分别配置图片模型与文本模型，模型级独立保存 API Key 与 Base URL
@@ -221,22 +221,44 @@ flyreq-image-studio/
 
 ### 快速启动
 
-使用 GitHub Packages / Container Registry 发布的镜像：
+默认安装目录为 `/opt/fis`。下面命令会直接从 [doudou770/flyreq-image-studio](https://github.com/doudou770/flyreq-image-studio) 下载部署所需的 4 个文件：
+
+- `docker-compose.yml`：Docker Compose 服务定义
+- `.env`：后端运行配置
+- `prompts.json`：提示词广场数据
+- `blacklist.json`：敏感词配置
 
 ```bash
-# 1. 复制环境变量文件（如果不是从clone下来的，则自己新建并复制过来即可）
-cp backend/.env.example .env
+# 1. 创建并进入部署目录
+sudo mkdir -p /opt/fis
+cd /opt/fis
 
-# 2. 编辑 .env 按需调整配置
+# 2. 下载 Docker Compose 配置
+sudo curl -fsSL \
+  https://raw.githubusercontent.com/doudou770/flyreq-image-studio/master/docker-compose.yml \
+  -o docker-compose.yml
 
-# 3. 创建必要的配置文件（如果不存在）
-touch blacklist.json prompts.json
+# 3. 下载环境变量模板为 .env
+sudo curl -fsSL \
+  https://raw.githubusercontent.com/doudou770/flyreq-image-studio/master/backend/.env.example \
+  -o .env
 
-# 4. 创建数据目录
-mkdir -p data/images
+# 4. 下载提示词与敏感词配置
+sudo curl -fsSL \
+  https://raw.githubusercontent.com/doudou770/flyreq-image-studio/master/backend/prompts.json \
+  -o prompts.json
+sudo curl -fsSL \
+  https://raw.githubusercontent.com/doudou770/flyreq-image-studio/master/backend/blacklist.json \
+  -o blacklist.json
 
-# 5. 启动服务
-docker compose up -d
+# 5. 创建持久化数据目录
+sudo mkdir -p data
+
+# 6. 按需编辑配置（可选）
+sudo nano .env
+
+# 7. 启动服务
+sudo docker compose up -d
 ```
 
 访问 <http://localhost:3001>。
@@ -253,30 +275,60 @@ image: ghcr.io/doudou770/flyreq-image-studio:latest
 echo YOUR_GITHUB_TOKEN | docker login ghcr.io -u YOUR_GITHUB_USERNAME --password-stdin
 ```
 
+### 文件布局
+
+部署完成后，`/opt/fis` 目录结构如下：
+
+```text
+/opt/fis/
+├── docker-compose.yml
+├── .env
+├── prompts.json
+├── blacklist.json
+└── data/
+```
+
+`docker-compose.yml` 已内置持久化路径：
+
+```yaml
+FLYREQ_TASK_DB: /app/backend/data/flyreq-tasks.sqlite
+FLYREQ_IMAGE_DIR: /app/backend/data/flyreq-images
+```
+
+因此任务数据库和生成图片都会落在宿主机 `/opt/fis/data/` 下。
+
 ### 环境变量
 
-通过 `backend/.env` 注入，无需修改镜像。修改后重启生效：
+通过 `/opt/fis/.env` 注入，无需修改镜像。
+
+`PORT`、`HOSTNAME`、`NODE_ENV` 这类启动参数修改后需要重启容器：
 
 ```bash
-docker compose restart
+cd /opt/fis
+sudo docker compose restart
 ```
+
+队列、限流、提示词广场等运行时配置会被后端定期读取，保存 `.env` 后通常无需重启即可生效。
 
 ### 升级
 
 拉取最新镜像并重建容器：
 
 ```bash
-docker compose down
-docker compose pull
-docker compose up -d --force-recreate
+cd /opt/fis
+sudo docker compose pull
+sudo docker compose up -d --force-recreate
 ```
 
 ### 数据持久化
 
-以下目录自动挂载到 `./data/`：
+以下内容自动持久化在 `/opt/fis/data/`：
 
-- `flyreq-images/` - 生成的图片
-- `flyreq-tasks.sqlite` - 任务数据库
+- `flyreq-images/`：生成的图片
+- `flyreq-tasks.sqlite`：任务数据库
+- `flyreq-tasks.sqlite-wal` / `flyreq-tasks.sqlite-shm`：SQLite 运行文件
+
+备份时建议直接备份整个 `/opt/fis` 目录。
 
 </details>
 
