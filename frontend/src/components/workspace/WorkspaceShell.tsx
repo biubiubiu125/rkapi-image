@@ -46,12 +46,14 @@ import {
 } from '@/lib/workspace-task-service';
 import { cn } from '@/lib/utils';
 import { BA_RANDOM_URL, BING_WALLPAPER_URL } from '@/lib/constants';
+import { getCleanUrlAfterExternalModelConfig, parseExternalModelConfig, type ExternalModelConfig } from '@/lib/external-model-config';
 
 export function WorkspaceShell() {
   const { locale, t } = useI18n();
   const queueStatus = useQueueStatus();
   const { wideMode, toggleWideMode } = useWideMode();
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [externalModelConfig, setExternalModelConfig] = useState<ExternalModelConfig | null>(null);
   const [missingApiKeyDialogOpen, setMissingApiKeyDialogOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'image-generation' | 'agent' | 'canvas' | 'assets' | 'reverse-prompt' | 'gif' | 'prompt-gallery'>('agent');
@@ -67,6 +69,7 @@ export function WorkspaceShell() {
   const toastIdRef = useRef(0);
   const headerRef = useRef<WorkspaceHeaderRef>(null);
   const referenceDraftIdRef = useRef(0);
+  const externalConfigParsedRef = useRef(false);
 
   const showToast = useCallback((message: string, type: ToastData['type']) => {
     const id = `toast-${++toastIdRef.current}`;
@@ -77,6 +80,19 @@ export function WorkspaceShell() {
   }, []);
 
   useEffect(() => subscribeImageActionToasts(detail => showToast(detail.message, detail.type)), [showToast]);
+
+  useEffect(() => {
+    if (externalConfigParsedRef.current) return;
+    externalConfigParsedRef.current = true;
+
+    const url = new URL(window.location.href);
+    const config = parseExternalModelConfig(url);
+    if (!config) return;
+
+    setExternalModelConfig(config);
+    setSettingsOpen(true);
+    window.history.replaceState(null, '', getCleanUrlAfterExternalModelConfig(url));
+  }, []);
 
   useEffect(() => subscribeUseAsImageReference(detail => {
     workspace.setRetryData(null);
@@ -163,6 +179,7 @@ export function WorkspaceShell() {
         gptImageQuality: workspace.retryData.gptImageQuality,
         gptImageStyle: workspace.retryData.gptImageStyle,
         gptImageBackground: workspace.retryData.gptImageBackground,
+        gptImageOutputFormat: workspace.retryData.gptImageOutputFormat,
         parallelCount: workspace.retryData.parallelCount,
         refImages: workspace.retryData.refImages,
       }
@@ -456,6 +473,8 @@ export function WorkspaceShell() {
         isOpen={settingsOpen}
         onClose={() => setSettingsOpen(false)}
         onApiKeyChange={workspace.setHasApiKey}
+        externalModelConfig={externalModelConfig}
+        onExternalModelConfigConsumed={() => setExternalModelConfig(null)}
       />
 
       <MissingApiKeyDialog

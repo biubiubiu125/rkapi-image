@@ -7,7 +7,7 @@
 
 import { storeImageBlob, getStoredBlob, deleteStoredBlobs } from '@/lib/image-downloader';
 import type { AgentMessage, AgentImageRecord, AgentProposal } from '@/lib/agent-chat-config';
-import type { GptImageBackground, GptImageQuality, GptImageStyle } from '@/lib/model-capabilities';
+import type { GptImageBackground, GptImageOutputFormat, GptImageQuality, GptImageStyle } from '@/lib/model-capabilities';
 
 const DB_NAME = 'nova-agent-db';
 const DB_VERSION = 1;
@@ -240,6 +240,7 @@ export interface PendingGenerationData {
   gptImageQuality?: GptImageQuality;
   gptImageStyle?: GptImageStyle;
   gptImageBackground?: GptImageBackground;
+  gptImageOutputFormat?: GptImageOutputFormat;
   parallelCount: number;
   startedAt: number;
 }

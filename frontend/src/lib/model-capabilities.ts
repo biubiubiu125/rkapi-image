@@ -15,17 +15,20 @@ type FixedOutputSize = Exclude<OutputSize, 'auto'>;
 export type GptImageQuality = 'auto' | 'high' | 'medium' | 'low';
 export type GptImageStyle = 'auto' | 'vivid' | 'natural';
 export type GptImageBackground = 'auto' | 'transparent' | 'opaque';
+export type GptImageOutputFormat = 'png' | 'jpeg' | 'webp';
 
 export interface GptImageAdvancedParams {
   quality: GptImageQuality;
   style: GptImageStyle;
   background: GptImageBackground;
+  outputFormat: GptImageOutputFormat;
 }
 
 export const DEFAULT_GPT_IMAGE_ADVANCED_PARAMS: GptImageAdvancedParams = {
   quality: 'auto',
   style: 'auto',
   background: 'auto',
+  outputFormat: 'png',
 };
 
 function getModelConfig(modelId: string) {
@@ -53,6 +56,12 @@ export const GPT_IMAGE_BACKGROUND_OPTIONS: { value: GptImageBackground; label: s
   { value: 'auto', label: '自动' },
   { value: 'transparent', label: '透明' },
   { value: 'opaque', label: '不透明' },
+];
+
+export const GPT_IMAGE_OUTPUT_FORMAT_OPTIONS: { value: GptImageOutputFormat; label: string }[] = [
+  { value: 'png', label: 'PNG' },
+  { value: 'jpeg', label: 'JPEG' },
+  { value: 'webp', label: 'WebP' },
 ];
 
 const BANANA_ASPECT_RATIOS: { value: AspectRatio; label: string; resolution: string }[] = [
@@ -134,6 +143,7 @@ export interface RetryData {
   gptImageQuality: GptImageQuality;
   gptImageStyle: GptImageStyle;
   gptImageBackground: GptImageBackground;
+  gptImageOutputFormat: GptImageOutputFormat;
   refImages?: RefImageData[];
 }
 
@@ -256,6 +266,12 @@ export function normalizeGptImageBackground(value?: string): GptImageBackground 
     : DEFAULT_GPT_IMAGE_ADVANCED_PARAMS.background;
 }
 
+export function normalizeGptImageOutputFormat(value?: string): GptImageOutputFormat {
+  return GPT_IMAGE_OUTPUT_FORMAT_OPTIONS.some(option => option.value === value)
+    ? (value as GptImageOutputFormat)
+    : DEFAULT_GPT_IMAGE_ADVANCED_PARAMS.outputFormat;
+}
+
 export function getGptImageAdvancedParamsForModel(
   model: string,
   params?: Partial<GptImageAdvancedParams>,
@@ -268,6 +284,7 @@ export function getGptImageAdvancedParamsForModel(
     quality: normalizeGptImageQuality(params?.quality),
     style: normalizeGptImageStyle(params?.style),
     background: normalizeGptImageBackground(params?.background),
+    outputFormat: normalizeGptImageOutputFormat(params?.outputFormat),
   };
 }
 
@@ -442,6 +459,7 @@ export function getCompatibleRetryData(job: StoredJob): RetryData {
     quality: job.gptImageQuality,
     style: job.gptImageStyle,
     background: job.gptImageBackground,
+    outputFormat: job.gptImageOutputFormat,
   });
 
   return {
@@ -456,6 +474,7 @@ export function getCompatibleRetryData(job: StoredJob): RetryData {
     gptImageQuality: advancedParams.quality,
     gptImageStyle: advancedParams.style,
     gptImageBackground: advancedParams.background,
+    gptImageOutputFormat: advancedParams.outputFormat,
     refImages: job.refImages?.slice(0, maxRefs),
   };
 }
@@ -497,6 +516,7 @@ export interface AgentResolvedLayout {
   gptImageQuality: GptImageQuality;
   gptImageStyle: GptImageStyle;
   gptImageBackground: GptImageBackground;
+  gptImageOutputFormat: GptImageOutputFormat;
   parallelCount: ParallelCount;
 }
 
@@ -602,6 +622,7 @@ export function resolveAgentLayout(
       gptImageQuality: DEFAULT_GPT_IMAGE_ADVANCED_PARAMS.quality,
       gptImageStyle: DEFAULT_GPT_IMAGE_ADVANCED_PARAMS.style,
       gptImageBackground: DEFAULT_GPT_IMAGE_ADVANCED_PARAMS.background,
+      gptImageOutputFormat: DEFAULT_GPT_IMAGE_ADVANCED_PARAMS.outputFormat,
       parallelCount: normalizeParallelCount(intent.parallelCount),
     };
   }
@@ -648,6 +669,7 @@ export function resolveAgentLayout(
     gptImageQuality: DEFAULT_GPT_IMAGE_ADVANCED_PARAMS.quality,
     gptImageStyle: DEFAULT_GPT_IMAGE_ADVANCED_PARAMS.style,
     gptImageBackground: DEFAULT_GPT_IMAGE_ADVANCED_PARAMS.background,
+    gptImageOutputFormat: DEFAULT_GPT_IMAGE_ADVANCED_PARAMS.outputFormat,
     parallelCount: normalizeParallelCount(intent.parallelCount),
   };
 }

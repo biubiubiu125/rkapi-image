@@ -34,6 +34,7 @@ import {
   supportsCustomSize,
   type GptImageAdvancedParams,
   type GptImageBackground,
+  type GptImageOutputFormat,
   type GptImageQuality,
   type GptImageStyle,
   type ParallelCount,
@@ -48,6 +49,7 @@ export interface AgentApproveParams {
   gptImageQuality: GptImageQuality;
   gptImageStyle: GptImageStyle;
   gptImageBackground: GptImageBackground;
+  gptImageOutputFormat: GptImageOutputFormat;
   parallelCount: ParallelCount;
 }
 
@@ -175,6 +177,7 @@ export function AgentProposalCard({
     quality: layout.gptImageQuality,
     style: layout.gptImageStyle,
     background: layout.gptImageBackground,
+    outputFormat: layout.gptImageOutputFormat,
   };
 
   const toggleImage = (imgId: string) => {
@@ -195,6 +198,7 @@ export function AgentProposalCard({
         quality: prev.gptImageQuality,
         style: prev.gptImageStyle,
         background: prev.gptImageBackground,
+        outputFormat: prev.gptImageOutputFormat,
       });
       if (nextSize === 'auto') {
         return {
@@ -204,6 +208,7 @@ export function AgentProposalCard({
           gptImageQuality: advanced.quality,
           gptImageStyle: advanced.style,
           gptImageBackground: advanced.background,
+          gptImageOutputFormat: advanced.outputFormat,
           parallelCount: prev.parallelCount,
         };
       }
@@ -220,6 +225,7 @@ export function AgentProposalCard({
         gptImageQuality: advanced.quality,
         gptImageStyle: advanced.style,
         gptImageBackground: advanced.background,
+        gptImageOutputFormat: advanced.outputFormat,
         parallelCount: prev.parallelCount,
       };
     });
@@ -517,6 +523,7 @@ export function AgentProposalCard({
               gptImageQuality: value.quality,
               gptImageStyle: value.style,
               gptImageBackground: value.background,
+              gptImageOutputFormat: value.outputFormat,
             }))}
             variant="outline"
             size="xs"

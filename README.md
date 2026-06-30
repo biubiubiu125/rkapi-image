@@ -98,6 +98,58 @@ FlyReq Image 采用**用户自定义模型**架构：
 - **文字模型**：支持自定义扩展，兼容 Gemini 和 OpenAI Response
 - **默认模型**：可为文本生图、图生图、反推提示词、Agent 等任务分别设置默认模型
 
+### 外部链接预填模型配置
+
+外部站点可以跳转到 FlyReq Image，并通过 URL 预填图片模型配置。页面会自动打开“设置”，把参数填入模型表单，然后立即清理地址栏中的配置参数。用户确认后仍需手动点击“保存设置”，不会自动写入 `localStorage`。
+
+URL 只需要一个 `provider` 参数，内容是 JSON 字符串。支持裸 JSON，也支持 URL 编码后的 JSON；生产接入时推荐 URL 编码，避免特殊字符被浏览器、代理或聊天工具改写。
+
+```json
+{
+  "type": "image",
+  "preset": "gpt-image-2",
+  "provider": "openai",
+  "modelKey": "flyreq-gpt-image-2",
+  "name": "FlyReq",
+  "modelId": "gpt-image-2",
+  "baseUrl": "https://flyreq.com",
+  "apiKey": "YOUR_API_KEY",
+  "maxRefImages": 16,
+  "maxOutputSize": "4K"
+}
+```
+
+示例链接：
+
+裸 JSON：
+
+```text
+https://your-domain.example/zh/?provider={"type":"image","preset":"gpt-image-2","provider":"openai","modelKey":"flyreq-gpt-image-2","name":"FlyReq","modelId":"gpt-image-2","baseUrl":"https://flyreq.com","apiKey":"YOUR_API_KEY","maxRefImages":16,"maxOutputSize":"4K"}
+```
+
+URL 编码：
+
+```text
+https://your-domain.example/zh/?provider=%7B%22type%22%3A%22image%22%2C%22preset%22%3A%22gpt-image-2%22%2C%22provider%22%3A%22openai%22%2C%22modelKey%22%3A%22flyreq-gpt-image-2%22%2C%22name%22%3A%22FlyReq%22%2C%22modelId%22%3A%22gpt-image-2%22%2C%22baseUrl%22%3A%22https%3A%2F%2Fflyreq.com%22%2C%22apiKey%22%3A%22YOUR_API_KEY%22%2C%22maxRefImages%22%3A16%2C%22maxOutputSize%22%3A%224K%22%7D
+```
+
+JSON 字段：
+
+| 字段 | 说明 |
+| --- | --- |
+| `type=image` | 当前支持图片模型 |
+| `modelKey` | 可选，稳定模型 ID；存在同 ID 时更新该模型 |
+| `preset` | 可选，内置模板，如 `gpt-image-2` |
+| `provider` | 可选，`openai` 或 `google` |
+| `name` | 显示名称 |
+| `modelId` | 上游模型 ID |
+| `baseUrl` | 上游 Base URL |
+| `apiKey` | API Key |
+| `maxRefImages` | 最大参考图数量 |
+| `maxOutputSize` | 最大分辨率：`512`、`1K`、`2K`、`4K` |
+
+匹配规则：优先按 `modelKey` 更新已有模型；没有 `modelKey` 时，按 `name + modelId + baseUrl` 匹配；仍未匹配则新增模型。配置完整时会同时设为文生图和图生图默认模型。注意：`apiKey` 会短暂出现在浏览器地址栏中，FlyReq Image 会在读取后立即清理 URL。
+
 ### 任务系统
 
 - 提交后入队，服务端并发处理（默认上限 50，可通过 `NOVA_TASK_CONCURRENCY` 调整）

@@ -50,7 +50,7 @@ export function CanvasConfigNodePanel({
     aspectRatio: config.aspectRatio,
     temperature: config.temperature,
     parallelCount: config.count,
-    gptImageAdvancedParams: { quality: config.gptImageQuality, style: config.gptImageStyle, background: config.gptImageBackground },
+    gptImageAdvancedParams: { quality: config.gptImageQuality, style: config.gptImageStyle, background: config.gptImageBackground, outputFormat: config.gptImageOutputFormat },
   };
 
   const handleParamsChange = (patch: Partial<GenerationParamsValue>) => {
@@ -65,6 +65,7 @@ export function CanvasConfigNodePanel({
       next.gptImageQuality = patch.gptImageAdvancedParams.quality;
       next.gptImageStyle = patch.gptImageAdvancedParams.style;
       next.gptImageBackground = patch.gptImageAdvancedParams.background;
+      next.gptImageOutputFormat = patch.gptImageAdvancedParams.outputFormat;
     }
     onConfigChange(next);
   };

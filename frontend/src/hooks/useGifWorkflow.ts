@@ -27,6 +27,7 @@ import { encodeGifFromGrid, encodeFramesToGif, triggerGifDownload } from '@/lib/
 import {
   getGptImageAdvancedParamsForModel,
   type GptImageBackground,
+  type GptImageOutputFormat,
   type GptImageQuality,
   type GptImageStyle,
 } from '@/lib/model-capabilities';
@@ -39,6 +40,7 @@ export interface SubmitInput {
   gptImageQuality: GptImageQuality;
   gptImageStyle: GptImageStyle;
   gptImageBackground: GptImageBackground;
+  gptImageOutputFormat: GptImageOutputFormat;
   refImages: RefImageData[];
   frameDelayMs: number;
   loopCount: number;
@@ -300,6 +302,7 @@ export function useGifWorkflow(): UseGifWorkflowResult {
       quality: input.gptImageQuality,
       style: input.gptImageStyle,
       background: input.gptImageBackground,
+      outputFormat: input.gptImageOutputFormat,
     });
     const finalPrompt = buildGifPrompt({
       userPrompt: input.prompt,
@@ -318,6 +321,7 @@ export function useGifWorkflow(): UseGifWorkflowResult {
       gptImageQuality: advancedParams.quality,
       gptImageStyle: advancedParams.style,
       gptImageBackground: advancedParams.background,
+      gptImageOutputFormat: advancedParams.outputFormat,
       refImages: refsForSubmit,
       frameDelayMs: input.frameDelayMs,
       loopCount: input.loopCount,
@@ -346,6 +350,7 @@ export function useGifWorkflow(): UseGifWorkflowResult {
         gptImageQuality: advancedParams.quality,
         gptImageStyle: advancedParams.style,
         gptImageBackground: advancedParams.background,
+        gptImageOutputFormat: advancedParams.outputFormat,
         parallelCount: 1,
         images: buildImageReferences(template, refsForSubmit),
       });

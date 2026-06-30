@@ -30,6 +30,7 @@ import {
   supportsCustomSize,
   type GptImageAdvancedParams,
   type GptImageBackground,
+  type GptImageOutputFormat,
   type GptImageQuality,
   type GptImageStyle,
   type ParallelCount,
@@ -76,6 +77,7 @@ interface ImageGenerationWorkbenchProps {
     gptImageQuality?: GptImageQuality;
     gptImageStyle?: GptImageStyle;
     gptImageBackground?: GptImageBackground;
+    gptImageOutputFormat?: GptImageOutputFormat;
     parallelCount?: ParallelCount;
     refImages?: RefImageData[];
   };
@@ -188,6 +190,7 @@ export function ImageGenerationWorkbench({
         quality: useInitial ? initialData?.gptImageQuality : saved.gptImageQuality,
         style: useInitial ? initialData?.gptImageStyle : saved.gptImageStyle,
         background: useInitial ? initialData?.gptImageBackground : saved.gptImageBackground,
+        outputFormat: useInitial ? initialData?.gptImageOutputFormat : saved.gptImageOutputFormat,
       });
       const nextParallelCount: ParallelCount = useInitial && initialData?.parallelCount && [1, 2, 3, 4].includes(initialData.parallelCount)
         ? initialData.parallelCount
@@ -231,6 +234,7 @@ export function ImageGenerationWorkbench({
       gptImageQuality: gptImageAdvancedParams.quality,
       gptImageStyle: gptImageAdvancedParams.style,
       gptImageBackground: gptImageAdvancedParams.background,
+      gptImageOutputFormat: gptImageAdvancedParams.outputFormat,
       parallelCount,
     });
   }, [model, outputSize, customSize, aspectRatio, temperature, gptImageAdvancedParams, parallelCount, settingsReady]);
@@ -529,6 +533,7 @@ export function ImageGenerationWorkbench({
         gptImageQuality: gptImageAdvancedParams.quality,
         gptImageStyle: gptImageAdvancedParams.style,
         gptImageBackground: gptImageAdvancedParams.background,
+        gptImageOutputFormat: gptImageAdvancedParams.outputFormat,
         parallelCount,
       });
     } else {
@@ -542,6 +547,7 @@ export function ImageGenerationWorkbench({
         gptImageQuality: gptImageAdvancedParams.quality,
         gptImageStyle: gptImageAdvancedParams.style,
         gptImageBackground: gptImageAdvancedParams.background,
+        gptImageOutputFormat: gptImageAdvancedParams.outputFormat,
         parallelCount,
       });
     }

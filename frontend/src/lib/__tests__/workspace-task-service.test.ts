@@ -1,4 +1,33 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+vi.hoisted(() => {
+  const storage = new Map<string, string>();
+  storage.set('nova-model-registry', JSON.stringify({
+    imageModels: [{
+      id: 'flyreq-gpt-image-2',
+      protocol: 'openai',
+      name: 'FlyReq',
+      modelId: 'gpt-image-2',
+      apiKey: 'test-api-key',
+      baseUrl: 'https://api.openai.com',
+      builtinPreset: 'gpt-image-2',
+      maxRefImages: 16,
+      maxOutputSize: '4K',
+      supportsAdvancedParams: true,
+    }],
+    textModels: [],
+    defaults: { textToImage: 'flyreq-gpt-image-2', imageToImage: 'flyreq-gpt-image-2' },
+  }));
+  globalThis.localStorage = {
+    getItem: (key: string) => storage.get(key) ?? null,
+    setItem: (key: string, value: string) => { storage.set(key, value); },
+    removeItem: (key: string) => { storage.delete(key); },
+    clear: () => { storage.clear(); },
+    key: (index: number) => Array.from(storage.keys())[index] ?? null,
+    get length() { return storage.size; },
+  } as Storage;
+});
+
 import { ackNovaTask, createNovaTask, resolveImageTaskProvider, type NovaTaskResponse } from '@/lib/ccode-task-client';
 import { downloadAndStoreImages } from '@/lib/image-downloader';
 import type { StoredJob } from '@/lib/job-store';
@@ -86,6 +115,7 @@ beforeEach(() => {
     apiKey: 'test-api-key',
     baseUrl: 'https://api.openai.com',
     protocol: 'openai',
+    modelId: 'gpt-image-2',
   });
 });
 
@@ -99,10 +129,11 @@ describe('submitTextToImage', () => {
       outputSize: '1K',
       aspectRatio: '1:1',
       temperature: 1,
-      model: 'gpt-image-2',
+      model: 'flyreq-gpt-image-2',
       gptImageQuality: 'high',
       gptImageStyle: 'vivid',
       gptImageBackground: 'transparent',
+      gptImageOutputFormat: 'webp',
       parallelCount: 1,
     }, actions, vi.fn());
 
@@ -113,11 +144,13 @@ describe('submitTextToImage', () => {
       gptImageQuality: 'high',
       gptImageStyle: 'vivid',
       gptImageBackground: 'transparent',
+      gptImageOutputFormat: 'webp',
     }));
     expect(actions.addJob).toHaveBeenCalledWith(expect.objectContaining({
       gptImageQuality: 'high',
       gptImageStyle: 'vivid',
       gptImageBackground: 'transparent',
+      gptImageOutputFormat: 'webp',
     }));
     expect(getJob().serverTaskId).toBe('task-advanced-1');
   });

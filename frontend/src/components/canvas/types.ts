@@ -1,5 +1,5 @@
 import type { AspectRatio, OutputSize } from "@/lib/gemini-config";
-import type { GptImageBackground, GptImageQuality, GptImageStyle, ParallelCount } from "@/lib/model-capabilities";
+import type { GptImageBackground, GptImageOutputFormat, GptImageQuality, GptImageStyle, ParallelCount } from "@/lib/model-capabilities";
 
 export type Position = {
   x: number;
@@ -34,6 +34,7 @@ export type CanvasGenerationConfig = {
   gptImageQuality: GptImageQuality;
   gptImageStyle: GptImageStyle;
   gptImageBackground: GptImageBackground;
+  gptImageOutputFormat: GptImageOutputFormat;
 };
 
 export type CanvasNodeMetadata = {

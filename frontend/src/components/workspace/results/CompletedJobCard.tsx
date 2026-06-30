@@ -1,7 +1,7 @@
 'use client';
 
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AlertCircle, Check, Copy, Download, ImagePlus, Maximize, RefreshCw, RotateCcw, Thermometer, X } from 'lucide-react';
+import { AlertCircle, Check, Copy, Download, ImagePlus, Maximize, RefreshCw, RotateCcw, Thermometer, Wand2, X } from 'lucide-react';
 import { createPortal } from 'react-dom';
 import { Button, buttonVariants } from '@/components/ui/button';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
@@ -78,6 +78,7 @@ export const CompletedJobCard = memo(function CompletedJobCard({ job, onClear, o
   const [assetMenuOpen, setAssetMenuOpen] = useState(false);
   const [downloadMenuOpen, setDownloadMenuOpen] = useState(false);
   const [copyMenuOpen, setCopyMenuOpen] = useState(false);
+  const [referenceMenuOpen, setReferenceMenuOpen] = useState(false);
   const [retryingDownload, setRetryingDownload] = useState(false);
 
   const sourceImages = useMemo(() => job.images || (job.imageData ? [job.imageData] : []), [job.imageData, job.images]);
@@ -213,6 +214,13 @@ export const CompletedJobCard = memo(function CompletedJobCard({ job, onClear, o
       const message = error instanceof Error ? error.message : '图片复制失败';
       dispatchImageActionToast(message.includes('Failed to fetch') ? '该图片源不允许本地保存或复制，请直接右键/长摁复制' : message, 'error');
     }
+  };
+
+  const useAsReference = (index: number = 0) => {
+    const payload = actionPayloads[index];
+    if (!payload) return;
+    void runImageAction('use-as-reference', payload);
+    setReferenceMenuOpen(false);
   };
 
   const copyPrompt = () => {
@@ -427,6 +435,25 @@ export const CompletedJobCard = memo(function CompletedJobCard({ job, onClear, o
             ) : (
               <Button variant="ghost" size="icon-sm" onClick={() => copyImage(0)} title="复制图片">
                 {imgCopied ? <Check className="w-4 h-4 text-success" /> : <Copy className="w-4 h-4" />}
+              </Button>
+            )}
+
+            {isMultiple ? (
+              <DropdownMenu open={referenceMenuOpen} onOpenChange={setReferenceMenuOpen}>
+                <DropdownMenuTrigger className={buttonVariants({ variant: 'ghost', size: 'icon-sm' })} title="作为图生图参考">
+                  <Wand2 className="w-4 h-4" />
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  {sourceImages.map((_, index) => (
+                    <DropdownMenuItem key={index} onClick={() => useAsReference(index)}>
+                      作为参考图 {index + 1}
+                    </DropdownMenuItem>
+                  ))}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            ) : (
+              <Button variant="ghost" size="icon-sm" onClick={() => useAsReference(0)} title="作为图生图参考">
+                <Wand2 className="w-4 h-4" />
               </Button>
             )}
 

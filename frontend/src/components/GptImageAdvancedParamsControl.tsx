@@ -7,10 +7,12 @@ import { cn } from '@/lib/utils';
 import {
   DEFAULT_GPT_IMAGE_ADVANCED_PARAMS,
   GPT_IMAGE_BACKGROUND_OPTIONS,
+  GPT_IMAGE_OUTPUT_FORMAT_OPTIONS,
   GPT_IMAGE_QUALITY_OPTIONS,
   GPT_IMAGE_STYLE_OPTIONS,
   type GptImageAdvancedParams,
   type GptImageBackground,
+  type GptImageOutputFormat,
   type GptImageQuality,
   type GptImageStyle,
 } from '@/lib/model-capabilities';
@@ -27,7 +29,8 @@ function isDefaultValue(value: GptImageAdvancedParams): boolean {
   return (
     value.quality === DEFAULT_GPT_IMAGE_ADVANCED_PARAMS.quality &&
     value.style === DEFAULT_GPT_IMAGE_ADVANCED_PARAMS.style &&
-    value.background === DEFAULT_GPT_IMAGE_ADVANCED_PARAMS.background
+    value.background === DEFAULT_GPT_IMAGE_ADVANCED_PARAMS.background &&
+    value.outputFormat === DEFAULT_GPT_IMAGE_ADVANCED_PARAMS.outputFormat
   );
 }
 
@@ -36,7 +39,8 @@ function formatLabel(value: GptImageAdvancedParams): string {
   const quality = GPT_IMAGE_QUALITY_OPTIONS.find(option => option.value === value.quality)?.label || value.quality;
   const style = GPT_IMAGE_STYLE_OPTIONS.find(option => option.value === value.style)?.label || value.style;
   const background = GPT_IMAGE_BACKGROUND_OPTIONS.find(option => option.value === value.background)?.label || value.background;
-  return `${quality}/${style}/${background}`;
+  const outputFormat = GPT_IMAGE_OUTPUT_FORMAT_OPTIONS.find(option => option.value === value.outputFormat)?.label || value.outputFormat;
+  return `${quality}/${style}/${background}/${outputFormat}`;
 }
 
 export function GptImageAdvancedParamsControl({
@@ -54,6 +58,7 @@ export function GptImageAdvancedParamsControl({
   const updateQuality = (quality: GptImageQuality) => onChange({ ...value, quality });
   const updateStyle = (style: GptImageStyle) => onChange({ ...value, style });
   const updateBackground = (background: GptImageBackground) => onChange({ ...value, background });
+  const updateOutputFormat = (outputFormat: GptImageOutputFormat) => onChange({ ...value, outputFormat });
 
   return (
     <Popover>
@@ -80,6 +85,12 @@ export function GptImageAdvancedParamsControl({
             options={GPT_IMAGE_BACKGROUND_OPTIONS}
             value={value.background}
             onSelect={updateBackground}
+          />
+          <ParamGroup
+            label="格式"
+            options={GPT_IMAGE_OUTPUT_FORMAT_OPTIONS}
+            value={value.outputFormat}
+            onSelect={updateOutputFormat}
           />
           <Button
             type="button"

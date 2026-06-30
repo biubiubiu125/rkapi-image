@@ -1,4 +1,4 @@
-import type { GptImageBackground, GptImageQuality, GptImageStyle } from '@/lib/model-capabilities';
+import type { GptImageBackground, GptImageOutputFormat, GptImageQuality, GptImageStyle } from '@/lib/model-capabilities';
 import { makeStoredBlobRef, type ImageDownloadProgressItem } from '@/lib/image-downloader';
 import { openImageDb, IMG_STORE } from '@/lib/image-db';
 
@@ -34,6 +34,7 @@ export interface StoredJob {
   gptImageQuality?: GptImageQuality;
   gptImageStyle?: GptImageStyle;
   gptImageBackground?: GptImageBackground;
+  gptImageOutputFormat?: GptImageOutputFormat;
   created_at: string;
   error?: string;
   networkError?: boolean;

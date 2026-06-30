@@ -50,6 +50,7 @@ describe('TextToImageForm', () => {
       gptImageQuality: 'auto',
       gptImageStyle: 'auto',
       gptImageBackground: 'auto',
+      gptImageOutputFormat: 'png',
       parallelCount: 1,
     }))
   })
@@ -79,6 +80,7 @@ describe('TextToImageForm', () => {
       gptImageQuality: 'auto',
       gptImageStyle: 'auto',
       gptImageBackground: 'auto',
+      gptImageOutputFormat: 'png',
     }))
   })
 

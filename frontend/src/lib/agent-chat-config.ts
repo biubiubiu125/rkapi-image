@@ -2,7 +2,7 @@
 // 文本对话模型从 nova-models 注册表动态读取，支持 Google 和 OpenAI 两种协议
 // 开源版：不再硬编码模型，由用户在设置中配置
 
-import type { GptImageBackground, GptImageQuality, GptImageStyle } from '@/lib/model-capabilities';
+import type { GptImageBackground, GptImageOutputFormat, GptImageQuality, GptImageStyle } from '@/lib/model-capabilities';
 
 // 默认值仅用于初始化，实际使用时从注册表读取
 export const AGENT_TEXT_MODEL_FALLBACK = 'gpt-5.4-mini';
@@ -81,6 +81,8 @@ export interface AgentProposal {
   gptImageStyle?: GptImageStyle;
   /** GPT Image 2 背景参数 */
   gptImageBackground?: GptImageBackground;
+  /** GPT Image 2 输出格式 */
+  gptImageOutputFormat?: GptImageOutputFormat;
   /** Agent 根据用户语言匹配的模型 id（来自可用模型列表）；未指定则 undefined */
   requestedModelId?: string;
 }
@@ -101,6 +103,7 @@ export interface AgentProposalData {
   gptImageQuality?: GptImageQuality;
   gptImageStyle?: GptImageStyle;
   gptImageBackground?: GptImageBackground;
+  gptImageOutputFormat?: GptImageOutputFormat;
   parallelCount: number;
 }
 

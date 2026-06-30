@@ -1,5 +1,5 @@
 import type { AspectRatio, OutputSize } from '@/lib/gemini-config';
-import type { GptImageBackground, GptImageQuality, GptImageStyle } from '@/lib/model-capabilities';
+import type { GptImageBackground, GptImageOutputFormat, GptImageQuality, GptImageStyle } from '@/lib/model-capabilities';
 import {
   getCompleteImageModels,
   getCompleteTextModels,
@@ -45,6 +45,7 @@ export interface CreateNovaTaskInput {
   gptImageQuality?: GptImageQuality;
   gptImageStyle?: GptImageStyle;
   gptImageBackground?: GptImageBackground;
+  gptImageOutputFormat?: GptImageOutputFormat;
   parallelCount: number;
   images: ImageReference[];
 }

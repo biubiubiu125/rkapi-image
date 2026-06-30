@@ -22,6 +22,7 @@ import {
   getGptImageAdvancedParamsForModel,
   type GptImageAdvancedParams,
   type GptImageBackground,
+  type GptImageOutputFormat,
   type GptImageQuality,
   type GptImageStyle,
 } from '@/lib/model-capabilities';
@@ -63,6 +64,7 @@ interface PersistedSettings {
   gptImageQuality: GptImageQuality;
   gptImageStyle: GptImageStyle;
   gptImageBackground: GptImageBackground;
+  gptImageOutputFormat: GptImageOutputFormat;
 }
 
 export function GifGenerationWorkspace({ wideMode = false, hasApiKey, onConfigureApiKey, onError, showToast }: GifGenerationWorkspaceProps) {
@@ -160,6 +162,7 @@ export function GifGenerationWorkspace({ wideMode = false, hasApiKey, onConfigur
         quality: saved.gptImageQuality,
         style: saved.gptImageStyle,
         background: saved.gptImageBackground,
+        outputFormat: saved.gptImageOutputFormat,
       }));
       if (typeof saved.loop === 'boolean') {
         setLoop(saved.loop);
@@ -196,6 +199,7 @@ export function GifGenerationWorkspace({ wideMode = false, hasApiKey, onConfigur
       gptImageQuality: gptImageAdvancedParams.quality,
       gptImageStyle: gptImageAdvancedParams.style,
       gptImageBackground: gptImageAdvancedParams.background,
+      gptImageOutputFormat: gptImageAdvancedParams.outputFormat,
     });
   }, [model, loop, closedLoop, frameDelayMs, loopCount, framePadding, gptImageAdvancedParams, settingsReady]);
 
@@ -321,6 +325,7 @@ export function GifGenerationWorkspace({ wideMode = false, hasApiKey, onConfigur
     gptImageQuality: gptImageAdvancedParams.quality,
     gptImageStyle: gptImageAdvancedParams.style,
     gptImageBackground: gptImageAdvancedParams.background,
+    gptImageOutputFormat: gptImageAdvancedParams.outputFormat,
     refImages: refFiles.map<RefImageData>(file => ({
       id: file.id,
       name: file.name,

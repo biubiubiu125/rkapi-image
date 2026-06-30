@@ -114,10 +114,12 @@ const VALID_PROTOCOLS = new Set(['google', 'openai']);
 const GPT_IMAGE_QUALITIES = new Set(['auto', 'high', 'medium', 'low']);
 const GPT_IMAGE_STYLES = new Set(['auto', 'vivid', 'natural']);
 const GPT_IMAGE_BACKGROUNDS = new Set(['auto', 'transparent', 'opaque']);
+const GPT_IMAGE_OUTPUT_FORMATS = new Set(['png', 'jpeg', 'webp']);
 const DEFAULT_GPT_IMAGE_ADVANCED_PARAMS = {
   quality: 'auto',
   style: 'auto',
   background: 'auto',
+  outputFormat: 'png',
 };
 const PROMPT_GALLERY_PASSWORD_SALT = 'nova-pg-2026';
 const CUSTOM_IMAGE_SIZE_LIMITS = {
@@ -619,11 +621,13 @@ function normalizeGptImageAdvancedParams(params = {}) {
   const quality = validateEnumValue(params.gptImageQuality, GPT_IMAGE_QUALITIES, 'quality');
   const style = validateEnumValue(params.gptImageStyle, GPT_IMAGE_STYLES, 'style');
   const background = validateEnumValue(params.gptImageBackground, GPT_IMAGE_BACKGROUNDS, 'background');
+  const outputFormat = validateEnumValue(params.gptImageOutputFormat, GPT_IMAGE_OUTPUT_FORMATS, 'output_format');
 
   return {
     quality: quality || DEFAULT_GPT_IMAGE_ADVANCED_PARAMS.quality,
     style: style || DEFAULT_GPT_IMAGE_ADVANCED_PARAMS.style,
     background: background || DEFAULT_GPT_IMAGE_ADVANCED_PARAMS.background,
+    outputFormat: outputFormat || DEFAULT_GPT_IMAGE_ADVANCED_PARAMS.outputFormat,
   };
 }
 
@@ -668,6 +672,7 @@ function createTask(body, req) {
     gptImageQuality: body.gptImageQuality,
     gptImageStyle: body.gptImageStyle,
     gptImageBackground: body.gptImageBackground,
+    gptImageOutputFormat: body.gptImageOutputFormat,
     parallelCount: body.parallelCount,
     images: body.images.map(img => ({ mimeType: img.mimeType })),
   };
@@ -808,7 +813,7 @@ function createGptImageRequestInit(apiKey, request, resolvedSize, options = {}) 
     if (advancedParams) {
       formData.append('quality', advancedParams.quality);
       formData.append('background', advancedParams.background);
-      formData.append('output_format', 'png');
+      formData.append('output_format', advancedParams.outputFormat);
       if (advancedParams.style === 'vivid' || advancedParams.style === 'natural') {
         formData.append('style', advancedParams.style);
       }
@@ -842,7 +847,7 @@ function createGptImageRequestInit(apiKey, request, resolvedSize, options = {}) 
     ...(advancedParams ? {
       quality: advancedParams.quality,
       background: advancedParams.background,
-      output_format: 'png',
+      output_format: advancedParams.outputFormat,
       ...(advancedParams.style === 'vivid' || advancedParams.style === 'natural' ? { style: advancedParams.style } : {}),
     } : {}),
     ...(request.images.length > 0 ? { image: request.images.map(img => `data:${img.mimeType};base64,${img.data}`) } : {}),

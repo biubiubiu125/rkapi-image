@@ -41,6 +41,7 @@ import {
   supportsCustomSize,
   type GptImageAdvancedParams,
   type GptImageBackground,
+  type GptImageOutputFormat,
   type GptImageQuality,
   type GptImageStyle,
   type ParallelCount,
@@ -80,6 +81,7 @@ interface ImageToImageFormProps {
     gptImageQuality: GptImageQuality;
     gptImageStyle: GptImageStyle;
     gptImageBackground: GptImageBackground;
+    gptImageOutputFormat: GptImageOutputFormat;
     parallelCount: ParallelCount;
   }) => void;
   disabled?: boolean;
@@ -95,6 +97,7 @@ interface ImageToImageFormProps {
     gptImageQuality?: GptImageQuality;
     gptImageStyle?: GptImageStyle;
     gptImageBackground?: GptImageBackground;
+    gptImageOutputFormat?: GptImageOutputFormat;
     parallelCount?: ParallelCount;
     refImages?: { id: string; name: string; dataUrl: string; mimeType: string }[];
   };
@@ -295,6 +298,7 @@ export function ImageToImageForm({
       quality: useInitial ? initialData?.gptImageQuality : saved.gptImageQuality,
       style: useInitial ? initialData?.gptImageStyle : saved.gptImageStyle,
       background: useInitial ? initialData?.gptImageBackground : saved.gptImageBackground,
+      outputFormat: useInitial ? initialData?.gptImageOutputFormat : saved.gptImageOutputFormat,
     });
     const nextParallelCount: ParallelCount = useInitial && initialData?.parallelCount && [1, 2, 3, 4].includes(initialData.parallelCount)
       ? initialData.parallelCount
@@ -343,6 +347,7 @@ export function ImageToImageForm({
       gptImageQuality: gptImageAdvancedParams.quality,
       gptImageStyle: gptImageAdvancedParams.style,
       gptImageBackground: gptImageAdvancedParams.background,
+      gptImageOutputFormat: gptImageAdvancedParams.outputFormat,
       parallelCount,
     });
   }, [model, outputSize, customSize, aspectRatio, temperature, gptImageAdvancedParams, parallelCount, settingsReady]);
@@ -360,6 +365,7 @@ export function ImageToImageForm({
         gptImageQuality: gptImageAdvancedParams.quality,
         gptImageStyle: gptImageAdvancedParams.style,
         gptImageBackground: gptImageAdvancedParams.background,
+        gptImageOutputFormat: gptImageAdvancedParams.outputFormat,
         parallelCount,
       });
       setPendingFiles([]);

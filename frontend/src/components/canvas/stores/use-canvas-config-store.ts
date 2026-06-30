@@ -15,6 +15,7 @@ export const defaultCanvasConfig: CanvasGenerationConfig = {
   gptImageQuality: "auto",
   gptImageStyle: "auto",
   gptImageBackground: "auto",
+  gptImageOutputFormat: "png",
 };
 
 type CanvasConfigStore = {

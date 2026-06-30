@@ -1,6 +1,6 @@
 import { isGptImageModel } from '@/lib/gemini-config';
 import type { RefImageData } from '@/lib/job-store';
-import { supportsCustomSize, type GptImageBackground, type GptImageQuality, type GptImageStyle } from '@/lib/model-capabilities';
+import { supportsCustomSize, type GptImageBackground, type GptImageOutputFormat, type GptImageQuality, type GptImageStyle } from '@/lib/model-capabilities';
 import { getDefaultImageModel, getCompleteImageModels, loadRegistry } from '@/lib/nova-models';
 
 export type GifModel = string;
@@ -23,6 +23,7 @@ export interface ActiveGifJob {
   gptImageQuality?: GptImageQuality;
   gptImageStyle?: GptImageStyle;
   gptImageBackground?: GptImageBackground;
+  gptImageOutputFormat?: GptImageOutputFormat;
   refImages: RefImageData[];
   serverTaskId?: string;
   gridImageRef?: string;

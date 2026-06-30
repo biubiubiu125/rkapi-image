@@ -71,6 +71,7 @@ export async function submitNodeGeneration(args: {
     gptImageQuality: args.config.gptImageQuality,
     gptImageStyle: args.config.gptImageStyle,
     gptImageBackground: args.config.gptImageBackground,
+    gptImageOutputFormat: args.config.gptImageOutputFormat,
     parallelCount: 1,
     images: imageRefs,
   });
@@ -147,6 +148,7 @@ export async function generateCanvasImages(args: {
     gptImageQuality: args.config.gptImageQuality,
     gptImageStyle: args.config.gptImageStyle,
     gptImageBackground: args.config.gptImageBackground,
+    gptImageOutputFormat: args.config.gptImageOutputFormat,
     parallelCount: args.config.count,
     images: imageRefs,
   });

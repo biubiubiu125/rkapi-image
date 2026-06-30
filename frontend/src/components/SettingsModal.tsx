@@ -50,6 +50,7 @@ import {
   type ProviderProtocol,
   type TextModelConfig,
 } from '@/lib/nova-models';
+import { getExternalImageModelMatch, type ExternalModelConfig } from '@/lib/external-model-config';
 import { syncDynamicModelExports } from '@/lib/gemini-config';
 import { exportAllData, importAllData, downloadBlob, generateBackupFilename, type BackupProgress as BackupProgressType } from '@/lib/backup-utils';
 import { checkModelsAvailability, type ModelStatus } from '@/lib/ccode-task-client';
@@ -61,6 +62,8 @@ interface SettingsModalProps {
   isOpen: boolean;
   onClose: () => void;
   onApiKeyChange?: (hasKey: boolean) => void;
+  externalModelConfig?: ExternalModelConfig | null;
+  onExternalModelConfigConsumed?: () => void;
 }
 
 function cloneImageModel(model: ImageModelConfig): ImageModelConfig {
@@ -84,6 +87,40 @@ function createImageModelDraft(): ImageModelConfig {
     maxRefImages: preset.maxRefImages,
     maxOutputSize: preset.maxOutputSize,
     supportsAdvancedParams: preset.supportsAdvancedParams,
+  };
+}
+
+function createExternalImageModelDraft(config: ExternalModelConfig): ImageModelConfig {
+  const preset = BUILTIN_IMAGE_PRESETS[config.preset || 'gpt-image-2'];
+  const protocol = config.protocol || preset.protocol;
+  return {
+    id: config.modelKey || generateModelId('img'),
+    protocol,
+    name: config.name || preset.name,
+    modelId: config.modelId || preset.modelId,
+    apiKey: config.apiKey || '',
+    baseUrl: config.baseUrl || preset.baseUrl,
+    builtinPreset: preset.id,
+    maxRefImages: config.maxRefImages || preset.maxRefImages,
+    maxOutputSize: config.maxOutputSize || preset.maxOutputSize,
+    supportsAdvancedParams: protocol === 'openai' ? preset.supportsAdvancedParams : false,
+  };
+}
+
+function patchImageModelFromExternal(model: ImageModelConfig, config: ExternalModelConfig): ImageModelConfig {
+  const preset = BUILTIN_IMAGE_PRESETS[config.preset || model.builtinPreset];
+  const protocol = config.protocol || model.protocol || preset.protocol;
+  return {
+    ...model,
+    protocol,
+    builtinPreset: preset.id,
+    name: config.name || model.name || preset.name,
+    modelId: config.modelId || model.modelId || preset.modelId,
+    baseUrl: config.baseUrl || model.baseUrl || preset.baseUrl,
+    apiKey: config.apiKey ?? model.apiKey,
+    maxRefImages: config.maxRefImages || model.maxRefImages || preset.maxRefImages,
+    maxOutputSize: config.maxOutputSize || model.maxOutputSize || preset.maxOutputSize,
+    supportsAdvancedParams: protocol === 'openai' ? model.supportsAdvancedParams || preset.supportsAdvancedParams : false,
   };
 }
 
@@ -140,7 +177,7 @@ function normalizeDefaults(
   };
 }
 
-export function SettingsModal({ isOpen, onClose, onApiKeyChange }: SettingsModalProps) {
+export function SettingsModal({ isOpen, onClose, onApiKeyChange, externalModelConfig, onExternalModelConfigConsumed }: SettingsModalProps) {
   const [imageModels, setImageModels] = useState<ImageModelConfig[]>([]);
   const [textModels, setTextModels] = useState<TextModelConfig[]>([]);
   const [defaults, setDefaults] = useState<DefaultModels>(DEFAULT_DEFAULTS);
@@ -148,6 +185,7 @@ export function SettingsModal({ isOpen, onClose, onApiKeyChange }: SettingsModal
   const [selectedTextModelId, setSelectedTextModelId] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  const [externalConfigNotice, setExternalConfigNotice] = useState<string | null>(null);
   const [checkingModels, setCheckingModels] = useState(false);
   const [modelStatuses, setModelStatuses] = useState<ModelStatus[] | null>(null);
   const [modelCheckError, setModelCheckError] = useState<string | null>(null);
@@ -171,12 +209,43 @@ export function SettingsModal({ isOpen, onClose, onApiKeyChange }: SettingsModal
     setSelectedTextModelId(registry.textModels[0]?.id || '');
     setError(null);
     setSuccess(null);
+    setExternalConfigNotice(null);
     setModelStatuses(null);
     setModelCheckError(null);
     setBackupError(null);
     setBackupSuccess(null);
     setPromptOptimizeEnabledState(isPromptOptimizeEnabled());
   }, [isOpen]);
+
+  useEffect(() => {
+    if (!isOpen || !externalModelConfig) return;
+
+    setImageModels((prev) => {
+      const existing = getExternalImageModelMatch(prev, externalModelConfig);
+      const nextModel = existing
+        ? patchImageModelFromExternal(existing, externalModelConfig)
+        : createExternalImageModelDraft(externalModelConfig);
+      setSelectedImageModelId(nextModel.id);
+      if (isCompleteImageModel(nextModel)) {
+        setDefaults((current) => ({
+          ...current,
+          textToImage: nextModel.id,
+          imageToImage: nextModel.id,
+        }));
+      }
+      return existing
+        ? prev.map((model) => (model.id === existing.id ? nextModel : model))
+        : [...prev, nextModel];
+    });
+    setExternalConfigNotice(
+      externalModelConfig.apiKey
+        ? '已从外部链接带入模型配置，并将其设为文生图/图生图默认模型。请确认后点击“保存设置”。URL 中的配置参数已清理。'
+        : '已从外部链接带入模型配置，请补充 API Key 后点击“保存设置”。URL 中的配置参数已清理。',
+    );
+    setError(null);
+    setSuccess(null);
+    onExternalModelConfigConsumed?.();
+  }, [externalModelConfig, isOpen, onExternalModelConfigConsumed]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -305,6 +374,7 @@ export function SettingsModal({ isOpen, onClose, onApiKeyChange }: SettingsModal
     window.dispatchEvent(new Event('nova-model-registry-updated'));
     onApiKeyChange?.(hasConfiguredImageModel());
     setSuccess('设置已保存');
+    setExternalConfigNotice(null);
     setError(null);
     setModelStatuses(null);
     setModelCheckError(null);
@@ -438,6 +508,11 @@ export function SettingsModal({ isOpen, onClose, onApiKeyChange }: SettingsModal
 
             {error && <div className="rounded-lg border border-destructive/20 bg-destructive/10 p-3 text-sm text-destructive">{error}</div>}
             {success && <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/10 p-3 text-sm text-emerald-700 dark:text-emerald-400">{success}</div>}
+            {externalConfigNotice && (
+              <div className="rounded-lg border border-primary/20 bg-primary/10 p-3 text-sm text-primary">
+                {externalConfigNotice}
+              </div>
+            )}
 
             {needsImageModelKeyGuide && (
               <div className="flex flex-col gap-3 rounded-xl border border-primary/30 bg-primary/10 p-4 text-sm sm:flex-row sm:items-center sm:justify-between">

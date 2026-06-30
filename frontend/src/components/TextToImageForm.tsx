@@ -31,6 +31,7 @@ import {
   supportsCustomSize,
   type GptImageAdvancedParams,
   type GptImageBackground,
+  type GptImageOutputFormat,
   type GptImageQuality,
   type GptImageStyle,
   type ParallelCount,
@@ -45,7 +46,7 @@ interface QueuedPrompt {
 
 interface TextToImageFormProps {
   wideMode?: boolean;
-  onSubmit: (data: { prompts: string[]; outputSize: OutputSize; customSize?: string; aspectRatio: AspectRatio; temperature: number; model: string; gptImageQuality: GptImageQuality; gptImageStyle: GptImageStyle; gptImageBackground: GptImageBackground; parallelCount: ParallelCount }) => void;
+  onSubmit: (data: { prompts: string[]; outputSize: OutputSize; customSize?: string; aspectRatio: AspectRatio; temperature: number; model: string; gptImageQuality: GptImageQuality; gptImageStyle: GptImageStyle; gptImageBackground: GptImageBackground; gptImageOutputFormat: GptImageOutputFormat; parallelCount: ParallelCount }) => void;
   disabled?: boolean;
   onDraftConsumed?: () => void;
   onConfigureApiKey?: () => void;
@@ -59,6 +60,7 @@ interface TextToImageFormProps {
     gptImageQuality?: GptImageQuality;
     gptImageStyle?: GptImageStyle;
     gptImageBackground?: GptImageBackground;
+    gptImageOutputFormat?: GptImageOutputFormat;
     parallelCount?: ParallelCount;
   };
 }
@@ -192,6 +194,7 @@ export function TextToImageForm({ onSubmit, disabled = false, onDraftConsumed, o
       quality: useInitial ? initialData?.gptImageQuality : saved.gptImageQuality,
       style: useInitial ? initialData?.gptImageStyle : saved.gptImageStyle,
       background: useInitial ? initialData?.gptImageBackground : saved.gptImageBackground,
+      outputFormat: useInitial ? initialData?.gptImageOutputFormat : saved.gptImageOutputFormat,
     });
     const nextParallelCount: ParallelCount = useInitial && initialData?.parallelCount && [1, 2, 3, 4].includes(initialData.parallelCount)
       ? initialData.parallelCount
@@ -225,6 +228,7 @@ export function TextToImageForm({ onSubmit, disabled = false, onDraftConsumed, o
       gptImageQuality: gptImageAdvancedParams.quality,
       gptImageStyle: gptImageAdvancedParams.style,
       gptImageBackground: gptImageAdvancedParams.background,
+      gptImageOutputFormat: gptImageAdvancedParams.outputFormat,
       parallelCount,
     });
   }, [model, outputSize, customSize, aspectRatio, temperature, gptImageAdvancedParams, parallelCount, settingsReady]);
@@ -249,6 +253,7 @@ export function TextToImageForm({ onSubmit, disabled = false, onDraftConsumed, o
         gptImageQuality: gptImageAdvancedParams.quality,
         gptImageStyle: gptImageAdvancedParams.style,
         gptImageBackground: gptImageAdvancedParams.background,
+        gptImageOutputFormat: gptImageAdvancedParams.outputFormat,
         parallelCount,
       });
       setQueue([]);

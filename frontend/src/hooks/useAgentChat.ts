@@ -737,6 +737,7 @@ export function useAgentChat() {
           gptImageQuality: data.gptImageQuality,
           gptImageStyle: data.gptImageStyle,
           gptImageBackground: data.gptImageBackground,
+          gptImageOutputFormat: data.gptImageOutputFormat,
           parallelCount: data.parallelCount,
         },
       });
@@ -755,6 +756,7 @@ export function useAgentChat() {
         gptImageQuality: data.gptImageQuality,
         gptImageStyle: data.gptImageStyle,
         gptImageBackground: data.gptImageBackground,
+        gptImageOutputFormat: data.gptImageOutputFormat,
         parallelCount: data.parallelCount,
       });
       setGeneratingTaskId(null);
@@ -813,6 +815,7 @@ export function useAgentChat() {
       gptImageQuality: params.gptImageQuality,
       gptImageStyle: params.gptImageStyle,
       gptImageBackground: params.gptImageBackground,
+      gptImageOutputFormat: params.gptImageOutputFormat,
       parallelCount: params.parallelCount,
       requestedModelId: proposal?.requestedModelId,
     };
@@ -852,6 +855,7 @@ export function useAgentChat() {
         gptImageQuality: params.gptImageQuality,
         gptImageStyle: params.gptImageStyle,
         gptImageBackground: params.gptImageBackground,
+        gptImageOutputFormat: params.gptImageOutputFormat,
         parallelCount: params.parallelCount,
         images: references,
       });
@@ -871,6 +875,7 @@ export function useAgentChat() {
         gptImageQuality: params.gptImageQuality,
         gptImageStyle: params.gptImageStyle,
         gptImageBackground: params.gptImageBackground,
+        gptImageOutputFormat: params.gptImageOutputFormat,
         parallelCount: params.parallelCount,
         startedAt,
       });
@@ -896,6 +901,7 @@ export function useAgentChat() {
           gptImageQuality: params.gptImageQuality,
           gptImageStyle: params.gptImageStyle,
           gptImageBackground: params.gptImageBackground,
+          gptImageOutputFormat: params.gptImageOutputFormat,
           parallelCount: params.parallelCount,
         },
       });
@@ -914,6 +920,7 @@ export function useAgentChat() {
         gptImageQuality: params.gptImageQuality,
         gptImageStyle: params.gptImageStyle,
         gptImageBackground: params.gptImageBackground,
+        gptImageOutputFormat: params.gptImageOutputFormat,
         parallelCount: params.parallelCount,
         requestedModelId: approvedProposal.requestedModelId,
       });
@@ -1020,6 +1027,7 @@ export function useAgentChat() {
       quality: pd.gptImageQuality,
       style: pd.gptImageStyle,
       background: pd.gptImageBackground,
+      outputFormat: pd.gptImageOutputFormat,
     });
     // 构建 AgentProposal 重新进入 proposal 阶段
     const newProposal: AgentProposal = {
@@ -1034,6 +1042,7 @@ export function useAgentChat() {
       gptImageQuality: advancedParams.quality,
       gptImageStyle: advancedParams.style,
       gptImageBackground: advancedParams.background,
+      gptImageOutputFormat: advancedParams.outputFormat,
       parallelCount: pd.parallelCount,
       requestedModelId: pd.model,
     };

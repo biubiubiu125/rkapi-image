@@ -57,6 +57,7 @@ import {
   supportsGptImageAdvancedParams,
   type GptImageAdvancedParams,
   type GptImageBackground,
+  type GptImageOutputFormat,
   type GptImageQuality,
   type GptImageStyle,
   type ParallelCount,
@@ -84,6 +85,7 @@ interface AgentParamsSettings {
   gptImageQuality: GptImageQuality;
   gptImageStyle: GptImageStyle;
   gptImageBackground: GptImageBackground;
+  gptImageOutputFormat: GptImageOutputFormat;
   parallelCount: ParallelCount;
   customSize?: string;
 }
@@ -175,6 +177,7 @@ export function AgentChatWorkspace({ wideMode = false, disabled = false, onConfi
       quality: savedParams.gptImageQuality,
       style: savedParams.gptImageStyle,
       background: savedParams.gptImageBackground,
+      outputFormat: savedParams.gptImageOutputFormat,
     })
   );
   const [userParallelCount, setUserParallelCount] = useState<ParallelCount>(
@@ -196,6 +199,7 @@ export function AgentChatWorkspace({ wideMode = false, disabled = false, onConfi
       gptImageQuality: userAdvancedParams.quality,
       gptImageStyle: userAdvancedParams.style,
       gptImageBackground: userAdvancedParams.background,
+      gptImageOutputFormat: userAdvancedParams.outputFormat,
       parallelCount: userParallelCount,
       customSize: userCustomSize,
     });
@@ -689,6 +693,7 @@ export function AgentChatWorkspace({ wideMode = false, disabled = false, onConfi
                   gptImageQuality: userAdvancedParams.quality,
                   gptImageStyle: userAdvancedParams.style,
                   gptImageBackground: userAdvancedParams.background,
+                  gptImageOutputFormat: userAdvancedParams.outputFormat,
                   parallelCount: userParallelCount,
                 });
               }

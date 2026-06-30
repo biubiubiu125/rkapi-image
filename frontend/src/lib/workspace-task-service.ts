@@ -10,6 +10,7 @@ import type { AspectRatio, OutputSize, StoredJob } from '@/lib/job-store';
 import {
   getGptImageAdvancedParamsForModel,
   type GptImageBackground,
+  type GptImageOutputFormat,
   type GptImageQuality,
   type GptImageStyle,
   type ParallelCount,
@@ -27,6 +28,7 @@ export interface TextToImageSubmitInput {
   gptImageQuality: GptImageQuality;
   gptImageStyle: GptImageStyle;
   gptImageBackground: GptImageBackground;
+  gptImageOutputFormat: GptImageOutputFormat;
   parallelCount: ParallelCount;
 }
 
@@ -41,6 +43,7 @@ export interface ImageToImageSubmitInput {
   gptImageQuality: GptImageQuality;
   gptImageStyle: GptImageStyle;
   gptImageBackground: GptImageBackground;
+  gptImageOutputFormat: GptImageOutputFormat;
   parallelCount: ParallelCount;
 }
 
@@ -109,6 +112,7 @@ function createBaseJob(
   gptImageQuality: GptImageQuality,
   gptImageStyle: GptImageStyle,
   gptImageBackground: GptImageBackground,
+  gptImageOutputFormat: GptImageOutputFormat,
   parallelCount: ParallelCount,
   refImages?: StoredJob['refImages']
 ): StoredJob {
@@ -116,6 +120,7 @@ function createBaseJob(
     quality: gptImageQuality,
     style: gptImageStyle,
     background: gptImageBackground,
+    outputFormat: gptImageOutputFormat,
   });
 
   return {
@@ -132,6 +137,7 @@ function createBaseJob(
     gptImageQuality: advancedParams.quality,
     gptImageStyle: advancedParams.style,
     gptImageBackground: advancedParams.background,
+    gptImageOutputFormat: advancedParams.outputFormat,
     parallelCount,
     created_at: new Date().toISOString(),
     refImages,
@@ -336,6 +342,7 @@ export async function submitTextToImage(
       input.gptImageQuality,
       input.gptImageStyle,
       input.gptImageBackground,
+      input.gptImageOutputFormat,
       input.parallelCount
     );
     actions.addJob(job);
@@ -355,6 +362,7 @@ export async function submitTextToImage(
         gptImageQuality: input.gptImageQuality,
         gptImageStyle: input.gptImageStyle,
         gptImageBackground: input.gptImageBackground,
+        gptImageOutputFormat: input.gptImageOutputFormat,
         parallelCount: input.parallelCount,
         images: [],
       });
@@ -401,6 +409,7 @@ export async function submitImageToImage(
     input.gptImageQuality,
     input.gptImageStyle,
     input.gptImageBackground,
+    input.gptImageOutputFormat,
     input.parallelCount,
     refImages
   );
@@ -422,6 +431,7 @@ export async function submitImageToImage(
       gptImageQuality: input.gptImageQuality,
       gptImageStyle: input.gptImageStyle,
       gptImageBackground: input.gptImageBackground,
+      gptImageOutputFormat: input.gptImageOutputFormat,
       parallelCount: input.parallelCount,
       images: imageReferences,
     });
