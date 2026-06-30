@@ -35,6 +35,6 @@ COPY --from=frontend-builder /app/frontend/out/ ./frontend/out/
 
 RUN mkdir -p /app/backend/data
 
-EXPOSE 3000
+EXPOSE 3001
 
 CMD ["node", "backend/server.js"]

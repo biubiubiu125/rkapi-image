@@ -11,6 +11,7 @@ import { resolveStoredImageRef, revokeBlobUrls } from '@/lib/image-downloader';
 import { getModelDisplayName, getOutputSizeLabel } from '@/lib/model-capabilities';
 import { HistoryImagePreview } from '@/components/workspace/results/HistoryImagePreview';
 import { ConfirmDialog } from '@/components/workspace/dialogs/ConfirmDialog';
+import { isGptImageModel } from '@/lib/gemini-config';
 import {
   copyImagePayload,
   dispatchImageActionToast,
@@ -158,7 +159,7 @@ export const CompletedJobCard = memo(function CompletedJobCard({ job, onClear, o
 
   const visiblePreviewImages = images.slice(0, 3);
   const isMultiple = sourceImages.length > 1;
-  const supportsTemperature = !job.model.startsWith('gpt-image-2');
+  const supportsTemperature = !isGptImageModel(job.model);
   const outputSizeLabel = job.custom_size || getOutputSizeLabel(job.output_size);
   const lazyLoad = useImageLazyLoad<HTMLDivElement>({
     rootMargin: '300px',

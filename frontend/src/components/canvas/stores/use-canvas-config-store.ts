@@ -3,10 +3,12 @@
 import { create } from "zustand";
 import { persist, createJSONStorage } from "zustand/middleware";
 
+import { getDefaultModelId } from "@/lib/gemini-config";
+import { normalizeModel } from "@/lib/model-capabilities";
 import type { CanvasGenerationConfig } from "../canvas-generation-service";
 
 export const defaultCanvasConfig: CanvasGenerationConfig = {
-  model: "gemini-3-pro-image-preview",
+  model: getDefaultModelId(),
   outputSize: "1K",
   aspectRatio: "1:1",
   customSize: undefined,
@@ -36,7 +38,8 @@ export const useCanvasConfigStore = create<CanvasConfigStore>()(
       storage: createJSONStorage(() => (typeof window !== "undefined" ? window.localStorage : (undefined as unknown as Storage))),
       merge: (persisted, current) => {
         const persistedConfig = ((persisted as Partial<CanvasConfigStore>)?.config || {}) as Partial<CanvasGenerationConfig>;
-        return { ...current, config: { ...defaultCanvasConfig, ...persistedConfig } };
+        const mergedConfig = { ...defaultCanvasConfig, ...persistedConfig };
+        return { ...current, config: { ...mergedConfig, model: normalizeModel(mergedConfig.model) } };
       },
     },
   ),

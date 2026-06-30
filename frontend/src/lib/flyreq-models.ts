@@ -277,25 +277,37 @@ function getInitialRegistry(): FlyreqModelRegistry {
   };
 }
 
+function getBrowserStorage(): Storage | null {
+  if (typeof window === 'undefined') return null;
+  const storage = window.localStorage;
+  return storage && typeof storage.getItem === 'function' && typeof storage.setItem === 'function'
+    ? storage
+    : null;
+}
+
 export function loadRegistry(): FlyreqModelRegistry {
-  if (typeof window === 'undefined') {
+  const storage = getBrowserStorage();
+  if (!storage) return getInitialRegistry();
+
+  try {
+    const raw = storage.getItem(REGISTRY_KEY);
+    if (!raw) {
+      return getInitialRegistry();
+    }
+
+    const parsed = JSON.parse(raw) as Partial<FlyreqModelRegistry>;
+    const imageModels = ensureImageModels(parsed.imageModels);
+    const textModels = ensureTextModels(parsed.textModels);
+    const defaults = ensureDefaults(parsed.defaults, imageModels, textModels);
+    return { imageModels, textModels, defaults };
+  } catch {
     return getInitialRegistry();
   }
-
-  const raw = localStorage.getItem(REGISTRY_KEY);
-  if (!raw) {
-    return getInitialRegistry();
-  }
-
-  const parsed = JSON.parse(raw) as Partial<FlyreqModelRegistry>;
-  const imageModels = ensureImageModels(parsed.imageModels);
-  const textModels = ensureTextModels(parsed.textModels);
-  const defaults = ensureDefaults(parsed.defaults, imageModels, textModels);
-  return { imageModels, textModels, defaults };
 }
 
 export function saveRegistry(registry: FlyreqModelRegistry): void {
-  if (typeof window === 'undefined') return;
+  const storage = getBrowserStorage();
+  if (!storage) return;
 
   const imageModels = ensureImageModels(registry.imageModels);
   const textModels = ensureTextModels(registry.textModels);
@@ -305,7 +317,7 @@ export function saveRegistry(registry: FlyreqModelRegistry): void {
     defaults: ensureDefaults(registry.defaults, imageModels, textModels),
   };
 
-  localStorage.setItem(REGISTRY_KEY, JSON.stringify(normalized));
+  storage.setItem(REGISTRY_KEY, JSON.stringify(normalized));
 }
 
 export function getImageModelById(registry: FlyreqModelRegistry, id: string): ImageModelConfig | undefined {

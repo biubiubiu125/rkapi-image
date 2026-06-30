@@ -18,14 +18,17 @@ vi.hoisted(() => {
     textModels: [],
     defaults: { textToImage: 'flyreq-gpt-image-2', imageToImage: 'flyreq-gpt-image-2' },
   }));
-  globalThis.localStorage = {
+  Object.defineProperty(globalThis, 'localStorage', {
+    value: {
     getItem: (key: string) => storage.get(key) ?? null,
     setItem: (key: string, value: string) => { storage.set(key, value); },
     removeItem: (key: string) => { storage.delete(key); },
     clear: () => { storage.clear(); },
     key: (index: number) => Array.from(storage.keys())[index] ?? null,
     get length() { return storage.size; },
-  } as Storage;
+    } as Storage,
+    configurable: true,
+  });
 });
 
 import { ackFlyreqTask, createFlyreqTask, resolveImageTaskProvider, type FlyreqTaskResponse } from '@/lib/flyreq-task-client';

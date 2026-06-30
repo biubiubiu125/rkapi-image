@@ -126,13 +126,13 @@ URL 只需要一个 `provider` 参数，内容是 JSON 字符串。支持裸 JSO
 裸 JSON：
 
 ```text
-https://your-domain.example/zh/?provider={"type":"image","preset":"gpt-image-2","provider":"openai","modelKey":"flyreq-gpt-image-2","name":"FlyReq","modelId":"gpt-image-2","baseUrl":"https://flyreq.com","apiKey":"YOUR_API_KEY","maxRefImages":16,"maxOutputSize":"4K"}
+https://image.flyreq.com/zh/?provider={"type":"image","preset":"gpt-image-2","provider":"openai","modelKey":"flyreq-gpt-image-2","name":"FlyReq","modelId":"gpt-image-2","baseUrl":"https://flyreq.com","apiKey":"YOUR_API_KEY","maxRefImages":16,"maxOutputSize":"4K"}
 ```
 
 URL 编码：
 
 ```text
-https://your-domain.example/zh/?provider=%7B%22type%22%3A%22image%22%2C%22preset%22%3A%22gpt-image-2%22%2C%22provider%22%3A%22openai%22%2C%22modelKey%22%3A%22flyreq-gpt-image-2%22%2C%22name%22%3A%22FlyReq%22%2C%22modelId%22%3A%22gpt-image-2%22%2C%22baseUrl%22%3A%22https%3A%2F%2Fflyreq.com%22%2C%22apiKey%22%3A%22YOUR_API_KEY%22%2C%22maxRefImages%22%3A16%2C%22maxOutputSize%22%3A%224K%22%7D
+https://image.flyreq.com/zh/?provider=%7B%22type%22%3A%22image%22%2C%22preset%22%3A%22gpt-image-2%22%2C%22provider%22%3A%22openai%22%2C%22modelKey%22%3A%22flyreq-gpt-image-2%22%2C%22name%22%3A%22FlyReq%22%2C%22modelId%22%3A%22gpt-image-2%22%2C%22baseUrl%22%3A%22https%3A%2F%2Fflyreq.com%22%2C%22apiKey%22%3A%22YOUR_API_KEY%22%2C%22maxRefImages%22%3A16%2C%22maxOutputSize%22%3A%224K%22%7D
 ```
 
 JSON 字段：
@@ -239,7 +239,7 @@ mkdir -p data/images
 docker compose up -d
 ```
 
-访问 <http://localhost:3000>。
+访问 <http://localhost:3001>。
 
 `docker-compose.yml` 默认使用：
 
@@ -326,7 +326,7 @@ npm start                # 或 npm run server
 推荐 **PM2 / systemd / 平台自带进程管理**，确保：
 
 - 进程对 `FLYREQ_TASK_DB` 指向的 SQLite 文件有读写权限
-- 反向代理（Nginx / Caddy / 云网关）将域名转到 `http://127.0.0.1:3000`
+- 反向代理（Nginx / Caddy / 云网关）将域名转到 `http://127.0.0.1:3001`
 
 #### 5. 一键打包
 
@@ -364,7 +364,7 @@ cp backend/.env.example backend/.env
 npm run dev
 ```
 
-访问 <http://localhost:3000>。
+访问 <http://localhost:3001>。
 
 > 首次启动时需要在 UI 的"设置"中至少完成一个图片模型和一个文本模型配置，并设置默认模型。所有前端配置均保存在浏览器 localStorage，可通过备份功能导出。
 
@@ -427,7 +427,7 @@ docker push ghcr.io/doudou770/flyreq-image-studio:latest
 
 | 变量 | 必填 | 默认 | 说明 |
 | --- | --- | --- | --- |
-| `PORT` | 否 | `3000` | 监听端口 |
+| `PORT` | 否 | `3001` | 监听端口 |
 | `HOSTNAME` | 否 | `0.0.0.0` | 绑定地址，`localhost`/`127.0.0.1` 仅本机 |
 | `NODE_ENV` | **是** | `production` | **必须为 `production`**，否则会走 Next dev 模式 |
 | `FLYREQ_TASK_DB` | 否 | `./flyreq-tasks.sqlite` | SQLite 文件路径，建议放到持久化目录 |

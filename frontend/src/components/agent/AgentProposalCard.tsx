@@ -16,6 +16,7 @@ import { cn } from '@/lib/utils';
 import {
   MODEL_OPTIONS,
   MODEL_IMAGE_LIMITS,
+  isGptImageModel,
   type ModelId,
 } from '@/lib/gemini-config';
 import type { AspectRatio, OutputSize } from '@/lib/job-store';
@@ -166,7 +167,7 @@ export function AgentProposalCard({
   const supportsAdvancedParams = supportsGptImageAdvancedParams(imageModel);
   const autoLayoutAvailable = supportsAutoLayout(imageModel);
   const autoLayoutLocked = autoLayoutAvailable && layout.outputSize === 'auto';
-  const showSizeControl = imageModel !== 'gpt-image-2' && (sizeOptions.length > 1 || autoLayoutAvailable);
+  const showSizeControl = !isGptImageModel(imageModel) && (sizeOptions.length > 1 || autoLayoutAvailable);
   const showAspectControl = !autoLayoutLocked && aspectRatioOptions.length > 0;
   const customSizeAvailable = supportsCustomSize(imageModel) && !autoLayoutLocked;
   const customSizeMaxSide = getCustomSizeMaxSide(imageModel) || 2048;

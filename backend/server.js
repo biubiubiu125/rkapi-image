@@ -102,7 +102,7 @@ function hashPromptGalleryPassword(password) {
     .digest('hex');
 }
 
-const PORT = Number(process.env.PORT || 3000);
+const PORT = Number(process.env.PORT || 3001);
 const HOSTNAME = process.env.HOSTNAME || '0.0.0.0';
 const DB_PATH = process.env.FLYREQ_TASK_DB || path.join(__dirname, 'flyreq-tasks.sqlite');
 const TASK_TTL_MS = 12 * 60 * 60 * 1000;

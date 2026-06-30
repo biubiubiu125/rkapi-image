@@ -62,7 +62,7 @@ export function GenerationParamsBar({ value, onChange, size = 'xs', className }:
   const supportsAdvancedParams = supportsGptImageAdvancedParams(model);
   const autoLayoutAvailable = supportsAutoLayout(model);
   const autoLayoutLocked = autoLayoutAvailable && value.outputSize === 'auto';
-  const showSizeControl = model !== 'gpt-image-2';
+  const showSizeControl = !isGptImageModel(model);
   const customSizeAvailable = supportsCustomSize(model) && !autoLayoutLocked;
   const customSizeMaxSide = getCustomSizeMaxSide(model) || 2048;
   const displaySizeLabel = value.customSize || getOutputSizeLabel(value.outputSize);

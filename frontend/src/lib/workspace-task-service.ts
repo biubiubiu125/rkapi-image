@@ -322,18 +322,90 @@ export async function submitTextToImage(
   actions: SubmitActions,
   onError: (message: string) => void
 ): Promise<void> {
-  const provider = resolveImageTaskProvider(input.model);
-  const apiKey = provider.apiKey;
+  try {
+    const provider = resolveImageTaskProvider(input.model);
+    const apiKey = provider.apiKey;
 
-  if (!apiKey) {
-    onError('请先配置 API 密钥');
-    return;
+    if (!apiKey) {
+      onError('请先配置 API 密钥');
+      return;
+    }
+
+    for (const prompt of input.prompts) {
+      const job = createBaseJob(
+        'text-to-image',
+        prompt,
+        input.outputSize,
+        input.customSize,
+        input.aspectRatio,
+        input.temperature,
+        input.model,
+        input.gptImageQuality,
+        input.gptImageStyle,
+        input.gptImageBackground,
+        input.gptImageOutputFormat,
+        input.parallelCount
+      );
+      actions.addJob(job);
+
+      try {
+        const serverTaskId = await createFlyreqTask({
+          apiKey,
+          baseUrl: provider.baseUrl,
+          protocol: provider.protocol,
+          mode: 'text-to-image',
+          prompt,
+          outputSize: input.outputSize,
+          customSize: input.customSize,
+          aspectRatio: input.aspectRatio,
+          temperature: input.temperature,
+          model: provider.modelId,
+          gptImageQuality: input.gptImageQuality,
+          gptImageStyle: input.gptImageStyle,
+          gptImageBackground: input.gptImageBackground,
+          gptImageOutputFormat: input.gptImageOutputFormat,
+          parallelCount: input.parallelCount,
+          images: [],
+        });
+
+        actions.replaceJob(job.id, current => ({
+          ...current,
+          status: '排队中',
+          serverTaskId,
+        }));
+      } catch (error) {
+        await actions.failJob(job.id, error instanceof Error ? error.message : String(error));
+      }
+    }
+  } catch (error) {
+    onError(error instanceof Error ? error.message : String(error));
   }
+}
 
-  for (const prompt of input.prompts) {
+export async function submitImageToImage(
+  input: ImageToImageSubmitInput,
+  actions: SubmitActions,
+  onError: (message: string) => void
+): Promise<void> {
+  try {
+    const provider = resolveImageTaskProvider(input.model);
+    const apiKey = provider.apiKey;
+
+    if (!apiKey) {
+      onError('请先配置 API 密钥');
+      return;
+    }
+
+    const refImages = input.files.map(file => ({
+      id: file.id,
+      name: file.name,
+      dataUrl: file.dataUrl,
+      mimeType: file.mimeType,
+    }));
+    const imageReferences = buildImageReferences(input.files);
     const job = createBaseJob(
-      'text-to-image',
-      prompt,
+      'image-to-image',
+      input.prompt,
       input.outputSize,
       input.customSize,
       input.aspectRatio,
@@ -343,8 +415,10 @@ export async function submitTextToImage(
       input.gptImageStyle,
       input.gptImageBackground,
       input.gptImageOutputFormat,
-      input.parallelCount
+      input.parallelCount,
+      refImages
     );
+
     actions.addJob(job);
 
     try {
@@ -352,8 +426,8 @@ export async function submitTextToImage(
         apiKey,
         baseUrl: provider.baseUrl,
         protocol: provider.protocol,
-        mode: 'text-to-image',
-        prompt,
+        mode: 'image-to-image',
+        prompt: input.prompt,
         outputSize: input.outputSize,
         customSize: input.customSize,
         aspectRatio: input.aspectRatio,
@@ -364,7 +438,7 @@ export async function submitTextToImage(
         gptImageBackground: input.gptImageBackground,
         gptImageOutputFormat: input.gptImageOutputFormat,
         parallelCount: input.parallelCount,
-        images: [],
+        images: imageReferences,
       });
 
       actions.replaceJob(job.id, current => ({
@@ -375,73 +449,7 @@ export async function submitTextToImage(
     } catch (error) {
       await actions.failJob(job.id, error instanceof Error ? error.message : String(error));
     }
-  }
-}
-
-export async function submitImageToImage(
-  input: ImageToImageSubmitInput,
-  actions: SubmitActions,
-  onError: (message: string) => void
-): Promise<void> {
-  const provider = resolveImageTaskProvider(input.model);
-  const apiKey = provider.apiKey;
-
-  if (!apiKey) {
-    onError('请先配置 API 密钥');
-    return;
-  }
-
-  const refImages = input.files.map(file => ({
-    id: file.id,
-    name: file.name,
-    dataUrl: file.dataUrl,
-    mimeType: file.mimeType,
-  }));
-  const imageReferences = buildImageReferences(input.files);
-  const job = createBaseJob(
-    'image-to-image',
-    input.prompt,
-    input.outputSize,
-    input.customSize,
-    input.aspectRatio,
-    input.temperature,
-    input.model,
-    input.gptImageQuality,
-    input.gptImageStyle,
-    input.gptImageBackground,
-    input.gptImageOutputFormat,
-    input.parallelCount,
-    refImages
-  );
-
-  actions.addJob(job);
-
-  try {
-    const serverTaskId = await createFlyreqTask({
-      apiKey,
-      baseUrl: provider.baseUrl,
-      protocol: provider.protocol,
-      mode: 'image-to-image',
-      prompt: input.prompt,
-      outputSize: input.outputSize,
-      customSize: input.customSize,
-      aspectRatio: input.aspectRatio,
-      temperature: input.temperature,
-      model: provider.modelId,
-      gptImageQuality: input.gptImageQuality,
-      gptImageStyle: input.gptImageStyle,
-      gptImageBackground: input.gptImageBackground,
-      gptImageOutputFormat: input.gptImageOutputFormat,
-      parallelCount: input.parallelCount,
-      images: imageReferences,
-    });
-
-    actions.replaceJob(job.id, current => ({
-      ...current,
-      status: '排队中',
-      serverTaskId,
-    }));
   } catch (error) {
-    await actions.failJob(job.id, error instanceof Error ? error.message : String(error));
+    onError(error instanceof Error ? error.message : String(error));
   }
 }

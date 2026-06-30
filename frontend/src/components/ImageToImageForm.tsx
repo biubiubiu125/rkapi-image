@@ -24,7 +24,7 @@ import {
   PopoverTrigger,
 } from '@/components/ui/popover';
 import { cn } from '@/lib/utils';
-import { MODEL_OPTIONS, MODEL_IMAGE_LIMITS, isGptImageModel, type ModelId } from '@/lib/gemini-config';
+import { getDefaultModelId, MODEL_OPTIONS, MODEL_IMAGE_LIMITS, isGptImageModel, type ModelId } from '@/lib/gemini-config';
 import {
   detectClosestAspectRatio,
   getAspectRatioOptions,
@@ -121,7 +121,7 @@ export function ImageToImageForm({
   const disabledMessage = '请先在设置中配置 FlyReq API 密钥，配置完成后即可开始转换图片。';
 
   // 先使用稳定默认值，避免 SSR/CSR 首帧不一致；挂载后再恢复缓存
-  const [model, setModel] = useState<ModelId>('gemini-3-pro-image-preview');
+  const [model, setModel] = useState<ModelId>(() => getDefaultModelId());
   const [outputSize, setOutputSize] = useState<OutputSize>('1K');
   const [customSize, setCustomSize] = useState<string | undefined>(undefined);
   const [temperature, setTemperature] = useState<number>(1);
@@ -264,7 +264,7 @@ export function ImageToImageForm({
   const supportsAdvancedParams = supportsGptImageAdvancedParams(model);
   const autoLayoutAvailable = supportsAutoLayout(model);
   const autoLayoutLocked = autoLayoutAvailable && outputSize === 'auto';
-  const showSizeControl = model !== 'gpt-image-2';
+  const showSizeControl = !isGptImageModel(model);
   const customSizeAvailable = supportsCustomSize(model) && !autoLayoutLocked;
   const customSizeMaxSide = getCustomSizeMaxSide(model) || 2048;
   const displaySizeLabel = customSize || getOutputSizeLabel(outputSize);
@@ -354,6 +354,11 @@ export function ImageToImageForm({
 
   const handleSubmit = () => {
     if (prompt.trim() && pendingFiles.length > 0) {
+      if (!model) {
+        dispatchImageActionToast('请先选择图片模型，或在设置中配置可用的图片模型。', 'error');
+        return;
+      }
+
       onSubmit({
         prompt: prompt.trim(),
         files: pendingFiles,
