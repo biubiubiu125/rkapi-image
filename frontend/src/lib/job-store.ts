@@ -53,7 +53,7 @@ export interface StoredJob {
   imageDownloadProgress?: ImageDownloadProgress;
 }
 
-const JOBS_KEY = 'nova-jobs';
+const JOBS_KEY = 'flyreq-jobs';
 
 // 复用单例连接层；保留这两个导出名以兼容现有调用方（如 useWorkspaceJobs）。
 export { IMG_STORE };

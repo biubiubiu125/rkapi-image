@@ -6,7 +6,7 @@ import {
   isGptImageModel,
   type ModelId,
 } from '@/lib/gemini-config';
-import { getImageModelById, loadRegistry } from '@/lib/nova-models';
+import { getImageModelById, loadRegistry } from '@/lib/flyreq-models';
 import type { AspectRatio, OutputSize, RefImageData, StoredJob } from '@/lib/job-store';
 
 export type ParallelCount = 1 | 2 | 3 | 4;

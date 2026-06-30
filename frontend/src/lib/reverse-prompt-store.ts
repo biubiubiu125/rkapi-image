@@ -1,5 +1,5 @@
 // 反推结果的 IndexedDB 持久化层
-// 数据库: nova-reverse-db (v1)
+// 数据库: flyreq-reverse-db (v1)
 // store: reverse-results (keyPath: 'slot')
 // 保存文字结果和当前输入图草稿。
 
@@ -25,7 +25,7 @@ export interface StoredReverseDraft {
   timestamp: number;
 }
 
-const DB_NAME = 'nova-reverse-db';
+const DB_NAME = 'flyreq-reverse-db';
 const DB_VERSION = 1;
 const STORE_NAME = 'reverse-results';
 

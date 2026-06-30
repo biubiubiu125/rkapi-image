@@ -1,9 +1,9 @@
 import { useEffect, useRef } from 'react';
-import { novaTaskSocket } from '@/lib/ccode-task-socket';
+import { flyreqTaskSocket } from '@/lib/flyreq-task-socket';
 import { finalizeCompletedServerTask, type SubmitActions } from '@/lib/workspace-task-service';
 import type { StoredJob } from '@/lib/job-store';
 import { classifyTaskFailure } from '@/lib/task-failure';
-import type { NovaTaskResponse } from '@/lib/ccode-task-client';
+import type { FlyreqTaskResponse } from '@/lib/flyreq-task-client';
 
 function isWaitingJob(job: StoredJob): boolean {
   return job.status === 'processing' || job.status === 'queued' || job.status === '排队中';
@@ -11,14 +11,14 @@ function isWaitingJob(job: StoredJob): boolean {
 
 /**
  * 用 WebSocket 替代原有的 HTTP 轮询：
- * - 每个等待中的 serverTaskId 走 novaTaskSocket.subscribeTask
+ * - 每个等待中的 serverTaskId 走 flyreqTaskSocket.subscribeTask
  * - 收到 processing → replaceJob 改状态
  * - 收到 completed → finalizeCompletedServerTask
  * - 收到 failed/expired → failJob，并根据 classifyTaskFailure 标记 terminal
  * - jobs 变化时新增/取消订阅；卸载时全部取消
  *
  * 不再有 visibilitychange 主动 abort/restart 逻辑（旧版有 race，会重复轮询或卡死）。
- * socket 自身负责重连、心跳、HTTP 兜底，详见 nova-task-socket.ts。
+ * socket 自身负责重连、心跳、HTTP 兜底，详见 flyreq-task-socket.ts。
  */
 export function useServerTaskPolling(
   jobs: StoredJob[],
@@ -56,7 +56,7 @@ export function useServerTaskPolling(
 
       const jobId = job.id;
       const taskId = job.serverTaskId;
-      const handler = (task: NovaTaskResponse) => {
+      const handler = (task: FlyreqTaskResponse) => {
         if (!mountedRef.current) return;
         if (!hasJobRef.current(jobId)) return;
         const actions = actionsRef.current;
@@ -87,7 +87,7 @@ export function useServerTaskPolling(
           actions.replaceJob(jobId, current => ({ ...current, status: '排队中' }));
         }
       };
-      const unsubscribe = novaTaskSocket.subscribeTask(taskId, handler);
+      const unsubscribe = flyreqTaskSocket.subscribeTask(taskId, handler);
       subscriptions.set(taskId, unsubscribe);
     }
 

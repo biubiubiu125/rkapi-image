@@ -12,7 +12,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
  * @returns [values, setPartial] — 当前值 + 局部更新函数
  *
  * @example
- * const [settings, updateSettings] = usePersistedSettings('nova-t2i-settings', {
+ * const [settings, updateSettings] = usePersistedSettings('flyreq-t2i-settings', {
  *   model: 'gemini-3-pro-image-preview' as ModelId,
  *   outputSize: '1K' as OutputSize,
  *   temperature: 1,

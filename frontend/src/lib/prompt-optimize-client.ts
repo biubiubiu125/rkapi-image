@@ -230,7 +230,7 @@ async function runAttempt(
   }, OPTIMIZE_TIMEOUT_MS);
 
   try {
-    const response = await fetch('/api/nova/proxy/text', {
+    const response = await fetch('/api/flyreq/proxy/text', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({

@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.hoisted(() => {
   const storage = new Map<string, string>();
-  storage.set('nova-model-registry', JSON.stringify({
+  storage.set('flyreq-model-registry', JSON.stringify({
     imageModels: [{
       id: 'flyreq-gpt-image-2',
       protocol: 'openai',
@@ -28,7 +28,7 @@ vi.hoisted(() => {
   } as Storage;
 });
 
-import { ackNovaTask, createNovaTask, resolveImageTaskProvider, type NovaTaskResponse } from '@/lib/ccode-task-client';
+import { ackFlyreqTask, createFlyreqTask, resolveImageTaskProvider, type FlyreqTaskResponse } from '@/lib/flyreq-task-client';
 import { downloadAndStoreImages } from '@/lib/image-downloader';
 import type { StoredJob } from '@/lib/job-store';
 import {
@@ -36,12 +36,12 @@ import {
   submitTextToImage,
   type SubmitActions,
 } from '@/lib/workspace-task-service';
-vi.mock('@/lib/ccode-task-client', async importOriginal => {
-  const actual = await importOriginal<typeof import('@/lib/ccode-task-client')>();
+vi.mock('@/lib/flyreq-task-client', async importOriginal => {
+  const actual = await importOriginal<typeof import('@/lib/flyreq-task-client')>();
   return {
     ...actual,
-    ackNovaTask: vi.fn(),
-    createNovaTask: vi.fn(),
+    ackFlyreqTask: vi.fn(),
+    createFlyreqTask: vi.fn(),
     resolveImageTaskProvider: vi.fn(),
   };
 });
@@ -54,8 +54,8 @@ vi.mock('@/lib/image-downloader', async importOriginal => {
   };
 });
 
-const mockedAckNovaTask = vi.mocked(ackNovaTask);
-const mockedCreateNovaTask = vi.mocked(createNovaTask);
+const mockedAckFlyreqTask = vi.mocked(ackFlyreqTask);
+const mockedCreateFlyreqTask = vi.mocked(createFlyreqTask);
 const mockedDownloadAndStoreImages = vi.mocked(downloadAndStoreImages);
 const mockedResolveImageTaskProvider = vi.mocked(resolveImageTaskProvider);
 
@@ -75,7 +75,7 @@ function makeJob(overrides: Partial<StoredJob> = {}): StoredJob {
   };
 }
 
-function makeCompletedTask(images: string[]): NovaTaskResponse {
+function makeCompletedTask(images: string[]): FlyreqTaskResponse {
   return {
     id: 'task-1',
     status: 'completed',
@@ -105,10 +105,10 @@ function createActions(initialJob: StoredJob): { actions: SubmitActions; getJob:
 }
 
 beforeEach(() => {
-  mockedAckNovaTask.mockReset();
-  mockedAckNovaTask.mockResolvedValue(undefined);
-  mockedCreateNovaTask.mockReset();
-  mockedCreateNovaTask.mockResolvedValue('task-advanced-1');
+  mockedAckFlyreqTask.mockReset();
+  mockedAckFlyreqTask.mockResolvedValue(undefined);
+  mockedCreateFlyreqTask.mockReset();
+  mockedCreateFlyreqTask.mockResolvedValue('task-advanced-1');
   mockedDownloadAndStoreImages.mockReset();
   mockedResolveImageTaskProvider.mockReset();
   mockedResolveImageTaskProvider.mockReturnValue({
@@ -120,7 +120,7 @@ beforeEach(() => {
 });
 
 describe('submitTextToImage', () => {
-  it('passes GPT Image advanced params into createNovaTask payload', async () => {
+  it('passes GPT Image advanced params into createFlyreqTask payload', async () => {
     const job = makeJob();
     const { actions, getJob } = createActions(job);
 
@@ -137,7 +137,7 @@ describe('submitTextToImage', () => {
       parallelCount: 1,
     }, actions, vi.fn());
 
-    expect(mockedCreateNovaTask).toHaveBeenCalledWith(expect.objectContaining({
+    expect(mockedCreateFlyreqTask).toHaveBeenCalledWith(expect.objectContaining({
       apiKey: 'test-api-key',
       mode: 'text-to-image',
       model: 'gpt-image-2',
@@ -171,13 +171,13 @@ describe('finalizeCompletedServerTask', () => {
     const job = makeJob();
     const { actions, getJob } = createActions(job);
 
-    await finalizeCompletedServerTask(job, makeCompletedTask(['URL:/api/nova/images/task-1/0']), actions);
+    await finalizeCompletedServerTask(job, makeCompletedTask(['URL:/api/flyreq/images/task-1/0']), actions);
 
     expect(actions.completeJob).toHaveBeenCalledTimes(2);
     expect(getJob().images).toEqual(['blob:cached-0']);
     expect(getJob().serverTaskAcked).toBe(true);
     expect(getJob().imageDownloadProgress).toBeUndefined();
-    expect(mockedAckNovaTask).toHaveBeenCalledWith('task-1');
+    expect(mockedAckFlyreqTask).toHaveBeenCalledWith('task-1');
   });
 
   it('部分 URL 图片缓存失败时保留 URL 引用和失败进度且不 ack', async () => {
@@ -198,17 +198,17 @@ describe('finalizeCompletedServerTask', () => {
     const { actions, getJob } = createActions(job);
 
     await finalizeCompletedServerTask(job, makeCompletedTask([
-      'URL:/api/nova/images/task-1/0',
-      'URL:/api/nova/images/task-1/1',
+      'URL:/api/flyreq/images/task-1/0',
+      'URL:/api/flyreq/images/task-1/1',
     ]), actions);
 
     expect(getJob().images).toEqual([
       'blob:cached-0',
-      'URL:/api/nova/images/task-1/1',
+      'URL:/api/flyreq/images/task-1/1',
     ]);
     expect(getJob().serverTaskAcked).toBe(false);
     expect(getJob().warning).toContain('1 张图片本地缓存失败');
     expect(getJob().imageDownloadProgress?.failed).toBe(1);
-    expect(mockedAckNovaTask).not.toHaveBeenCalled();
+    expect(mockedAckFlyreqTask).not.toHaveBeenCalled();
   });
 });

@@ -45,7 +45,7 @@ import {
 import { MAX_UPLOAD_SIZE_BYTES } from '@/lib/constants';
 import { loadJsonFromStorage, saveJsonToStorage } from '@/lib/settings-storage';
 
-const REVERSE_SETTINGS_KEY = 'nova-reverse-prompt-settings';
+const REVERSE_SETTINGS_KEY = 'flyreq-reverse-prompt-settings';
 
 interface ReverseSettings {
   model: ReversePromptModelId;

@@ -50,7 +50,7 @@ fs.cpSync(FRONTEND_OUT_DIR.src, path.join(TEMP_FRONTEND, 'out'), { recursive: tr
 // Generate root package.json for one-command deploy
 const backendPkg = JSON.parse(fs.readFileSync(path.join(BACKEND_DIR, 'package.json'), 'utf8'));
 const rootPkg = {
-  name: 'nova-image',
+  name: 'flyreq-image-studio',
   version: backendPkg.version || '1.0.0',
   private: true,
   description: 'FlyReq Image - 生产部署包',

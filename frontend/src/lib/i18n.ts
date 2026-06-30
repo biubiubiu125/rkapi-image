@@ -2,7 +2,7 @@ export const LOCALES = ['en', 'zh'] as const;
 export type Locale = typeof LOCALES[number];
 
 export const DEFAULT_LOCALE: Locale = 'en';
-export const LOCALE_STORAGE_KEY = 'nova-locale';
+export const LOCALE_STORAGE_KEY = 'flyreq-locale';
 
 const dictionaries = {
   en: {
@@ -71,7 +71,7 @@ const dictionaries = {
     'promptGallery.passwordWrong': 'Incorrect password',
     'promptGallery.passwordFailed': 'Password verification failed',
     'missingApiKey.title': 'Configure an API key first',
-    'missingApiKey.description': 'Nova mode needs an API key before it can generate or transform images.',
+    'missingApiKey.description': 'FlyReq mode needs an API key before it can generate or transform images.',
   },
   zh: {
     'app.title': 'FlyReq Image',
@@ -139,7 +139,7 @@ const dictionaries = {
     'promptGallery.passwordWrong': '密码错误',
     'promptGallery.passwordFailed': '密码验证失败',
     'missingApiKey.title': '请先配置 API 密钥',
-    'missingApiKey.description': 'Nova 模式需要先配置 API 密钥，配置完成后即可生成或转换图片。',
+    'missingApiKey.description': 'FlyReq 模式需要先配置 API 密钥，配置完成后即可生成或转换图片。',
   },
 } as const;
 

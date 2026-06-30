@@ -1,15 +1,15 @@
 // Agent 模式自建上下文系统的 IndexedDB 持久化层
-// 数据库: nova-agent-db (v1)
+// 数据库: flyreq-agent-db (v1)
 //   store: messages (keyPath 'id')        —— 对话消息，靠 createdAt 排序
 //   store: images   (keyPath 'imgId')     —— 图片登记表（仅描述 + 缩略图 + 字节引用）
 //   store: meta      (keyPath 'key')       —— 会话元信息（模型选择等）
-// 图片真实字节不在这里，存于 nova-image-db 的 blobs store（复用 image-downloader）。
+// 图片真实字节不在这里，存于 flyreq-image-db 的 blobs store（复用 image-downloader）。
 
 import { storeImageBlob, getStoredBlob, deleteStoredBlobs } from '@/lib/image-downloader';
 import type { AgentMessage, AgentImageRecord, AgentProposal } from '@/lib/agent-chat-config';
 import type { GptImageBackground, GptImageOutputFormat, GptImageQuality, GptImageStyle } from '@/lib/model-capabilities';
 
-const DB_NAME = 'nova-agent-db';
+const DB_NAME = 'flyreq-agent-db';
 const DB_VERSION = 1;
 const MESSAGES_STORE = 'messages';
 const IMAGES_STORE = 'images';
@@ -129,7 +129,7 @@ export async function deleteMessages(ids: string[]): Promise<void> {
   });
 }
 
-/** 从 nova-agent-db 中删除图片登记记录 */
+/** 从 flyreq-agent-db 中删除图片登记记录 */
 export async function deleteImageRecords(imgIds: string[]): Promise<void> {
   if (imgIds.length === 0) return;
   const db = await openAgentDB();
@@ -144,7 +144,7 @@ export async function deleteImageRecords(imgIds: string[]): Promise<void> {
   });
 }
 
-/** 从 nova-image-db 中删除 agent 图片的 blob 字节 */
+/** 从 flyreq-image-db 中删除 agent 图片的 blob 字节 */
 export async function deleteAgentImageBytes(imgId: string): Promise<void> {
   await deleteStoredBlobs(imgId, 1);
 }
@@ -291,14 +291,14 @@ export async function clearPendingGeneration(): Promise<void> {
   });
 }
 
-// ===== 图片字节存取（复用 nova-image-db 的 blobs store）=====
+// ===== 图片字节存取（复用 flyreq-image-db 的 blobs store）=====
 // 约定：每张 agent 图片用 imgId 作为 jobId 命名空间，imageIndex 固定 0。
 
 export async function storeAgentImageBytes(imgId: string, blob: Blob): Promise<void> {
   await storeImageBlob(imgId, 0, blob);
 }
 
-/** 查询 nova-upload-cache 中缓存的图片记录 */
+/** 查询 flyreq-upload-cache 中缓存的图片记录 */
 interface UploadCacheRecord {
   key: string;
   name: string;
@@ -314,7 +314,7 @@ interface UploadCacheRecord {
 function openUploadCacheDB(): Promise<IDBDatabase | null> {
   if (typeof indexedDB === 'undefined') return Promise.resolve(null);
   return new Promise((resolve) => {
-    const req = indexedDB.open('nova-upload-cache', 1);
+    const req = indexedDB.open('flyreq-upload-cache', 1);
     req.onerror = () => resolve(null);
     req.onsuccess = () => resolve(req.result);
   });
@@ -329,7 +329,7 @@ function getFromUploadCache(db: IDBDatabase, key: string): Promise<UploadCacheRe
   });
 }
 
-/** 从 nova-agent-db 的 images store 中查询单条图片登记记录 */
+/** 从 flyreq-agent-db 的 images store 中查询单条图片登记记录 */
 export async function getAgentImageRecord(imgId: string): Promise<AgentImageRecord | null> {
   const db = await openAgentDB();
   if (!db) return null;
@@ -342,7 +342,7 @@ export async function getAgentImageRecord(imgId: string): Promise<AgentImageReco
 }
 
 export async function getAgentImageBytes(imgId: string): Promise<Blob | null> {
-  // 1) 先查 nova-upload-cache（上传图片已压缩缓存于此，与其余模式共享）
+  // 1) 先查 flyreq-upload-cache（上传图片已压缩缓存于此，与其余模式共享）
   const record = await getAgentImageRecord(imgId);
   if (record?.contentHash) {
     try {
@@ -362,10 +362,10 @@ export async function getAgentImageBytes(imgId: string): Promise<Blob | null> {
         }
       }
     } catch {
-      // 读取上传缓存失败时静默降级到 nova-image-db
+      // 读取上传缓存失败时静默降级到 flyreq-image-db
     }
   }
-  // 2) 降级到 nova-image-db（生成图片走此路径）
+  // 2) 降级到 flyreq-image-db（生成图片走此路径）
   return getStoredBlob(imgId, 0);
 }
 

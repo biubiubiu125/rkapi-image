@@ -1,8 +1,8 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { createNovaTask, getNovaTask, ackNovaTask, resolveImageTaskProvider, type ImageReference } from '@/lib/ccode-task-client';
-import { novaTaskSocket } from '@/lib/ccode-task-socket';
+import { createFlyreqTask, getFlyreqTask, ackFlyreqTask, resolveImageTaskProvider, type ImageReference } from '@/lib/flyreq-task-client';
+import { flyreqTaskSocket } from '@/lib/flyreq-task-socket';
 import { generateUUID } from '@/lib/uuid';
 import {
   downloadAndStoreImages,
@@ -177,7 +177,7 @@ export function useGifWorkflow(): UseGifWorkflowResult {
     };
     persistJob(completed);
 
-    try { await ackNovaTask(serverTaskId); } catch { /* ignore */ }
+    try { await ackFlyreqTask(serverTaskId); } catch { /* ignore */ }
 
     revokeResolvedUrls();
     if (immediateBlobUrl) {
@@ -191,7 +191,7 @@ export function useGifWorkflow(): UseGifWorkflowResult {
 
   const subscribeServerTask = useCallback((taskId: string) => {
     clearSubscription();
-    const unsubscribe = novaTaskSocket.subscribeTask(taskId, task => {
+    const unsubscribe = flyreqTaskSocket.subscribeTask(taskId, task => {
       const current = jobRef.current;
       if (!current || current.serverTaskId !== taskId) return;
       if (task.status === 'completed') {
@@ -235,7 +235,7 @@ export function useGifWorkflow(): UseGifWorkflowResult {
 
     if (initial.status === 'generating_grid' && initial.serverTaskId) {
       setStartedAt(Date.parse(initial.createdAt) || Date.now());
-      getNovaTask(initial.serverTaskId)
+      getFlyreqTask(initial.serverTaskId)
         .then(task => {
           const current = jobRef.current;
           if (!current || current.serverTaskId !== initial.serverTaskId) return;
@@ -336,7 +336,7 @@ export function useGifWorkflow(): UseGifWorkflowResult {
 
     try {
       // TODO: 从模型注册表读取实际的 baseUrl 和 protocol
-      const serverTaskId = await createNovaTask({
+      const serverTaskId = await createFlyreqTask({
         apiKey: provider.apiKey,
         baseUrl: provider.baseUrl,
         protocol: provider.protocol,
@@ -466,7 +466,7 @@ export function useGifWorkflow(): UseGifWorkflowResult {
     setIsSyncing(true);
     onStatus?.('正在查询任务状态…');
     try {
-      const task = await getNovaTask(current.serverTaskId);
+      const task = await getFlyreqTask(current.serverTaskId);
       if (task.status === 'completed') {
         onStatus?.('生成完成，正在下载图片…');
         await finalizeGrid(current, task.result?.images || [], current.serverTaskId);

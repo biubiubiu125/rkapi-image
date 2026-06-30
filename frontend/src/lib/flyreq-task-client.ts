@@ -7,7 +7,7 @@ import {
   getTextModelById,
   loadRegistry,
   type ProviderProtocol,
-} from '@/lib/nova-models';
+} from '@/lib/flyreq-models';
 import {
   normalizeModelBaseUrl,
 } from '@/lib/model-endpoints';
@@ -28,14 +28,14 @@ const MODEL_CHECK_TIMEOUT = 30000;
 const TASK_REQUEST_TIMEOUT = 30000;
 const CREATE_TASK_TIMEOUT = 60000;
 
-export type NovaTaskMode = 'text-to-image' | 'image-to-image';
-export type NovaTaskStatus = 'queued' | '排队中' | 'processing' | 'completed' | 'failed' | 'expired';
+export type FlyreqTaskMode = 'text-to-image' | 'image-to-image';
+export type FlyreqTaskStatus = 'queued' | '排队中' | 'processing' | 'completed' | 'failed' | 'expired';
 
-export interface CreateNovaTaskInput {
+export interface CreateFlyreqTaskInput {
   apiKey: string;
   baseUrl: string;
   protocol: ProviderProtocol;
-  mode: NovaTaskMode;
+  mode: FlyreqTaskMode;
   prompt: string;
   outputSize: OutputSize;
   customSize?: string;
@@ -50,10 +50,10 @@ export interface CreateNovaTaskInput {
   images: ImageReference[];
 }
 
-export interface NovaTaskResponse {
+export interface FlyreqTaskResponse {
   id: string;
-  status: NovaTaskStatus;
-  mode?: NovaTaskMode;
+  status: FlyreqTaskStatus;
+  mode?: FlyreqTaskMode;
   result?: { images?: string[] };
   error?: string;
   warning?: string;
@@ -62,7 +62,7 @@ export interface NovaTaskResponse {
   expiresAt?: string;
 }
 
-export interface NovaQueueStatus {
+export interface FlyreqQueueStatus {
   concurrencyLimit: number;
   configuredConcurrency: number;
   processingCount: number;
@@ -80,14 +80,14 @@ export interface NovaQueueStatus {
   serverMessage?: string;
 }
 
-export class NovaTaskError extends Error {
+export class FlyreqTaskError extends Error {
   statusCode: number;
   code?: string;
   retryAfter?: number;
 
   constructor(message: string, statusCode: number, code?: string, retryAfter?: number) {
     super(message);
-    this.name = 'NovaTaskError';
+    this.name = 'FlyreqTaskError';
     this.statusCode = statusCode;
     this.code = code;
     this.retryAfter = retryAfter;
@@ -110,7 +110,7 @@ async function parseTaskResponse<T>(response: Response): Promise<T> {
     const error = getObjectProperty(data, 'error');
     const code = getObjectProperty(data, 'code');
     const retryAfter = getObjectProperty(data, 'retryAfter');
-    throw new NovaTaskError(
+    throw new FlyreqTaskError(
       typeof error === 'string' ? error : `任务请求失败: ${response.status}`,
       response.status,
       typeof code === 'string' ? code : undefined,
@@ -187,8 +187,8 @@ async function fetchWithTimeout(
   }
 }
 
-export async function createNovaTask(input: CreateNovaTaskInput): Promise<string> {
-  const response = await fetchWithTimeout('/api/nova/tasks', {
+export async function createFlyreqTask(input: CreateFlyreqTaskInput): Promise<string> {
+  const response = await fetchWithTimeout('/api/flyreq/tasks', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(input),
@@ -245,7 +245,7 @@ export async function checkModelsAvailability(
         }
 
         // 统一通过后端代理使用 /v1/models（NewAPI 兼容）
-        const proxyUrl = `/api/nova/proxy/models?baseUrl=${encodeURIComponent(normalizedBaseUrl)}&apiKey=${encodeURIComponent(model.apiKey)}&protocol=${model.protocol}`;
+        const proxyUrl = `/api/flyreq/proxy/models?baseUrl=${encodeURIComponent(normalizedBaseUrl)}&apiKey=${encodeURIComponent(model.apiKey)}&protocol=${model.protocol}`;
         const response = await fetch(proxyUrl, { method: 'GET', cache: 'no-store' });
         if (!response.ok) {
           const detail = await response.text().catch(() => '');
@@ -305,48 +305,25 @@ export function resolveTextTaskProvider(modelId: string): { apiKey: string; base
   };
 }
 
-export async function getNovaTask(taskId: string): Promise<NovaTaskResponse> {
-  const response = await fetchWithTimeout(`/api/nova/tasks/${encodeURIComponent(taskId)}`, {
+export async function getFlyreqTask(taskId: string): Promise<FlyreqTaskResponse> {
+  const response = await fetchWithTimeout(`/api/flyreq/tasks/${encodeURIComponent(taskId)}`, {
     method: 'GET',
     cache: 'no-store',
   }, TASK_REQUEST_TIMEOUT);
   return parseTaskResponse(response);
 }
 
-export async function getNovaQueueStatus(): Promise<NovaQueueStatus> {
-  const response = await fetchWithTimeout('/api/nova/queue-status', {
+export async function getFlyreqQueueStatus(): Promise<FlyreqQueueStatus> {
+  const response = await fetchWithTimeout('/api/flyreq/queue-status', {
     method: 'GET',
     cache: 'no-store',
   }, TASK_REQUEST_TIMEOUT);
   return parseTaskResponse(response);
 }
 
-export async function ackNovaTask(taskId: string): Promise<void> {
-  await fetch(`/api/nova/tasks/${encodeURIComponent(taskId)}/ack`, {
+export async function ackFlyreqTask(taskId: string): Promise<void> {
+  await fetch(`/api/flyreq/tasks/${encodeURIComponent(taskId)}/ack`, {
     method: 'POST',
   }).catch(() => undefined);
 }
 
-// ===== 向后兼容别名 =====
-/** @deprecated Use NovaTaskMode */
-export type CcodeTaskMode = NovaTaskMode;
-/** @deprecated Use NovaTaskStatus */
-export type CcodeTaskStatus = NovaTaskStatus;
-/** @deprecated Use CreateNovaTaskInput */
-export type CreateCcodeTaskInput = CreateNovaTaskInput;
-/** @deprecated Use NovaTaskResponse */
-export type CcodeTaskResponse = NovaTaskResponse;
-/** @deprecated Use NovaQueueStatus */
-export type CcodeQueueStatus = NovaQueueStatus;
-/** @deprecated Use NovaTaskError */
-export const CcodeTaskError = NovaTaskError;
-/** @deprecated Use createNovaTask */
-export const createCcodeTask = createNovaTask;
-/** @deprecated Use checkModelsAvailability */
-export const checkCcodeModelsAvailability = checkModelsAvailability;
-/** @deprecated Use getNovaTask */
-export const getCcodeTask = getNovaTask;
-/** @deprecated Use getNovaQueueStatus */
-export const getCcodeQueueStatus = getNovaQueueStatus;
-/** @deprecated Use ackNovaTask */
-export const ackCcodeTask = ackNovaTask;

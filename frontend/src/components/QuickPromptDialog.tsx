@@ -21,7 +21,7 @@ interface QuickPromptDialogProps {
 
 async function fetchPrompts(): Promise<QuickPromptItem[]> {
   try {
-    const res = await fetch('/api/nova/prompts');
+    const res = await fetch('/api/flyreq/prompts');
     if (!res.ok) return [];
     return await res.json();
   } catch {

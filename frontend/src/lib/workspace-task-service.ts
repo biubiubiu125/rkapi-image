@@ -1,10 +1,10 @@
 import {
-  createNovaTask,
-  ackNovaTask,
+  createFlyreqTask,
+  ackFlyreqTask,
   resolveImageTaskProvider,
-  type NovaTaskResponse,
+  type FlyreqTaskResponse,
   type ImageReference,
-} from '@/lib/ccode-task-client';
+} from '@/lib/flyreq-task-client';
 import type { ModelId } from '@/lib/gemini-config';
 import type { AspectRatio, OutputSize, StoredJob } from '@/lib/job-store';
 import {
@@ -144,7 +144,7 @@ function createBaseJob(
   };
 }
 
-export function buildCompletedJobFromTask(job: StoredJob, task: NovaTaskResponse): StoredJob {
+export function buildCompletedJobFromTask(job: StoredJob, task: FlyreqTaskResponse): StoredJob {
   const images = task.result?.images || [];
   if (task.status === 'completed' && images.length > 0) {
     return {
@@ -166,7 +166,7 @@ export function buildCompletedJobFromTask(job: StoredJob, task: NovaTaskResponse
 
 export async function finalizeCompletedServerTask(
   job: StoredJob,
-  task: NovaTaskResponse,
+  task: FlyreqTaskResponse,
   actions: SubmitActions
 ): Promise<void> {
   const images = task.result?.images || [];
@@ -187,7 +187,7 @@ export async function finalizeCompletedServerTask(
       await actions.completeJob(job.id, finalJob);
 
       if (job.serverTaskId) {
-        await ackNovaTask(job.serverTaskId);
+        await ackFlyreqTask(job.serverTaskId);
       }
       return;
     }
@@ -229,7 +229,7 @@ export async function finalizeCompletedServerTask(
     await actions.completeJob(job.id, finalJob);
 
     if (allCached && job.serverTaskId) {
-      await ackNovaTask(job.serverTaskId);
+      await ackFlyreqTask(job.serverTaskId);
     }
     return;
   }
@@ -256,7 +256,7 @@ export interface RetryDownloadResult {
  *
  * 行为：
  * - 仅对 job.images 中以 URL: 开头的项执行下载；blob:/data:/IDB: 项保持不变。
- * - 全部成功：清空 warning，调用 ackNovaTask 让服务端按 2 分钟规则清理。
+ * - 全部成功：清空 warning，调用 ackFlyreqTask 让服务端按 2 分钟规则清理。
  * - 部分/全部失败：保留 URL: 前缀，更新 warning 数量，不调用 ack（服务端继续保留）。
  * - 不抛异常；调用方根据返回值显示 toast。
  */
@@ -307,7 +307,7 @@ export async function retryDownloadCachedImages(
   await actions.completeJob(job.id, updatedJob);
 
   if (allCached && job.serverTaskId && !job.serverTaskAcked) {
-    await ackNovaTask(job.serverTaskId);
+    await ackFlyreqTask(job.serverTaskId);
   }
 
   return {
@@ -348,7 +348,7 @@ export async function submitTextToImage(
     actions.addJob(job);
 
     try {
-      const serverTaskId = await createNovaTask({
+      const serverTaskId = await createFlyreqTask({
         apiKey,
         baseUrl: provider.baseUrl,
         protocol: provider.protocol,
@@ -417,7 +417,7 @@ export async function submitImageToImage(
   actions.addJob(job);
 
   try {
-    const serverTaskId = await createNovaTask({
+    const serverTaskId = await createFlyreqTask({
       apiKey,
       baseUrl: provider.baseUrl,
       protocol: provider.protocol,

@@ -38,7 +38,7 @@ const PromptGallery = memo(function PromptGallery({ wideMode = false }: { wideMo
   const loadMoreRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    fetch('/api/nova/blacklist')
+    fetch('/api/flyreq/blacklist')
       .then((res) => res.json())
       .then((data) => {
         if (Array.isArray(data.keywords)) {

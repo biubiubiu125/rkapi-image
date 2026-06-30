@@ -245,7 +245,7 @@ async function runAgentStream(
     input: buildInputMessages(input.history),
   };
 
-  const response = await fetch('/api/nova/proxy/text', {
+  const response = await fetch('/api/flyreq/proxy/text', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -409,7 +409,7 @@ async function requestImageDescription(
     ],
   };
 
-  const response = await fetch('/api/nova/proxy/text', {
+  const response = await fetch('/api/flyreq/proxy/text', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({

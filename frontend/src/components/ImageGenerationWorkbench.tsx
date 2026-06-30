@@ -43,9 +43,9 @@ import type { ImageFormSettings } from '@/lib/form-settings';
 import type { ImageToImageSubmitInput, TextToImageSubmitInput } from '@/lib/workspace-task-service';
 import { cn } from '@/lib/utils';
 
-const WORKBENCH_SETTINGS_KEY = 'nova-image-generation-settings';
-const T2I_SETTINGS_KEY = 'nova-t2i-settings';
-const I2I_SETTINGS_KEY = 'nova-i2i-settings';
+const WORKBENCH_SETTINGS_KEY = 'flyreq-image-generation-settings';
+const T2I_SETTINGS_KEY = 'flyreq-t2i-settings';
+const I2I_SETTINGS_KEY = 'flyreq-i2i-settings';
 const MAX_ASSET_IMPORTS = 5;
 
 type WorkbenchMode = 'text-to-image' | 'image-to-image';

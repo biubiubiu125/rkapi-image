@@ -1,5 +1,5 @@
 // Agent 模式的模型、指令、工具 schema 与类型定义
-// 文本对话模型从 nova-models 注册表动态读取，支持 Google 和 OpenAI 两种协议
+// 文本对话模型从 flyreq-models 注册表动态读取，支持 Google 和 OpenAI 两种协议
 // 开源版：不再硬编码模型，由用户在设置中配置
 
 import type { GptImageBackground, GptImageOutputFormat, GptImageQuality, GptImageStyle } from '@/lib/model-capabilities';
@@ -35,7 +35,7 @@ export type AgentImageSource = 'uploaded' | 'asset' | 'generated';
 
 /**
  * 图片登记表记录：只保存「描述 + 缩略图 + 字节引用」，不保存进对话上下文。
- * 真实字节存在 nova-image-db 的 blobs store，key 命名空间用 imgId（index 固定 0）。
+ * 真实字节存在 flyreq-image-db 的 blobs store，key 命名空间用 imgId（index 固定 0）。
  */
 export interface AgentImageRecord {
   imgId: string;

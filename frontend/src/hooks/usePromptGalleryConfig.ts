@@ -12,7 +12,7 @@ export function usePromptGalleryConfig() {
   useEffect(() => {
     let cancelled = false;
 
-    fetch('/api/nova/config', { cache: 'no-store' })
+    fetch('/api/flyreq/config', { cache: 'no-store' })
       .then(res => res.json())
       .then((data: { promptGalleryMode?: string; promptGalleryPasswordEnabled?: boolean }) => {
         if (cancelled) return;

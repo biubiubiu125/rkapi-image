@@ -1,10 +1,10 @@
-// nova-image-db 的单例连接层。
+// flyreq-image-db 的单例连接层。
 // 此前 job-store 与 image-downloader 各自在每次读写时都 indexedDB.open()+close()
 // （一个任务 N 张图就开关 N 次），且部分打开点缺少 onupgradeneeded，在全新库上
 // 先执行会建出「没有对象存储」的库，导致后续 transaction 抛 "object store not found"。
 // 这里统一为单例缓存连接 + 统一升级逻辑，消除两个问题。
 
-export const DB_NAME = 'nova-image-db';
+export const DB_NAME = 'flyreq-image-db';
 export const DB_VERSION = 2;
 export const IMG_STORE = 'images';
 export const BLOBS_STORE = 'blobs';

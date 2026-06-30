@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { hasConfiguredTextModel } from '@/lib/settings-storage';
 import { generateUUID } from '@/lib/uuid';
-import { createNovaTask, getNovaTask, resolveImageTaskProvider, type ImageReference } from '@/lib/ccode-task-client';
+import { createFlyreqTask, getFlyreqTask, resolveImageTaskProvider, type ImageReference } from '@/lib/flyreq-task-client';
 import { fetchImageAsBlob } from '@/lib/image-downloader';
 import {
   getGptImageAdvancedParamsForModel,
@@ -12,7 +12,7 @@ import {
   type AgentResolvedLayout,
 } from '@/lib/model-capabilities';
 import type { ModelId } from '@/lib/gemini-config';
-import { getCompleteImageModels, loadRegistry } from '@/lib/nova-models';
+import { getCompleteImageModels, loadRegistry } from '@/lib/flyreq-models';
 import {
   streamAgentChat,
   describeImage,
@@ -199,10 +199,10 @@ export function useAgentChat() {
   const [generationDraft, setGenerationDraft] = useState<AgentGenerationDraft | null>(null);
   const [isSyncing, setIsSyncing] = useState(false);
   const [webSearchEnabled, setWebSearchEnabled] = useState(() =>
-    getLocalStorageItem('nova-agent-web-search') === 'true'
+    getLocalStorageItem('flyreq-agent-web-search') === 'true'
   );
   const [intentRecognition, setIntentRecognition] = useState(() =>
-    getLocalStorageItem('nova-agent-intent-recognition') !== 'false'
+    getLocalStorageItem('flyreq-agent-intent-recognition') !== 'false'
   );
 
   const streamHandleRef = useRef<StreamAgentHandle | null>(null);
@@ -346,8 +346,8 @@ export function useAgentChat() {
     describeSignal?: AbortSignal,
   ): Promise<AgentImageRecord> => {
     const imgId = nextImgId();
-    // 上传图片（有 contentHash）已在 prepareUploadImage 时存于 nova-upload-cache，
-    // 不再重复存到 nova-image-db，节省空间；生成图片无 contentHash 则照常存储。
+    // 上传图片（有 contentHash）已在 prepareUploadImage 时存于 flyreq-upload-cache，
+    // 不再重复存到 flyreq-image-db，节省空间；生成图片无 contentHash 则照常存储。
     if (source === 'generated' || !contentHash) {
       await storeAgentImageBytes(imgId, blob);
     }
@@ -612,7 +612,7 @@ export function useAgentChat() {
     pollAbortRef.current = false;
     for (;;) {
       if (pollAbortRef.current || !mountedRef.current) throw new Error('已停止');
-      const task = await getNovaTask(taskId);
+      const task = await getFlyreqTask(taskId);
       if (task.status === 'completed') return task;
       if (task.status === 'failed' || task.status === 'expired') {
         throw new Error(task.error || task.warning || '生图任务失败');
@@ -777,7 +777,7 @@ export function useAgentChat() {
     pollWakeRef.current?.();
 
     try {
-      const task = await getNovaTask(taskId);
+      const task = await getFlyreqTask(taskId);
       if (task.status === 'completed') return 'completed';
       if (task.status === 'failed' || task.status === 'expired') return 'failed';
       if (task.status === 'processing') return 'processing';
@@ -841,7 +841,7 @@ export function useAgentChat() {
       const mode = references.length > 0 ? 'image-to-image' : 'text-to-image';
       const provider = resolveImageTaskProvider(model);
 
-      const taskId = await createNovaTask({
+      const taskId = await createFlyreqTask({
         apiKey: provider.apiKey,
         baseUrl: provider.baseUrl,
         protocol: provider.protocol,
@@ -963,7 +963,7 @@ export function useAgentChat() {
   const toggleWebSearch = useCallback(() => {
     setWebSearchEnabled(prev => {
       const next = !prev;
-      try { localStorage.setItem('nova-agent-web-search', String(next)); } catch { /* ignore */ }
+      try { localStorage.setItem('flyreq-agent-web-search', String(next)); } catch { /* ignore */ }
       return next;
     });
   }, []);
@@ -971,7 +971,7 @@ export function useAgentChat() {
   const toggleIntentRecognition = useCallback(() => {
     setIntentRecognition(prev => {
       const next = !prev;
-      try { localStorage.setItem('nova-agent-intent-recognition', String(next)); } catch { /* ignore */ }
+      try { localStorage.setItem('flyreq-agent-intent-recognition', String(next)); } catch { /* ignore */ }
       return next;
     });
   }, []);

@@ -37,8 +37,8 @@ export interface UseAsImageReferenceDetail {
   refImages: RefImageData[];
 }
 
-const TOAST_EVENT = 'nova-image-action-toast';
-const USE_AS_REFERENCE_EVENT = 'nova-use-as-i2i-reference';
+const TOAST_EVENT = 'flyreq-image-action-toast';
+const USE_AS_REFERENCE_EVENT = 'flyreq-use-as-i2i-reference';
 
 export function dispatchImageActionToast(message: string, type: ImageActionToastDetail['type'] = 'info'): void {
   if (typeof window === 'undefined') return;
@@ -192,8 +192,8 @@ export async function resolveImagePayloadToBlob(payload: ImageActionPayload): Pr
 }
 
 function getDownloadName(payload: ImageActionPayload, blob: Blob): string {
-  const rawName = payload.name?.trim() || payload.id || payload.assetId || payload.agentImageId || `nova-image-${Date.now()}`;
-  const baseName = rawName.replace(/[\\/:*?"<>|]+/g, '-').replace(/\s+/g, '-').slice(0, 80) || 'nova-image';
+  const rawName = payload.name?.trim() || payload.id || payload.assetId || payload.agentImageId || `flyreq-image-${Date.now()}`;
+  const baseName = rawName.replace(/[\\/:*?"<>|]+/g, '-').replace(/\s+/g, '-').slice(0, 80) || 'flyreq-image';
   const ext = getAssetFileExtension(blob.type || payload.mimeType || 'image/png');
   return baseName.toLowerCase().endsWith(`.${ext}`) ? baseName : `${baseName}.${ext}`;
 }

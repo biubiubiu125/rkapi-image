@@ -14,7 +14,7 @@ export type UploadedImage = {
   mimeType: string;
 };
 
-const store = localforage.createInstance({ name: "nova-image", storeName: "canvas_image_files" });
+const store = localforage.createInstance({ name: "flyreq-image", storeName: "canvas_image_files" });
 const objectUrls = new Map<string, string>();
 
 /** 本地存储图片 blob（命名沿用 uploadImage，但全程纯前端 IndexedDB，不上传服务端）。 */

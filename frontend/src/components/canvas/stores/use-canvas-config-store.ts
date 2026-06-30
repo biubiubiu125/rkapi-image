@@ -32,7 +32,7 @@ export const useCanvasConfigStore = create<CanvasConfigStore>()(
       setConfig: (patch) => set((state) => ({ config: { ...state.config, ...patch } })),
     }),
     {
-      name: "nova-image:canvas_config",
+      name: "flyreq-image:canvas_config",
       storage: createJSONStorage(() => (typeof window !== "undefined" ? window.localStorage : (undefined as unknown as Storage))),
       merge: (persisted, current) => {
         const persistedConfig = ((persisted as Partial<CanvasConfigStore>)?.config || {}) as Partial<CanvasGenerationConfig>;

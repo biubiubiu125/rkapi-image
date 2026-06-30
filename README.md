@@ -1,10 +1,10 @@
-# FlyReq Image Studio
+# flyreq-image-studio
 
 <div align="center">
 
 **自托管的 AI 图像生成工作台 · 自定义模型 · 多模式 · PWA · 实时任务**
 
-[![Version](https://img.shields.io/badge/version-v3.1.1-blue.svg)](https://github.com)
+[![Version](https://img.shields.io/badge/version-v3.1.1-blue.svg)](https://github.com/doudou770/flyreq-image-studio)
 [![License](https://img.shields.io/badge/license-AGPL--3.0-green.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%3E%3D20-brightgreen.svg)](https://nodejs.org)
 [![Next.js](https://img.shields.io/badge/Next.js-16-black.svg)](https://nextjs.org)
@@ -17,6 +17,8 @@
 ## 📖 简介
 
 FlyReq Image Studio（简称 FlyReq Image）是一个面向个人/团队的 AI 图像生成工作台。前端使用 Next.js 16 + React 19 静态导出（PWA），后端是轻量 Node.js 服务（`server.js` + SQLite + WebSocket），统一调度任务并代理图像生成 API。
+
+本项目基于 [tianjiangqiji/flyreq-image-studio](https://github.com/tianjiangqiji/flyreq-image-studio) 修改而来，当前维护仓库为 [doudou770/flyreq-image-studio](https://github.com/doudou770/flyreq-image-studio)。
 
 **开源版特性：**
 - 支持分别配置图片模型与文本模型，模型级独立保存 API Key 与 Base URL
@@ -152,9 +154,9 @@ JSON 字段：
 
 ### 任务系统
 
-- 提交后入队，服务端并发处理（默认上限 50，可通过 `NOVA_TASK_CONCURRENCY` 调整）
+- 提交后入队，服务端并发处理（默认上限 50，可通过 `FLYREQ_TASK_CONCURRENCY` 调整）
 - 浏览器通过 **WebSocket** 实时接收任务/队列状态，断线自动重连，失败 5 次后回退 **HTTP 轮询**（30 秒间隔）
-- 任务结果本地落盘（`backend/nova-images/`），HTTP 路由 `/api/nova/images/:taskId/:index` 直接提供
+- 任务结果本地落盘（`backend/flyreq-images/`），HTTP 路由 `/api/flyreq/images/:taskId/:index` 直接提供
 - 任务 TTL 12 小时，过期自动清理（5 分钟一次）
 - 服务重启时把残留"处理中"任务标记为失败并删除产物，避免幽灵任务
 
@@ -174,7 +176,7 @@ JSON 字段：
 ## 📁 项目结构
 
 ```text
-nova-image-studio/
+flyreq-image-studio/
 ├── frontend/                 # Next.js 前端（React 19 + TS）
 │   ├── src/
 │   │   ├── app/              # 根页面 layout.tsx / page.tsx
@@ -219,6 +221,8 @@ nova-image-studio/
 
 ### 快速启动
 
+使用 GitHub Packages / Container Registry 发布的镜像：
+
 ```bash
 # 1. 复制环境变量文件（如果不是从clone下来的，则自己新建并复制过来即可）
 cp backend/.env.example .env
@@ -236,6 +240,18 @@ docker compose up -d
 ```
 
 访问 <http://localhost:3000>。
+
+`docker-compose.yml` 默认使用：
+
+```yaml
+image: ghcr.io/doudou770/flyreq-image-studio:latest
+```
+
+如果 GitHub Packages 中的镜像包被设置为私有，需要先登录 GHCR：
+
+```bash
+echo YOUR_GITHUB_TOKEN | docker login ghcr.io -u YOUR_GITHUB_USERNAME --password-stdin
+```
 
 ### 环境变量
 
@@ -259,8 +275,8 @@ docker compose up -d --force-recreate
 
 以下目录自动挂载到 `./data/`：
 
-- `nova-images/` - 生成的图片
-- `nova-tasks.sqlite` - 任务数据库
+- `flyreq-images/` - 生成的图片
+- `flyreq-tasks.sqlite` - 任务数据库
 
 </details>
 
@@ -309,7 +325,7 @@ npm start                # 或 npm run server
 
 推荐 **PM2 / systemd / 平台自带进程管理**，确保：
 
-- 进程对 `NOVA_TASK_DB` 指向的 SQLite 文件有读写权限
+- 进程对 `FLYREQ_TASK_DB` 指向的 SQLite 文件有读写权限
 - 反向代理（Nginx / Caddy / 云网关）将域名转到 `http://127.0.0.1:3000`
 
 #### 5. 一键打包
@@ -334,8 +350,8 @@ npm run go
 
 ```bash
 # 1. 克隆仓库
-git clone https://github.com/tianjiangqiji/nova-image-studio.git
-cd nova-image-studio
+git clone https://github.com/doudou770/flyreq-image-studio.git
+cd flyreq-image-studio
 
 # 2. 安装依赖（自动安装根、frontend、backend）
 npm install
@@ -373,16 +389,35 @@ npm run go             # 打包：build + 汇总到根 out.zip
 ### 构建镜像
 
 ```bash
-docker build -t nova-image-studio:latest .
+docker build -t flyreq-image-studio:latest .
 ```
 
 ### 推送到仓库
 
 ```bash
-docker tag nova-image-studio:latest tianjiangqiji/nova-image-studio:latest
+docker tag flyreq-image-studio:latest ghcr.io/doudou770/flyreq-image-studio:latest
 
-docker push tianjiangqiji/nova-image-studio:latest
+docker push ghcr.io/doudou770/flyreq-image-studio:latest
 ```
+
+</details>
+
+<details>
+<summary><strong>🚢 GitHub Actions 发布</strong></summary>
+
+仓库内置手动发布工作流：`.github/workflows/release.yml`。
+
+在 GitHub 页面进入 **Actions → Release → Run workflow**，选择 `patch` / `minor` / `major` 后运行即可。工作流会固定检出 `master` 分支，并自动完成：
+
+- 读取最新 `vX.Y.Z` tag，按选择的类型自增版本号
+- 创建并推送新的 git tag，例如 `v3.1.2`
+- 创建 GitHub Release，并自动生成 release notes
+- 构建 Docker 镜像并推送到 GitHub Packages：
+  - `ghcr.io/doudou770/flyreq-image-studio:latest`
+  - `ghcr.io/doudou770/flyreq-image-studio:X.Y.Z`
+  - `ghcr.io/doudou770/flyreq-image-studio:vX.Y.Z`
+
+工作流使用仓库内置的 `GITHUB_TOKEN`，需要在仓库设置中允许 Actions 写入 `contents` 和 `packages`。
 
 </details>
 
@@ -395,16 +430,16 @@ docker push tianjiangqiji/nova-image-studio:latest
 | `PORT` | 否 | `3000` | 监听端口 |
 | `HOSTNAME` | 否 | `0.0.0.0` | 绑定地址，`localhost`/`127.0.0.1` 仅本机 |
 | `NODE_ENV` | **是** | `production` | **必须为 `production`**，否则会走 Next dev 模式 |
-| `NOVA_TASK_DB` | 否 | `./nova-tasks.sqlite` | SQLite 文件路径，建议放到持久化目录 |
-| `NOVA_TASK_CONCURRENCY` | 否 | `50` | 最大并发任务数（绝对上限 50） |
-| `NOVA_MAX_QUEUE_SIZE` | 否 | `200` | 全局最大待处理任务数 |
-| `NOVA_RATE_LIMIT_WINDOW_MS` | 否 | `60000` | 创建任务速率限制窗口，单位毫秒 |
-| `NOVA_RATE_LIMIT_MAX_REQUESTS_PER_IP` | 否 | `20` | 单 IP 在一个窗口内最多创建多少个任务 |
-| `NOVA_RATE_LIMIT_MAX_REQUESTS_PER_API_KEY` | 否 | `20` | 单 API Key 在一个窗口内最多创建多少个任务 |
-| `NOVA_MAX_PENDING_TASKS_PER_IP` | 否 | `20` | 单 IP 最多同时拥有多少个待处理任务 |
-| `NOVA_MAX_PENDING_TASKS_PER_API_KEY` | 否 | `10` | 单 API Key 最多同时拥有多少个待处理任务 |
-| `NOVA_RATE_LIMIT_RETRY_AFTER_SECONDS` | 否 | `30` | 队列满/限流时响应头 `Retry-After` 秒数 |
-| `NOVA_IMAGE_DIR` | 否 | `backend/nova-images/` | 任务产物落盘目录 |
+| `FLYREQ_TASK_DB` | 否 | `./flyreq-tasks.sqlite` | SQLite 文件路径，建议放到持久化目录 |
+| `FLYREQ_TASK_CONCURRENCY` | 否 | `50` | 最大并发任务数（绝对上限 50） |
+| `FLYREQ_MAX_QUEUE_SIZE` | 否 | `200` | 全局最大待处理任务数 |
+| `FLYREQ_RATE_LIMIT_WINDOW_MS` | 否 | `60000` | 创建任务速率限制窗口，单位毫秒 |
+| `FLYREQ_RATE_LIMIT_MAX_REQUESTS_PER_IP` | 否 | `20` | 单 IP 在一个窗口内最多创建多少个任务 |
+| `FLYREQ_RATE_LIMIT_MAX_REQUESTS_PER_API_KEY` | 否 | `20` | 单 API Key 在一个窗口内最多创建多少个任务 |
+| `FLYREQ_MAX_PENDING_TASKS_PER_IP` | 否 | `20` | 单 IP 最多同时拥有多少个待处理任务 |
+| `FLYREQ_MAX_PENDING_TASKS_PER_API_KEY` | 否 | `10` | 单 API Key 最多同时拥有多少个待处理任务 |
+| `FLYREQ_RATE_LIMIT_RETRY_AFTER_SECONDS` | 否 | `30` | 队列满/限流时响应头 `Retry-After` 秒数 |
+| `FLYREQ_IMAGE_DIR` | 否 | `backend/flyreq-images/` | 任务产物落盘目录 |
 | `PROMPT_GALLERY_MODE` | 否 | `2` | `1` 常驻 / `2` 私密密码（点七下标题） / `3` 关闭 |
 | `PROMPT_GALLERY_PASSWORD` | 否 | 空 | 提示词广场私密模式密码；为空时私密模式可直接开启 |
 
@@ -414,19 +449,19 @@ docker push tianjiangqiji/nova-image-studio:latest
 
 ## 📡 API 速览
 
-后端暴露在 `/api/nova/*` 路径下，前端在同源调用。
+后端暴露在 `/api/flyreq/*` 路径下，前端在同源调用。
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
-| `POST` | `/api/nova/tasks` | 创建任务，返回 `{ taskId }`（202） |
-| `GET` | `/api/nova/tasks/:id` | 查询任务状态与结果 |
-| `POST` | `/api/nova/tasks/:id/ack` | 续期：把 TTL 延长 2 分钟 |
-| `GET` | `/api/nova/queue-status` | 当前并发 / 排队 / 接收状态 |
-| `GET` | `/api/nova/prompts` | 提示词广场内容 |
-| `GET` | `/api/nova/blacklist` | 敏感词列表 |
-| `GET` | `/api/nova/config` | 前端配置（如 `promptGalleryMode`） |
-| `GET` | `/api/nova/images/:taskId/:index` | 任务产物图片 |
-| `WS` | `/api/nova/ws` | 实时任务 / 队列订阅 |
+| `POST` | `/api/flyreq/tasks` | 创建任务，返回 `{ taskId }`（202） |
+| `GET` | `/api/flyreq/tasks/:id` | 查询任务状态与结果 |
+| `POST` | `/api/flyreq/tasks/:id/ack` | 续期：把 TTL 延长 2 分钟 |
+| `GET` | `/api/flyreq/queue-status` | 当前并发 / 排队 / 接收状态 |
+| `GET` | `/api/flyreq/prompts` | 提示词广场内容 |
+| `GET` | `/api/flyreq/blacklist` | 敏感词列表 |
+| `GET` | `/api/flyreq/config` | 前端配置（如 `promptGalleryMode`） |
+| `GET` | `/api/flyreq/images/:taskId/:index` | 任务产物图片 |
+| `WS` | `/api/flyreq/ws` | 实时任务 / 队列订阅 |
 
 ### 任务状态
 
@@ -444,16 +479,16 @@ docker push tianjiangqiji/nova-image-studio:latest
 项目使用 `output: 'export'`，构建产物是纯静态 `out/`。`server.js` 同时托管静态文件 + 任务 API，不再依赖 `next start`。
 
 **只部署 `out/` 能用吗？**
-UI 可以打开，但任务提交、Agent、历史同步全部依赖 `/api/nova/*`，必须运行 `server.js`。
+UI 可以打开，但任务提交、Agent、历史同步全部依赖 `/api/flyreq/*`，必须运行 `server.js`。
 
 **数据库需要单独备份吗？**
-首次部署不需要，服务启动会自建。任务数据要保留就备份 `nova-tasks.sqlite`（含 WAL/SHM）以及 `nova-images/`。重启后残留任务会被自动标记为失败并清理产物。
+首次部署不需要，服务启动会自建。任务数据要保留就备份 `flyreq-tasks.sqlite`（含 WAL/SHM）以及 `flyreq-images/`。重启后残留任务会被自动标记为失败并清理产物。
 
 **如何临时停止接收新任务（不停服务）？**
 编辑 `.env`：
 
 ```env
-NOVA_ACCEPT_NEW_TASKS=false
+FLYREQ_ACCEPT_NEW_TASKS=false
 ```
 
 保存即生效。等待在飞任务完成后即可重启升级。再次开启设为 `true` 或留空。
@@ -497,11 +532,11 @@ NOVA_ACCEPT_NEW_TASKS=false
 ## Star History
 
 
-<a href="https://www.star-history.com/?repos=tianjiangqiji%2Fnova-image-studio&type=date&legend=top-left">
+<a href="https://www.star-history.com/?repos=doudou770%2Fflyreq-image-studio&type=date&legend=top-left">
  <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=tianjiangqiji/nova-image-studio&type=date&theme=dark&legend=top-left" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=tianjiangqiji/nova-image-studio&type=date&legend=top-left" />
-   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=tianjiangqiji/nova-image-studio&type=date&legend=top-left" />
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=doudou770/flyreq-image-studio&type=date&theme=dark&legend=top-left" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=doudou770/flyreq-image-studio&type=date&legend=top-left" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=doudou770/flyreq-image-studio&type=date&legend=top-left" />
  </picture>
 </a>
 
@@ -524,6 +559,6 @@ NOVA_ACCEPT_NEW_TASKS=false
 
 <div align="center">
 
-**[⬆ 回到顶部](#nova-image-studio)**
+**[⬆ 回到顶部](#flyreq-image-studio)**
 
 </div>

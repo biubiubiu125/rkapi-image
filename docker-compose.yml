@@ -1,7 +1,9 @@
+name: flyreq-image-studio
+
 services:
-  nova-image-studio:
-    image: tianjiangqiji/nova-image-studio:latest
-    container_name: nova-image-studio
+  flyreq-image-studio:
+    image: ghcr.io/doudou770/flyreq-image-studio:latest
+    container_name: flyreq-image-studio
     ports:
       - "3000:3000"
     volumes:

@@ -60,9 +60,9 @@ export default function RootLayout({
                 try {
                   var parts = window.location.pathname.split('/').filter(Boolean);
                   var urlLocale = parts[0] === 'zh' || parts[0] === 'en' ? parts[0] : '';
-                  var stored = window.localStorage.getItem('nova-locale');
+                  var stored = window.localStorage.getItem('flyreq-locale');
                   var locale = urlLocale || (stored === 'zh' || stored === 'en' ? stored : 'en');
-                  if (urlLocale) window.localStorage.setItem('nova-locale', urlLocale);
+                  if (urlLocale) window.localStorage.setItem('flyreq-locale', urlLocale);
                   document.documentElement.lang = locale === 'zh' ? 'zh-CN' : 'en';
                 } catch {
                   document.documentElement.lang = 'en';
@@ -78,7 +78,7 @@ export default function RootLayout({
             __html: `
               (function() {
                 try {
-                  var stored = window.localStorage.getItem('nova-wide-mode');
+                  var stored = window.localStorage.getItem('flyreq-wide-mode');
                   var wide = stored === 'enabled' && window.innerWidth >= 1280;
                   if (wide) {
                     document.documentElement.setAttribute('data-wide-mode', '');

@@ -1,12 +1,12 @@
 import { useEffect, useState } from 'react';
-import { novaTaskSocket } from '@/lib/ccode-task-socket';
-import type { NovaQueueStatus } from '@/lib/ccode-task-client';
+import { flyreqTaskSocket } from '@/lib/flyreq-task-socket';
+import type { FlyreqQueueStatus } from '@/lib/flyreq-task-client';
 
 export function useQueueStatus() {
-  const [queueStatus, setQueueStatus] = useState<NovaQueueStatus | null>(null);
+  const [queueStatus, setQueueStatus] = useState<FlyreqQueueStatus | null>(null);
 
   useEffect(() => {
-    const unsubscribe = novaTaskSocket.subscribeQueue(stats => setQueueStatus(stats));
+    const unsubscribe = flyreqTaskSocket.subscribeQueue(stats => setQueueStatus(stats));
     return () => {
       unsubscribe();
     };

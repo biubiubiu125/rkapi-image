@@ -34,7 +34,7 @@ async function loadPromptGalleryData() {
 
 async function fetchPromptBlacklist(): Promise<string[]> {
   try {
-    const response = await fetch("/api/nova/blacklist");
+    const response = await fetch("/api/flyreq/blacklist");
     if (!response.ok) return [];
     const data = await response.json();
     return Array.isArray(data.keywords) ? data.keywords.map((keyword: string) => keyword.toLowerCase()) : [];

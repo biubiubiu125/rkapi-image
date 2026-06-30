@@ -27,42 +27,42 @@ function isBlobRef(value: unknown): value is BlobRef {
 
 // localStorage keys to backup
 const LOCAL_STORAGE_KEYS = [
-    'nova-model-registry',
-    'nova-jobs',
-    'nova-t2i-settings',
-    'nova-i2i-settings',
-    'nova-reverse-prompt-settings',
+    'flyreq-model-registry',
+    'flyreq-jobs',
+    'flyreq-t2i-settings',
+    'flyreq-i2i-settings',
+    'flyreq-reverse-prompt-settings',
     'theme',
-    'nova-wide-mode',
+    'flyreq-wide-mode',
     // Agent 模式
-    'nova-agent-params',
-    'nova-agent-web-search',
-    'nova-agent-intent-recognition',
+    'flyreq-agent-params',
+    'flyreq-agent-web-search',
+    'flyreq-agent-intent-recognition',
     // 动图生成
-    'nova-gif-settings',
-    'nova-gif-active-job',
+    'flyreq-gif-settings',
+    'flyreq-gif-active-job',
     // 我的素材
-    'nova-assets-settings',
+    'flyreq-assets-settings',
     // 无限画布生成配置
-    'nova-image:canvas_config',
+    'flyreq-image:canvas_config',
 ];
 
 // IndexedDB databases to backup
 const INDEXEDDB_DATABASES = [
-    { name: 'nova-image-db', version: 2, stores: ['images', 'blobs'] },
-    { name: 'nova-reverse-db', version: 1, stores: ['reverse-results'] },
-    { name: 'nova-upload-cache', version: 1, stores: ['images'] },
+    { name: 'flyreq-image-db', version: 2, stores: ['images', 'blobs'] },
+    { name: 'flyreq-reverse-db', version: 1, stores: ['reverse-results'] },
+    { name: 'flyreq-upload-cache', version: 1, stores: ['images'] },
     // Agent 模式对话、图片登记、元信息
-    { name: 'nova-agent-db', version: 1, stores: ['messages', 'images', 'meta'] },
+    { name: 'flyreq-agent-db', version: 1, stores: ['messages', 'images', 'meta'] },
     // 本地图片素材库
-    { name: 'nova-assets-db', version: 1, stores: ['assets', 'asset-blobs'] },
+    { name: 'flyreq-assets-db', version: 1, stores: ['assets', 'asset-blobs'] },
 ];
 
 // localforage keyless 实例（无限画布：项目状态 + 图片 blob）。
 // 通用 IndexedDB 逻辑面向 keyPath store，无法 round-trip localforage 的无 keyPath store，故单独处理。
 const LOCALFORAGE_STORES: { name: string; storeName: string }[] = [
-    { name: 'nova-image', storeName: 'canvas_app_state' },
-    { name: 'nova-image', storeName: 'canvas_image_files' },
+    { name: 'flyreq-image', storeName: 'canvas_app_state' },
+    { name: 'flyreq-image', storeName: 'canvas_image_files' },
 ];
 
 type LocalForageEntry = { key: string; value: unknown } | { key: string; _blobRef: string; _blobMimeType: string };
@@ -182,22 +182,22 @@ function openDatabase(name: string, version: number, createStores: boolean = fal
             if (!createStores && oldVersion > 0) return;
 
             // 根据数据库名称创建相应的 stores
-            if (name === 'nova-image-db') {
+            if (name === 'flyreq-image-db') {
                 if (!db.objectStoreNames.contains('images')) {
                     db.createObjectStore('images', { keyPath: 'id' });
                 }
                 if (!db.objectStoreNames.contains('blobs')) {
                     db.createObjectStore('blobs', { keyPath: 'key' });
                 }
-            } else if (name === 'nova-reverse-db') {
+            } else if (name === 'flyreq-reverse-db') {
                 if (!db.objectStoreNames.contains('reverse-results')) {
                     db.createObjectStore('reverse-results', { keyPath: 'slot' });
                 }
-            } else if (name === 'nova-upload-cache') {
+            } else if (name === 'flyreq-upload-cache') {
                 if (!db.objectStoreNames.contains('images')) {
                     db.createObjectStore('images', { keyPath: 'key' });
                 }
-            } else if (name === 'nova-agent-db') {
+            } else if (name === 'flyreq-agent-db') {
                 if (!db.objectStoreNames.contains('messages')) {
                     db.createObjectStore('messages', { keyPath: 'id' });
                 }
@@ -207,7 +207,7 @@ function openDatabase(name: string, version: number, createStores: boolean = fal
                 if (!db.objectStoreNames.contains('meta')) {
                     db.createObjectStore('meta', { keyPath: 'key' });
                 }
-            } else if (name === 'nova-assets-db') {
+            } else if (name === 'flyreq-assets-db') {
                 if (!db.objectStoreNames.contains('assets')) {
                     const store = db.createObjectStore('assets', { keyPath: 'id' });
                     store.createIndex('hash', 'hash', { unique: false });
@@ -398,7 +398,7 @@ function importLocalStorage(data: unknown): void {
         if (!allowedKeySet.has(key)) continue;
         if (typeof value !== 'string') continue;
 
-        if (key === 'nova-model-registry') {
+        if (key === 'flyreq-model-registry') {
             try {
                 const parsed = JSON.parse(value);
                 if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
@@ -650,5 +650,5 @@ export function generateBackupFilename(): string {
     const now = new Date();
     const dateStr = now.toISOString().split('T')[0];
     const timeStr = now.toTimeString().split(' ')[0].replace(/:/g, '-');
-    return `nova-backup-${dateStr}-${timeStr}.zip`;
+    return `flyreq-backup-${dateStr}-${timeStr}.zip`;
 }

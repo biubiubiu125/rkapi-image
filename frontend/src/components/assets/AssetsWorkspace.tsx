@@ -59,7 +59,7 @@ interface AssetsWorkspaceProps {
   active?: boolean;
 }
 
-const SETTINGS_KEY = 'nova-assets-settings';
+const SETTINGS_KEY = 'flyreq-assets-settings';
 const PAGE_SIZE = 48;
 const PROMPT_TAG = '提示词';
 const SORT_OPTIONS: Array<{ value: 'newest' | 'oldest' | 'used'; label: string }> = [
@@ -554,7 +554,7 @@ export function AssetsWorkspace({ wideMode = false, active = true }: AssetsWorks
       const url = URL.createObjectURL(content);
       const link = document.createElement('a');
       link.href = url;
-      link.download = `nova-assets-${Date.now()}.zip`;
+      link.download = `flyreq-assets-${Date.now()}.zip`;
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);

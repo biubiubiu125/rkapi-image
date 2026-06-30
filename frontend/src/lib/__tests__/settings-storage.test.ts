@@ -7,12 +7,12 @@ import {
   isPromptOptimizeEnabled,
   setPromptOptimizeEnabled,
 } from '@/lib/settings-storage';
-import { loadRegistry } from '@/lib/nova-models';
+import { loadRegistry } from '@/lib/flyreq-models';
 
 const storage = new Map<string, string>();
 
 function writeRegistry(registry: unknown) {
-  storage.set('nova-model-registry', JSON.stringify(registry));
+  storage.set('flyreq-model-registry', JSON.stringify(registry));
 }
 
 describe('settings-storage model availability', () => {

@@ -2,10 +2,10 @@
 
 /**
  * 画布生成服务：把节点生成接入【宿主任务队列】（不改后端、不改队列）。
- * 仅使用 host 的 nova-task-client（createNovaTask / getNovaTask / ackNovaTask）。
+ * 仅使用 host 的 flyreq-task-client（createFlyreqTask / getFlyreqTask / ackFlyreqTask）。
  * 视频/音频不在范围内；图生图无 mask（队列不支持）。
  */
-import { ackNovaTask, createNovaTask, getNovaTask, resolveImageTaskProvider, type NovaTaskResponse, type NovaTaskStatus, type ImageReference } from "@/lib/ccode-task-client";
+import { ackFlyreqTask, createFlyreqTask, getFlyreqTask, resolveImageTaskProvider, type FlyreqTaskResponse, type FlyreqTaskStatus, type ImageReference } from "@/lib/flyreq-task-client";
 import { normalizeModel } from "@/lib/model-capabilities";
 import { compressReferenceDataUrl } from "./lib/image-utils";
 import { uploadImage } from "./lib/image-storage";
@@ -57,7 +57,7 @@ export async function submitNodeGeneration(args: {
   if (!apiKey) throw new CanvasApiKeyMissingError();
 
   const imageRefs = (await Promise.all(args.referenceImages.map(toImageReference))).filter((ref): ref is ImageReference => ref !== null);
-  const taskId = await createNovaTask({
+  const taskId = await createFlyreqTask({
     apiKey,
     baseUrl: provider.baseUrl,
     protocol: provider.protocol,
@@ -81,13 +81,13 @@ export async function submitNodeGeneration(args: {
 /** 轮询单个任务直到终态；通过 onStatus 回调实时通知调用方。 */
 export async function pollNodeTask(
   taskId: string,
-  onStatus: (status: NovaTaskStatus) => void,
+  onStatus: (status: FlyreqTaskStatus) => void,
   signal?: AbortSignal,
 ): Promise<CanvasGeneratedImage[]> {
   const deadline = Date.now() + MAX_WAIT_MS;
   for (;;) {
     if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
-    const task = await getNovaTask(taskId);
+    const task = await getFlyreqTask(taskId);
     onStatus(task.status);
     if (task.status === "completed" || task.status === "failed" || task.status === "expired") {
       const images = task.result?.images || [];
@@ -95,7 +95,7 @@ export async function pollNodeTask(
         throw new Error(task.error || (task.status === "expired" ? "该任务已超出取回时间" : "生成失败"));
       }
       const stored = (await Promise.all(images.map(storeResultImage))).filter((item): item is CanvasGeneratedImage => Boolean(item));
-      void ackNovaTask(taskId);
+      void ackFlyreqTask(taskId);
       if (stored.length === 0) throw new Error("生成结果保存失败");
       return stored;
     }
@@ -105,11 +105,11 @@ export async function pollNodeTask(
 }
 
 /** 检查已有任务的当前状态（用于刷新页面后恢复进行中的任务）。 */
-export async function checkExistingTask(taskId: string): Promise<{ status: NovaTaskResponse["status"]; images?: CanvasGeneratedImage[]; error?: string }> {
-  const task = await getNovaTask(taskId);
+export async function checkExistingTask(taskId: string): Promise<{ status: FlyreqTaskResponse["status"]; images?: CanvasGeneratedImage[]; error?: string }> {
+  const task = await getFlyreqTask(taskId);
   if (task.status === "completed" && task.result?.images?.length) {
     const stored = (await Promise.all(task.result.images.map(storeResultImage))).filter((item): item is CanvasGeneratedImage => Boolean(item));
-    void ackNovaTask(taskId);
+    void ackFlyreqTask(taskId);
     return { status: "completed", images: stored };
   }
   if (task.status === "failed" || task.status === "expired") {
@@ -126,7 +126,7 @@ export async function generateCanvasImages(args: {
   prompt: string;
   referenceImages: ReferenceImage[];
   config: CanvasGenerationConfig;
-  onStatus?: (status: NovaTaskStatus) => void;
+  onStatus?: (status: FlyreqTaskStatus) => void;
   signal?: AbortSignal;
 }): Promise<CanvasGeneratedImage[]> {
   const provider = resolveImageTaskProvider(resolveTaskModel(args.config));
@@ -134,7 +134,7 @@ export async function generateCanvasImages(args: {
   if (!apiKey) throw new CanvasApiKeyMissingError();
 
   const imageRefs = (await Promise.all(args.referenceImages.map(toImageReference))).filter((ref): ref is ImageReference => ref !== null);
-  const taskId = await createNovaTask({
+  const taskId = await createFlyreqTask({
     apiKey,
     baseUrl: provider.baseUrl,
     protocol: provider.protocol,
@@ -157,7 +157,7 @@ export async function generateCanvasImages(args: {
   return images;
 }
 
-/** 结果可能是 data URL 或 `URL:/api/nova/images/...`；统一下载为 blob 存入本地 IndexedDB。 */
+/** 结果可能是 data URL 或 `URL:/api/flyreq/images/...`；统一下载为 blob 存入本地 IndexedDB。 */
 async function storeResultImage(image: string): Promise<CanvasGeneratedImage | null> {
   const realUrl = image.startsWith("URL:") ? image.slice(4) : image;
   if (!realUrl) return null;

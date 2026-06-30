@@ -51,13 +51,13 @@ export interface DefaultModels {
   imageDescribe: string;
 }
 
-export interface NovaModelRegistry {
+export interface FlyreqModelRegistry {
   imageModels: ImageModelConfig[];
   textModels: TextModelConfig[];
   defaults: DefaultModels;
 }
 
-const REGISTRY_KEY = 'nova-model-registry';
+const REGISTRY_KEY = 'flyreq-model-registry';
 const DEFAULT_FLYREQ_IMAGE_MODEL_ID = 'flyreq-gpt-image-2';
 
 export const BUILTIN_IMAGE_PRESETS: Record<BuiltinImagePresetId, BuiltinImagePreset> = {
@@ -269,7 +269,7 @@ function ensureDefaults(raw: Partial<DefaultModels> | undefined, imageModels: Im
   return next;
 }
 
-function getInitialRegistry(): NovaModelRegistry {
+function getInitialRegistry(): FlyreqModelRegistry {
   return {
     imageModels: DEFAULT_IMAGE_MODELS,
     textModels: [],
@@ -277,7 +277,7 @@ function getInitialRegistry(): NovaModelRegistry {
   };
 }
 
-export function loadRegistry(): NovaModelRegistry {
+export function loadRegistry(): FlyreqModelRegistry {
   if (typeof window === 'undefined') {
     return getInitialRegistry();
   }
@@ -287,19 +287,19 @@ export function loadRegistry(): NovaModelRegistry {
     return getInitialRegistry();
   }
 
-  const parsed = JSON.parse(raw) as Partial<NovaModelRegistry>;
+  const parsed = JSON.parse(raw) as Partial<FlyreqModelRegistry>;
   const imageModels = ensureImageModels(parsed.imageModels);
   const textModels = ensureTextModels(parsed.textModels);
   const defaults = ensureDefaults(parsed.defaults, imageModels, textModels);
   return { imageModels, textModels, defaults };
 }
 
-export function saveRegistry(registry: NovaModelRegistry): void {
+export function saveRegistry(registry: FlyreqModelRegistry): void {
   if (typeof window === 'undefined') return;
 
   const imageModels = ensureImageModels(registry.imageModels);
   const textModels = ensureTextModels(registry.textModels);
-  const normalized: NovaModelRegistry = {
+  const normalized: FlyreqModelRegistry = {
     imageModels,
     textModels,
     defaults: ensureDefaults(registry.defaults, imageModels, textModels),
@@ -308,33 +308,33 @@ export function saveRegistry(registry: NovaModelRegistry): void {
   localStorage.setItem(REGISTRY_KEY, JSON.stringify(normalized));
 }
 
-export function getImageModelById(registry: NovaModelRegistry, id: string): ImageModelConfig | undefined {
+export function getImageModelById(registry: FlyreqModelRegistry, id: string): ImageModelConfig | undefined {
   return registry.imageModels.find((model) => model.id === id);
 }
 
-export function getTextModelById(registry: NovaModelRegistry, id: string): TextModelConfig | undefined {
+export function getTextModelById(registry: FlyreqModelRegistry, id: string): TextModelConfig | undefined {
   return registry.textModels.find((model) => model.id === id);
 }
 
 export function getDefaultImageModel(
-  registry: NovaModelRegistry,
+  registry: FlyreqModelRegistry,
   task: keyof Pick<DefaultModels, 'textToImage' | 'imageToImage'>,
 ): ImageModelConfig | undefined {
   return getImageModelById(registry, registry.defaults[task]);
 }
 
 export function getDefaultTextModel(
-  registry: NovaModelRegistry,
+  registry: FlyreqModelRegistry,
   task: keyof Pick<DefaultModels, 'reversePrompt' | 'agent' | 'promptOptimize' | 'imageDescribe'>,
 ): TextModelConfig | undefined {
   return getTextModelById(registry, registry.defaults[task]);
 }
 
-export function getCompleteImageModels(registry: NovaModelRegistry): ImageModelConfig[] {
+export function getCompleteImageModels(registry: FlyreqModelRegistry): ImageModelConfig[] {
   return registry.imageModels.filter(isCompleteImageModel);
 }
 
-export function getCompleteTextModels(registry: NovaModelRegistry): TextModelConfig[] {
+export function getCompleteTextModels(registry: FlyreqModelRegistry): TextModelConfig[] {
   return registry.textModels.filter(isCompleteTextModel);
 }
 

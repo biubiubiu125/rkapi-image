@@ -23,7 +23,7 @@ interface CachedUploadImage {
     createdAt: number;
 }
 
-const DB_NAME = 'nova-upload-cache';
+const DB_NAME = 'flyreq-upload-cache';
 const DB_VERSION = 1;
 const STORE_NAME = 'images';
 

@@ -6,7 +6,7 @@ import {
   loadRegistry,
   type ProviderProtocol,
   type TextModelConfig,
-} from '@/lib/nova-models';
+} from '@/lib/flyreq-models';
 
 function trimTrailingSlashes(value: string): string {
   return String(value || '').trim().replace(/\/+$/, '');

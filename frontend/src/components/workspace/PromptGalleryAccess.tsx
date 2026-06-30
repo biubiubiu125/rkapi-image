@@ -47,7 +47,7 @@ export function usePromptGalleryAccess(
 
   const handlePasswordSubmit = useCallback(async () => {
     try {
-      const response = await fetch('/api/nova/prompt-gallery/verify', {
+      const response = await fetch('/api/flyreq/prompt-gallery/verify', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ password: passwordInput }),

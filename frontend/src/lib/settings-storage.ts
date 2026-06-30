@@ -1,9 +1,9 @@
 'use client';
 
-import { getCompleteImageModels, getCompleteTextModels, loadRegistry } from '@/lib/nova-models';
+import { getCompleteImageModels, getCompleteTextModels, loadRegistry } from '@/lib/flyreq-models';
 
-export const PROMPT_OPTIMIZE_ENABLED_KEY = 'nova-prompt-optimize-enabled';
-export const PROMPT_OPTIMIZE_SETTING_EVENT = 'nova-prompt-optimize-setting-updated';
+export const PROMPT_OPTIMIZE_ENABLED_KEY = 'flyreq-prompt-optimize-enabled';
+export const PROMPT_OPTIMIZE_SETTING_EVENT = 'flyreq-prompt-optimize-setting-updated';
 
 export function getStoredApiKey(): string {
   const registry = loadRegistry();
@@ -19,10 +19,6 @@ export function setStoredApiKey(): boolean {
 export function removeStoredApiKey(): void {
   // 开源版改为模型级别独立存储，不再提供全局 key 写入口。
 }
-
-export const getStoredCcodeKey = getStoredApiKey;
-export const setStoredCcodeKey = setStoredApiKey;
-export const removeStoredCcodeKey = removeStoredApiKey;
 
 export function getApiKeyFromStorage(): string {
   return getStoredApiKey();

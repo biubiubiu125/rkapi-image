@@ -65,7 +65,7 @@ interface TextToImageFormProps {
   };
 }
 
-const T2I_SETTINGS_KEY = 'nova-t2i-settings';
+const T2I_SETTINGS_KEY = 'flyreq-t2i-settings';
 
 type T2ISettings = ImageFormSettings;
 

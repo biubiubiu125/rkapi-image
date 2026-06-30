@@ -1,4 +1,4 @@
-import type { NovaTaskResponse, NovaTaskStatus } from '@/lib/ccode-task-client';
+import type { FlyreqTaskResponse, FlyreqTaskStatus } from '@/lib/flyreq-task-client';
 
 export type FailureReason = 'restart' | 'expired' | 'api' | 'network' | 'rate_limit' | 'queue_full' | 'unknown';
 
@@ -94,8 +94,8 @@ function classifyFailureMessage(message: string | undefined): FailureClassificat
  * - terminal=true 表示后端已经明确告诉我们任务无法恢复，前端不应再展示"查看进度"按钮
  * - terminal=false 表示可能是网络瞬态/前端解析问题，应该允许用户手动再查询一次后端状态
  */
-export function classifyTaskFailure(task: Pick<NovaTaskResponse, 'status' | 'error'>): FailureClassification {
-  const status = task.status as NovaTaskStatus;
+export function classifyTaskFailure(task: Pick<FlyreqTaskResponse, 'status' | 'error'>): FailureClassification {
+  const status = task.status as FlyreqTaskStatus;
   if (status === 'expired') return { terminal: true, reason: 'expired' };
   if (status !== 'failed') return { terminal: false, reason: 'unknown' };
   return classifyFailureMessage(task.error);

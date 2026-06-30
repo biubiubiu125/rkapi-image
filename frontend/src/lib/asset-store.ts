@@ -86,7 +86,7 @@ export interface AddTextAssetInput {
   sourceRef?: string;
 }
 
-const DB_NAME = 'nova-assets-db';
+const DB_NAME = 'flyreq-assets-db';
 const DB_VERSION = 1;
 const ASSETS_STORE = 'assets';
 const BLOBS_STORE = 'asset-blobs';

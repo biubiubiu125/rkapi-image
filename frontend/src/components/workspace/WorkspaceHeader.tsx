@@ -8,7 +8,7 @@ import { ThemeToggle } from '@/components/ThemeToggle';
 import { LanguageToggle } from '@/components/LanguageToggle';
 import { WideModeToggle } from '@/components/WideModeToggle';
 import { useI18n } from '@/components/LanguageProvider';
-import type { NovaQueueStatus } from '@/lib/ccode-task-client';
+import type { FlyreqQueueStatus } from '@/lib/flyreq-task-client';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -46,7 +46,7 @@ export interface WorkspaceHeaderRef {
 }
 
 interface WorkspaceHeaderProps {
-  queueStatus: NovaQueueStatus | null;
+  queueStatus: FlyreqQueueStatus | null;
   wideMode: boolean;
   onToggleWideMode: () => void;
   onOpenSettings: () => void;

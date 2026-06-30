@@ -52,7 +52,7 @@ interface GifGenerationWorkspaceProps {
   showToast?: (message: string, type: 'success' | 'error' | 'info') => void;
 }
 
-const SETTINGS_KEY = 'nova-gif-settings';
+const SETTINGS_KEY = 'flyreq-gif-settings';
 
 interface PersistedSettings {
   model: GifModel;

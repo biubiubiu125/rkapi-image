@@ -1,4 +1,4 @@
-import type { BuiltinImagePresetId, ImageModelConfig, ImageOutputSize, ProviderProtocol } from '@/lib/nova-models';
+import type { BuiltinImagePresetId, ImageModelConfig, ImageOutputSize, ProviderProtocol } from '@/lib/flyreq-models';
 
 export type ExternalModelConfig = {
   type: 'image';

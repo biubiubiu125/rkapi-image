@@ -4,7 +4,7 @@ import {
   getExternalImageModelMatch,
   parseExternalModelConfig,
 } from '@/lib/external-model-config';
-import type { ImageModelConfig } from '@/lib/nova-models';
+import type { ImageModelConfig } from '@/lib/flyreq-models';
 
 describe('external model config URL parser', () => {
   it('parses image model config from a single provider JSON parameter', () => {

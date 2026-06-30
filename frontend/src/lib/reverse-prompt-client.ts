@@ -100,7 +100,7 @@ async function streamOpenAiResponses(
     ],
   };
 
-  const response = await fetch('/api/nova/proxy/text', {
+  const response = await fetch('/api/flyreq/proxy/text', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -233,7 +233,7 @@ async function streamGeminiGenerateContent(
     },
   };
 
-  const response = await fetch('/api/nova/proxy/text', {
+  const response = await fetch('/api/flyreq/proxy/text', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({

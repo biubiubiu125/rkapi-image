@@ -1,13 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { classifyTaskFailure, classifyFailureFromMessage } from '@/lib/task-failure';
-import type { NovaTaskResponse } from '@/lib/ccode-task-client';
+import type { FlyreqTaskResponse } from '@/lib/flyreq-task-client';
 
-function makeTask(overrides: Partial<NovaTaskResponse>): NovaTaskResponse {
+function makeTask(overrides: Partial<FlyreqTaskResponse>): FlyreqTaskResponse {
   return {
     id: 't1',
     status: 'failed',
     ...overrides,
-  } as NovaTaskResponse;
+  } as FlyreqTaskResponse;
 }
 
 describe('classifyTaskFailure', () => {

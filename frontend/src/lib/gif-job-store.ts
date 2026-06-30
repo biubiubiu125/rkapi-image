@@ -1,7 +1,7 @@
 import { isGptImageModel } from '@/lib/gemini-config';
 import type { RefImageData } from '@/lib/job-store';
 import { supportsCustomSize, type GptImageBackground, type GptImageOutputFormat, type GptImageQuality, type GptImageStyle } from '@/lib/model-capabilities';
-import { getDefaultImageModel, getCompleteImageModels, loadRegistry } from '@/lib/nova-models';
+import { getDefaultImageModel, getCompleteImageModels, loadRegistry } from '@/lib/flyreq-models';
 
 export type GifModel = string;
 
@@ -35,7 +35,7 @@ export interface ActiveGifJob {
   updatedAt: string;
 }
 
-const STORAGE_KEY = 'nova-gif-active-job';
+const STORAGE_KEY = 'flyreq-gif-active-job';
 const TEMPLATE_URL = '/togif.png';
 
 export const GIF_MAX_REF_IMAGES = 6;

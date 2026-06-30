@@ -2,7 +2,7 @@ import localforage from "localforage";
 import type { StateStorage } from "zustand/middleware";
 
 localforage.config({
-  name: "nova-image",
+  name: "flyreq-image",
   storeName: "canvas_app_state",
 });
 

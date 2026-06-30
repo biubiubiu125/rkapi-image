@@ -17,10 +17,10 @@ export function usePromptOptimizeSetting() {
   useEffect(() => {
     refresh();
     window.addEventListener(PROMPT_OPTIMIZE_SETTING_EVENT, refresh);
-    window.addEventListener('nova-model-registry-updated', refresh);
+    window.addEventListener('flyreq-model-registry-updated', refresh);
     return () => {
       window.removeEventListener(PROMPT_OPTIMIZE_SETTING_EVENT, refresh);
-      window.removeEventListener('nova-model-registry-updated', refresh);
+      window.removeEventListener('flyreq-model-registry-updated', refresh);
     };
   }, [refresh]);
 

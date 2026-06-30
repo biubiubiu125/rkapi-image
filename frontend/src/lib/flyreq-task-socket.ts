@@ -1,7 +1,7 @@
-import { getNovaTask, getNovaQueueStatus, type NovaTaskResponse, type NovaQueueStatus } from '@/lib/ccode-task-client';
+import { getFlyreqTask, getFlyreqQueueStatus, type FlyreqTaskResponse, type FlyreqQueueStatus } from '@/lib/flyreq-task-client';
 
-type TaskUpdateHandler = (task: NovaTaskResponse) => void;
-type QueueUpdateHandler = (stats: NovaQueueStatus) => void;
+type TaskUpdateHandler = (task: FlyreqTaskResponse) => void;
+type QueueUpdateHandler = (stats: FlyreqQueueStatus) => void;
 
 const RECONNECT_BASE_DELAY_MS = 1000;
 const RECONNECT_MAX_DELAY_MS = 30000;
@@ -12,12 +12,12 @@ const HEARTBEAT_TIMEOUT_MS = 10000;
 
 interface ServerTaskMessage {
   type: 'task';
-  task: NovaTaskResponse;
+  task: FlyreqTaskResponse;
 }
 
 interface ServerQueueMessage {
   type: 'queueStatus';
-  stats: NovaQueueStatus;
+  stats: FlyreqQueueStatus;
 }
 
 interface ServerPongMessage {
@@ -39,7 +39,7 @@ function isWebSocketSupported(): boolean {
 function buildSocketUrl(): string | null {
   if (typeof window === 'undefined') return null;
   try {
-    const url = new URL('/api/nova/ws', window.location.href);
+    const url = new URL('/api/flyreq/ws', window.location.href);
     url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
     return url.toString();
   } catch {
@@ -47,7 +47,7 @@ function buildSocketUrl(): string | null {
   }
 }
 
-class NovaTaskSocket {
+class FlyreqTaskSocket {
   private ws: WebSocket | null = null;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
@@ -367,7 +367,7 @@ class NovaTaskSocket {
 
   private async fetchTaskOnce(taskId: string): Promise<void> {
     try {
-      const task = await getNovaTask(taskId);
+      const task = await getFlyreqTask(taskId);
       const handlers = this.taskHandlers.get(taskId);
       if (!handlers) return;
       for (const handler of handlers) {
@@ -380,7 +380,7 @@ class NovaTaskSocket {
 
   private async fetchQueueOnce(): Promise<void> {
     try {
-      const stats = await getNovaQueueStatus();
+      const stats = await getFlyreqQueueStatus();
       for (const handler of this.queueHandlers) {
         try { handler(stats); } catch { /* ignore handler error */ }
       }
@@ -390,7 +390,5 @@ class NovaTaskSocket {
   }
 }
 
-export const novaTaskSocket = new NovaTaskSocket();
-/** @deprecated Use novaTaskSocket */
-export const ccodeTaskSocket = novaTaskSocket;
+export const flyreqTaskSocket = new FlyreqTaskSocket();
 export type { TaskUpdateHandler, QueueUpdateHandler };

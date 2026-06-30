@@ -78,7 +78,7 @@ export async function generateAssetMetadata(input: GenerateAssetMetadataInput): 
   };
 
   const baseUrl = input.baseUrl || 'https://api.openai.com';
-  const response = await fetch('/api/nova/proxy/text', {
+  const response = await fetch('/api/flyreq/proxy/text', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({

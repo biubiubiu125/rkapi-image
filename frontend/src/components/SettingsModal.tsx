@@ -49,11 +49,11 @@ import {
   type ImageModelConfig,
   type ProviderProtocol,
   type TextModelConfig,
-} from '@/lib/nova-models';
+} from '@/lib/flyreq-models';
 import { getExternalImageModelMatch, type ExternalModelConfig } from '@/lib/external-model-config';
 import { syncDynamicModelExports } from '@/lib/gemini-config';
 import { exportAllData, importAllData, downloadBlob, generateBackupFilename, type BackupProgress as BackupProgressType } from '@/lib/backup-utils';
-import { checkModelsAvailability, type ModelStatus } from '@/lib/ccode-task-client';
+import { checkModelsAvailability, type ModelStatus } from '@/lib/flyreq-task-client';
 import { hasConfiguredImageModel, isPromptOptimizeEnabled, setPromptOptimizeEnabled } from '@/lib/settings-storage';
 import { BA_RANDOM_URL, BING_WALLPAPER_URL, IMAGE_MODEL_KEY_GUIDE } from '@/lib/constants';
 import { PROMPT_DATA_SOURCES, getPromptSourceLabel } from '@/lib/prompt-gallery-data';
@@ -371,7 +371,7 @@ export function SettingsModal({ isOpen, onClose, onApiKeyChange, externalModelCo
       return;
     }
     syncDynamicModelExports();
-    window.dispatchEvent(new Event('nova-model-registry-updated'));
+    window.dispatchEvent(new Event('flyreq-model-registry-updated'));
     onApiKeyChange?.(hasConfiguredImageModel());
     setSuccess('设置已保存');
     setExternalConfigNotice(null);
@@ -947,9 +947,18 @@ export function SettingsModal({ isOpen, onClose, onApiKeyChange, externalModelCo
                   <li>
                     项目仓库：
                     {' '}
-                    <a href="https://github.com/tianjiangqiji/nova-image-studio" target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-primary hover:underline">
-                      tianjiangqiji/nova-image-studio <ExternalLink className="w-3 h-3" />
+                    <a href="https://github.com/doudou770/flyreq-image-studio" target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-primary hover:underline">
+                      doudou770/flyreq-image-studio <ExternalLink className="w-3 h-3" />
                     </a>
+                  </li>
+                  <li>
+                    基于
+                    {' '}
+                    <a href="https://github.com/tianjiangqiji/flyreq-image-studio" target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-primary hover:underline">
+                      tianjiangqiji/flyreq-image-studio <ExternalLink className="w-3 h-3" />
+                    </a>
+                    {' '}
+                    修改而来。
                   </li>
                   <li>
                     基于

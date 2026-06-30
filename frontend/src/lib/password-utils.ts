@@ -4,7 +4,7 @@
  * 注意：这仅用于本地密码保护场景，不适合服务端认证
  */
 
-const PASSWORD_SALT = 'nova-pg-2026';
+const PASSWORD_SALT = 'flyreq-pg-2026';
 
 /**
  * 将字符串转换为加盐 SHA-256 哈希值

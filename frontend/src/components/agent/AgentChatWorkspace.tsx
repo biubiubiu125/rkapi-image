@@ -75,7 +75,7 @@ import { MAX_UPLOAD_SIZE_BYTES } from '@/lib/constants';
 import { loadJsonFromStorage, saveJsonToStorage } from '@/lib/settings-storage';
 
 const MAX_AGENT_ASSET_IMPORTS = 5;
-const AGENT_PARAMS_KEY = 'nova-agent-params';
+const AGENT_PARAMS_KEY = 'flyreq-agent-params';
 
 interface AgentParamsSettings {
   model: ModelId;

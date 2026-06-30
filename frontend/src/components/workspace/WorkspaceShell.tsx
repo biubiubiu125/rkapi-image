@@ -34,7 +34,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Shuffle, Settings, User, Wallpaper, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
-import { getNovaTask } from '@/lib/ccode-task-client';
+import { getFlyreqTask } from '@/lib/flyreq-task-client';
 import { finalizeCompletedServerTask } from '@/lib/workspace-task-service';
 import { classifyTaskFailure } from '@/lib/task-failure';
 import type { RefImageData, StoredJob } from '@/lib/job-store';
@@ -135,7 +135,7 @@ export function WorkspaceShell() {
     // Set 5s cooldown
     setCooldowns(prev => new Map(prev).set(job.id, Date.now() + 5000));
     try {
-      const task = await getNovaTask(job.serverTaskId);
+      const task = await getFlyreqTask(job.serverTaskId);
       if (task.status === 'completed') {
         showToast(locale === 'zh' ? '生成完成，正在下载图片…' : 'Generation complete. Downloading images...', 'success');
         await finalizeCompletedServerTask(job, task, submitActions);

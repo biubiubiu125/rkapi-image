@@ -92,8 +92,8 @@ function normalizeProtocolBaseUrl(protocol, url) {
   return normalized.endsWith('/v1') ? normalized.slice(0, -3) : normalized;
 }
 
-function resolveNovaApiBaseUrl() {
-  return normalizeBaseUrl(getRuntimeEnv().NOVA_API_BASE_URL) || 'https://api.openai.com';
+function resolveFlyreqApiBaseUrl() {
+  return normalizeBaseUrl(getRuntimeEnv().FLYREQ_API_BASE_URL) || 'https://api.openai.com';
 }
 
 function hashPromptGalleryPassword(password) {
@@ -104,7 +104,7 @@ function hashPromptGalleryPassword(password) {
 
 const PORT = Number(process.env.PORT || 3000);
 const HOSTNAME = process.env.HOSTNAME || '0.0.0.0';
-const DB_PATH = process.env.NOVA_TASK_DB || path.join(__dirname, 'nova-tasks.sqlite');
+const DB_PATH = process.env.FLYREQ_TASK_DB || path.join(__dirname, 'flyreq-tasks.sqlite');
 const TASK_TTL_MS = 12 * 60 * 60 * 1000;
 const CLEANUP_INTERVAL_MS = 5 * 60 * 1000;
 const REQUEST_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
@@ -121,7 +121,7 @@ const DEFAULT_GPT_IMAGE_ADVANCED_PARAMS = {
   background: 'auto',
   outputFormat: 'png',
 };
-const PROMPT_GALLERY_PASSWORD_SALT = 'nova-pg-2026';
+const PROMPT_GALLERY_PASSWORD_SALT = 'flyreq-pg-2026';
 const CUSTOM_IMAGE_SIZE_LIMITS = {
   multiple: 16,
   maxAspectRatio: 3,
@@ -130,7 +130,7 @@ const CUSTOM_IMAGE_SIZE_LIMITS = {
 };
 const IS_DEV = process.env.NODE_ENV !== 'production';
 const STATIC_DIR = path.join(__dirname, '..', 'frontend', 'out');
-const IMAGE_DIR = process.env.NOVA_IMAGE_DIR || path.join(__dirname, 'nova-images');
+const IMAGE_DIR = process.env.FLYREQ_IMAGE_DIR || path.join(__dirname, 'flyreq-images');
 const taskRefImages = new Map();
 
 const app = IS_DEV ? next({ dev: IS_DEV, hostname: HOSTNAME, port: PORT, dir: path.join(__dirname, '..', 'frontend') }) : null;
@@ -158,7 +158,7 @@ let queueBroadcastTimer = null;
 let queueBroadcastPending = false;
 
 function getMaxServerConcurrency() {
-  const configured = Number(getRuntimeEnv().NOVA_TASK_CONCURRENCY || GLOBAL_TASK_CONCURRENCY);
+  const configured = Number(getRuntimeEnv().FLYREQ_TASK_CONCURRENCY || GLOBAL_TASK_CONCURRENCY);
   const safeConfigured = Number.isFinite(configured) ? configured : GLOBAL_TASK_CONCURRENCY;
   return Math.max(1, Math.min(GLOBAL_TASK_CONCURRENCY, safeConfigured));
 }
@@ -172,13 +172,13 @@ function parseIntegerEnv(value, fallback, { min = 0, max = Number.MAX_SAFE_INTEG
 function getLimitConfig() {
   const env = getRuntimeEnv();
   return {
-    maxQueueSize: parseIntegerEnv(env.NOVA_MAX_QUEUE_SIZE, DEFAULT_LIMIT_CONFIG.maxQueueSize, { min: 0, max: 100000 }),
-    rateLimitWindowMs: parseIntegerEnv(env.NOVA_RATE_LIMIT_WINDOW_MS, DEFAULT_LIMIT_CONFIG.rateLimitWindowMs, { min: 1000, max: 24 * 60 * 60 * 1000 }),
-    maxRequestsPerIp: parseIntegerEnv(env.NOVA_RATE_LIMIT_MAX_REQUESTS_PER_IP, DEFAULT_LIMIT_CONFIG.maxRequestsPerIp, { min: 0, max: 100000 }),
-    maxRequestsPerApiKey: parseIntegerEnv(env.NOVA_RATE_LIMIT_MAX_REQUESTS_PER_API_KEY, DEFAULT_LIMIT_CONFIG.maxRequestsPerApiKey, { min: 0, max: 100000 }),
-    maxPendingTasksPerIp: parseIntegerEnv(env.NOVA_MAX_PENDING_TASKS_PER_IP, DEFAULT_LIMIT_CONFIG.maxPendingTasksPerIp, { min: 0, max: 100000 }),
-    maxPendingTasksPerApiKey: parseIntegerEnv(env.NOVA_MAX_PENDING_TASKS_PER_API_KEY, DEFAULT_LIMIT_CONFIG.maxPendingTasksPerApiKey, { min: 0, max: 100000 }),
-    retryAfterSeconds: parseIntegerEnv(env.NOVA_RATE_LIMIT_RETRY_AFTER_SECONDS, DEFAULT_LIMIT_CONFIG.retryAfterSeconds, { min: 1, max: 24 * 60 * 60 }),
+    maxQueueSize: parseIntegerEnv(env.FLYREQ_MAX_QUEUE_SIZE, DEFAULT_LIMIT_CONFIG.maxQueueSize, { min: 0, max: 100000 }),
+    rateLimitWindowMs: parseIntegerEnv(env.FLYREQ_RATE_LIMIT_WINDOW_MS, DEFAULT_LIMIT_CONFIG.rateLimitWindowMs, { min: 1000, max: 24 * 60 * 60 * 1000 }),
+    maxRequestsPerIp: parseIntegerEnv(env.FLYREQ_RATE_LIMIT_MAX_REQUESTS_PER_IP, DEFAULT_LIMIT_CONFIG.maxRequestsPerIp, { min: 0, max: 100000 }),
+    maxRequestsPerApiKey: parseIntegerEnv(env.FLYREQ_RATE_LIMIT_MAX_REQUESTS_PER_API_KEY, DEFAULT_LIMIT_CONFIG.maxRequestsPerApiKey, { min: 0, max: 100000 }),
+    maxPendingTasksPerIp: parseIntegerEnv(env.FLYREQ_MAX_PENDING_TASKS_PER_IP, DEFAULT_LIMIT_CONFIG.maxPendingTasksPerIp, { min: 0, max: 100000 }),
+    maxPendingTasksPerApiKey: parseIntegerEnv(env.FLYREQ_MAX_PENDING_TASKS_PER_API_KEY, DEFAULT_LIMIT_CONFIG.maxPendingTasksPerApiKey, { min: 0, max: 100000 }),
+    retryAfterSeconds: parseIntegerEnv(env.FLYREQ_RATE_LIMIT_RETRY_AFTER_SECONDS, DEFAULT_LIMIT_CONFIG.retryAfterSeconds, { min: 1, max: 24 * 60 * 60 }),
   };
 }
 
@@ -303,8 +303,8 @@ function enforceQueueCapacity(source, config) {
 
 function isRejectNewTasksEnabled() {
   const env = getRuntimeEnv();
-  const rejectSwitch = String(env.NOVA_REJECT_NEW_TASKS || '').trim().toLowerCase();
-  const acceptSwitch = String(env.NOVA_ACCEPT_NEW_TASKS || '').trim().toLowerCase();
+  const rejectSwitch = String(env.FLYREQ_REJECT_NEW_TASKS || '').trim().toLowerCase();
+  const acceptSwitch = String(env.FLYREQ_ACCEPT_NEW_TASKS || '').trim().toLowerCase();
   return ['1', 'true', 'yes', 'on'].includes(rejectSwitch) || acceptSwitch === 'false' || acceptSwitch === '0';
 }
 
@@ -366,7 +366,7 @@ function saveImageToDisk(taskId, itemIndex, subIndex, imageBuffer, mimeType) {
   const fileName = `${taskId}-${itemIndex}-${subIndex}.${ext}`;
   const filePath = path.join(IMAGE_DIR, fileName);
   fs.writeFileSync(filePath, imageBuffer);
-  return { filePath, httpUrl: `/api/nova/images/${taskId}/${itemIndex}` };
+  return { filePath, httpUrl: `/api/flyreq/images/${taskId}/${itemIndex}` };
 }
 
 async function downloadUrlToDisk(taskId, itemIndex, subIndex, imageUrl) {
@@ -660,7 +660,7 @@ function createTask(body, req) {
   const now = new Date().toISOString();
   const requestForDb = {
     mode: body.mode,
-    source: 'nova',
+    source: 'flyreq',
     protocol: body.protocol,
     baseUrl: body.baseUrl,
     prompt: body.prompt,
@@ -1039,7 +1039,7 @@ function isImageStreamUnsupportedError(error) {
 }
 
 async function requestGptImage(apiKey, request, resolvedSize, options = {}) {
-  const baseUrl = options.baseUrl || resolveNovaApiBaseUrl();
+  const baseUrl = options.baseUrl || resolveFlyreqApiBaseUrl();
   const endpoint = request.mode === 'image-to-image'
     ? '/v1/images/edits'
     : '/v1/images/generations';
@@ -1081,14 +1081,14 @@ async function fetchWithTimeout(url, init) {
   }
 }
 
-async function generateNovaImage(apiKey, request) {
+async function generateFlyreqImage(apiKey, request) {
   // 开源版：根据前端传入的 protocol 字段路由到对应的 API 协议
-  const baseUrl = request.baseUrl || resolveNovaApiBaseUrl();
+  const baseUrl = request.baseUrl || resolveFlyreqApiBaseUrl();
   if (request.protocol === 'openai') {
     return requestGptImage(apiKey, request, resolveGptImageRequestSize(request), { baseUrl });
   }
   // 默认走 Google Gemini 协议
-  return generateNovaGeminiImage(apiKey, request, { baseUrl });
+  return generateFlyreqGeminiImage(apiKey, request, { baseUrl });
 }
 
 function extractGeminiImagePayload(data) {
@@ -1098,8 +1098,8 @@ function extractGeminiImagePayload(data) {
   return inlineData.data;
 }
 
-async function generateNovaGeminiImage(apiKey, request, options = {}) {
-  const baseUrl = options.baseUrl || resolveNovaApiBaseUrl();
+async function generateFlyreqGeminiImage(apiKey, request, options = {}) {
+  const baseUrl = options.baseUrl || resolveFlyreqApiBaseUrl();
   const parts = [
     { text: request.prompt },
     ...request.images.map(img => ({ inlineData: { data: img.data, mimeType: img.mimeType } })),
@@ -1163,7 +1163,7 @@ function drainQueue() {
 
 async function generateSingleImage(apiKey, request, taskId, index) {
   try {
-    const image = await generateNovaImage(apiKey, request);
+    const image = await generateFlyreqImage(apiKey, request);
     const expanded = image.startsWith('MULTI_URL:') ? image.substring(10).split('|||').map(url => `URL:${url}`) : [image];
     const diskRefs = [];
     for (let subIdx = 0; subIdx < expanded.length; subIdx++) {
@@ -1473,12 +1473,12 @@ async function handleApi(req, res, pathname) {
   try {
     const apiPathname = pathname.replace(/\/+$/, '');
 
-    if (req.method === 'GET' && apiPathname === '/api/nova/queue-status') {
+    if (req.method === 'GET' && apiPathname === '/api/flyreq/queue-status') {
       sendJson(res, 200, getQueueStats());
       return true;
     }
 
-    if (req.method === 'GET' && apiPathname === '/api/nova/prompts') {
+    if (req.method === 'GET' && apiPathname === '/api/flyreq/prompts') {
       const promptsPath = path.join(__dirname, 'prompts.json');
       try {
         if (!fs.existsSync(promptsPath)) {
@@ -1494,7 +1494,7 @@ async function handleApi(req, res, pathname) {
       return true;
     }
 
-    if (req.method === 'GET' && apiPathname === '/api/nova/blacklist') {
+    if (req.method === 'GET' && apiPathname === '/api/flyreq/blacklist') {
       const blacklistPath = path.join(__dirname, 'blacklist.json');
       try {
         if (!fs.existsSync(blacklistPath)) {
@@ -1510,7 +1510,7 @@ async function handleApi(req, res, pathname) {
       return true;
     }
 
-    if (req.method === 'GET' && apiPathname === '/api/nova/config') {
+    if (req.method === 'GET' && apiPathname === '/api/flyreq/config') {
       const env = getRuntimeEnv();
       const rawMode = String(env.PROMPT_GALLERY_MODE || '2').trim();
       const mode = ['1', '2', '3'].includes(rawMode) ? rawMode : '2';
@@ -1530,7 +1530,7 @@ async function handleApi(req, res, pathname) {
       return true;
     }
 
-    if (req.method === 'POST' && apiPathname === '/api/nova/prompt-gallery/verify') {
+    if (req.method === 'POST' && apiPathname === '/api/flyreq/prompt-gallery/verify') {
       const env = getRuntimeEnv();
       const expected = String(env.PROMPT_GALLERY_PASSWORD || '').trim();
       if (!expected) {
@@ -1545,7 +1545,7 @@ async function handleApi(req, res, pathname) {
       return true;
     }
 
-    const imageMatch = apiPathname.match(/^\/api\/nova\/images\/([^/]+)\/(\d+)$/);
+    const imageMatch = apiPathname.match(/^\/api\/flyreq\/images\/([^/]+)\/(\d+)$/);
     if (req.method === 'GET' && imageMatch) {
       const taskId = imageMatch[1];
       const index = Number(imageMatch[2]);
@@ -1590,7 +1590,7 @@ async function handleApi(req, res, pathname) {
     }
 
     // ===== 文本 AI 代理（流式 + 非流式，OpenAI / Google 协议） =====
-    if (req.method === 'POST' && apiPathname === '/api/nova/proxy/text') {
+    if (req.method === 'POST' && apiPathname === '/api/flyreq/proxy/text') {
       try {
         const body = await readJsonBody(req);
         const { protocol, baseUrl, apiKey, model, stream, requestBody } = body;
@@ -1670,7 +1670,7 @@ async function handleApi(req, res, pathname) {
     }
 
     // ===== 模型检查代理（统一使用 /v1/models） =====
-    if (req.method === 'GET' && apiPathname === '/api/nova/proxy/models') {
+    if (req.method === 'GET' && apiPathname === '/api/flyreq/proxy/models') {
       try {
         const parsed = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
         const baseUrl = parsed.searchParams.get('baseUrl');
@@ -1697,14 +1697,14 @@ async function handleApi(req, res, pathname) {
       return true;
     }
 
-    if (req.method === 'POST' && apiPathname === '/api/nova/tasks') {
+    if (req.method === 'POST' && apiPathname === '/api/flyreq/tasks') {
       const body = await readJsonBody(req);
       const taskId = createTask(body, req);
       sendJson(res, 202, { taskId });
       return true;
     }
 
-    const match = apiPathname.match(/^\/api\/nova\/tasks\/([^/]+)(?:\/(ack))?$/);
+    const match = apiPathname.match(/^\/api\/flyreq\/tasks\/([^/]+)(?:\/(ack))?$/);
     if (!match) return false;
     const taskId = decodeURIComponent(match[1]);
     const action = match[2];
@@ -1751,7 +1751,7 @@ const startServer = () => {
   const wss = setupWebSocketServer();
   const httpServer = http.createServer(async (req, res) => {
     const parsedUrl = new URL(req.url || '/', `http://${req.headers.host || `${HOSTNAME}:${PORT}`}`);
-    if (parsedUrl.pathname?.startsWith('/api/nova/')) {
+    if (parsedUrl.pathname?.startsWith('/api/flyreq/')) {
       const handled = await handleApi(req, res, parsedUrl.pathname);
       if (handled || res.headersSent || res.writableEnded) return;
     }
@@ -1776,7 +1776,7 @@ const startServer = () => {
       socket.destroy();
       return;
     }
-    if (pathname === '/api/nova/ws') {
+    if (pathname === '/api/flyreq/ws') {
       wss.handleUpgrade(req, socket, head, ws => wss.emit('connection', ws, req));
       return;
     }

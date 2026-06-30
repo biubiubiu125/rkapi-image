@@ -1,7 +1,7 @@
 import type { CanvasProject } from "./stores/use-canvas-store";
 
 export type CanvasExportFile = {
-  app: "nova-image-canvas" | "infinite-canvas";
+  app: "flyreq-image-canvas" | "infinite-canvas";
   version: 3;
   exportedAt: string;
   projects: CanvasProjectExportItem[];

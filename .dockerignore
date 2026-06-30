@@ -7,12 +7,8 @@ backend/node_modules
 doc/
 data/
 frontend/out/
-backend/nova-images/
-backend/nova-tasks.sqlite
-backend/nova-tasks.sqlite-wal
-backend/nova-tasks.sqlite-shm
-backend/ccode-images/
-backend/ccode-tasks.sqlite
-backend/ccode-tasks.sqlite-wal
-backend/ccode-tasks.sqlite-shm
+backend/flyreq-images/
+backend/flyreq-tasks.sqlite
+backend/flyreq-tasks.sqlite-wal
+backend/flyreq-tasks.sqlite-shm
 .env
