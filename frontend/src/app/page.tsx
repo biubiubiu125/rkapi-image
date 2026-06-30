@@ -1,7 +1,5 @@
-'use client';
-
-import { WorkspaceShell } from '@/components/workspace/WorkspaceShell';
+import { LocalizedWorkspace } from '@/components/LocalizedWorkspace';
 
 export default function Home() {
-  return <WorkspaceShell />;
+  return <LocalizedWorkspace initialLocale="en" />;
 }

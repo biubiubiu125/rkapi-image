@@ -2,6 +2,7 @@
 
 import { PanelLeftClose, PanelLeftOpen } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { useI18n } from '@/components/LanguageProvider';
 
 interface WideModeToggleProps {
   enabled: boolean;
@@ -9,8 +10,9 @@ interface WideModeToggleProps {
 }
 
 export function WideModeToggle({ enabled, onToggle }: WideModeToggleProps) {
+  const { t } = useI18n();
   const Icon = enabled ? PanelLeftClose : PanelLeftOpen;
-  const label = enabled ? '退出宽屏' : '宽屏';
+  const label = enabled ? t('toolbar.exitWideMode') : t('toolbar.wideMode');
 
   return (
     <Button

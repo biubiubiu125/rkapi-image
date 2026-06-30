@@ -6,8 +6,8 @@ import { ServiceWorkerManager } from "@/components/ServiceWorkerManager";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Nova Image - AI 图像生成器",
-  description: "Nova Image AI 图像生成工作台",
+  title: "Nova Image - AI Image Generator",
+  description: "Nova Image AI image generation workspace",
   icons: {
     icon: [
       { url: '/favicon.png', type: 'image/png' },
@@ -29,7 +29,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="zh-CN" suppressHydrationWarning>
+    <html lang="en" suppressHydrationWarning>
       <head>
         <Script
           id="theme-init"
@@ -38,7 +38,7 @@ export default function RootLayout({
             __html: `
               (function() {
                 try {
-                  const theme = window.localStorage.getItem('theme');
+                  var theme = window.localStorage.getItem('theme');
                   if (theme === 'dark' || theme === 'light') {
                     document.documentElement.setAttribute('data-theme', theme);
                   } else {
@@ -46,6 +46,26 @@ export default function RootLayout({
                   }
                 } catch {
                   document.documentElement.removeAttribute('data-theme');
+                }
+              })();
+            `,
+          }}
+        />
+        <Script
+          id="locale-init"
+          strategy="beforeInteractive"
+          dangerouslySetInnerHTML={{
+            __html: `
+              (function() {
+                try {
+                  var parts = window.location.pathname.split('/').filter(Boolean);
+                  var urlLocale = parts[0] === 'zh' || parts[0] === 'en' ? parts[0] : '';
+                  var stored = window.localStorage.getItem('nova-locale');
+                  var locale = urlLocale || (stored === 'zh' || stored === 'en' ? stored : 'en');
+                  if (urlLocale) window.localStorage.setItem('nova-locale', urlLocale);
+                  document.documentElement.lang = locale === 'zh' ? 'zh-CN' : 'en';
+                } catch {
+                  document.documentElement.lang = 'en';
                 }
               })();
             `,

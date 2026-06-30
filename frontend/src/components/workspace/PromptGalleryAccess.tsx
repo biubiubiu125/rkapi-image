@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ConfirmDialog } from '@/components/workspace/dialogs/ConfirmDialog';
 import type { PromptGalleryMode } from '@/hooks/usePromptGalleryConfig';
+import { translate, type Locale } from '@/lib/i18n';
 
 export function usePromptGalleryAccess(
   mode: PromptGalleryMode,
   passwordEnabled: boolean,
   onError: (message: string) => void,
   onUnlocked?: () => void,
+  locale: Locale = 'en',
 ) {
   const [showPromptGallery, setShowPromptGallery] = useState(mode === '1');
   const [passwordDialogOpen, setPasswordDialogOpen] = useState(false);
@@ -57,13 +59,13 @@ export function usePromptGalleryAccess(
         setPasswordInput('');
         onUnlocked?.();
       } else {
-        onError('密码错误');
+        onError(translate(locale, 'promptGallery.passwordWrong'));
         setPasswordInput('');
       }
     } catch {
-      onError('密码验证失败');
+      onError(translate(locale, 'promptGallery.passwordFailed'));
     }
-  }, [onError, onUnlocked, passwordInput]);
+  }, [locale, onError, onUnlocked, passwordInput]);
 
   useEffect(() => {
     return () => {
@@ -88,21 +90,23 @@ export function PromptGalleryAccessDialog({
   onPasswordChange,
   onClose,
   onSubmit,
+  locale = 'en',
 }: {
   open: boolean;
   passwordInput: string;
   onPasswordChange: (value: string) => void;
   onClose: () => void;
   onSubmit: () => void;
+  locale?: Locale;
 }) {
   if (!open) return null;
 
   return (
     <ConfirmDialog
-      title="提示词广场验证"
+      title={translate(locale, 'promptGallery.verifyTitle')}
       message={(
         <div className="space-y-3">
-          <p>请输入密码以开启提示词广场。</p>
+          <p>{translate(locale, 'promptGallery.verifyMessage')}</p>
           <input
             type="password"
             value={passwordInput}
@@ -115,7 +119,7 @@ export function PromptGalleryAccessDialog({
           />
         </div>
       )}
-      confirmText="验证"
+      confirmText={translate(locale, 'promptGallery.verifyAction')}
       variant="default"
       onConfirm={onSubmit}
       onCancel={onClose}

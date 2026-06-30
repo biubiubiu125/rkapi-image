@@ -3,6 +3,7 @@
 import { useRef } from 'react';
 import { Bot, Film, Frame, Images, LibraryBig, ScanSearch, Sparkles } from 'lucide-react';
 import { TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { useI18n } from '@/components/LanguageProvider';
 
 interface WorkspaceModeTabsProps {
   wideMode?: boolean;
@@ -15,17 +16,18 @@ const horizontalTriggerClass =
 const labelClass = 'max-sm:hidden max-sm:group-data-active:inline';
 
 const tabs = [
-  { value: 'agent', icon: Bot, label: 'Agent' },
-  { value: 'image-generation', icon: Sparkles, label: '生图工作台' },
-  { value: 'canvas', icon: Frame, label: '无限画布' },
-  { value: 'assets', icon: Images, label: '我的素材' },
-  { value: 'reverse-prompt', icon: ScanSearch, label: '反推提示词' },
-  { value: 'gif', icon: Film, label: '动图生成' },
+  { value: 'agent', icon: Bot, labelKey: 'tabs.agent' },
+  { value: 'image-generation', icon: Sparkles, labelKey: 'tabs.imageGeneration' },
+  { value: 'canvas', icon: Frame, labelKey: 'tabs.canvas' },
+  { value: 'assets', icon: Images, labelKey: 'tabs.assets' },
+  { value: 'reverse-prompt', icon: ScanSearch, labelKey: 'tabs.reversePrompt' },
+  { value: 'gif', icon: Film, labelKey: 'tabs.gif' },
 ] as const;
 
-const galleryTab = { value: 'prompt-gallery', icon: LibraryBig, label: '提示词广场' } as const;
+const galleryTab = { value: 'prompt-gallery', icon: LibraryBig, labelKey: 'tabs.promptGallery' } as const;
 
 export function WorkspaceModeTabs({ wideMode = false, showPromptGallery = false }: WorkspaceModeTabsProps) {
+  const { t } = useI18n();
   const gridCols = showPromptGallery ? 'sm:grid-cols-7' : 'sm:grid-cols-6';
   const allTabs = showPromptGallery ? [...tabs, galleryTab] : tabs;
   const dragStateRef = useRef({
@@ -39,14 +41,14 @@ export function WorkspaceModeTabs({ wideMode = false, showPromptGallery = false 
     // 宽屏 → 垂直气泡侧边栏
     return (
       <TabsList className="w-full flex-col gap-1.5 rounded-2xl border border-border bg-muted/50 p-2">
-        {allTabs.map(({ value, icon: Icon, label }) => (
+        {allTabs.map(({ value, icon: Icon, labelKey }) => (
           <TabsTrigger
             key={value}
             value={value}
             className="flex flex-row items-center gap-2 rounded-xl px-3 py-2.5 text-xs font-medium data-active:bg-card data-active:text-foreground data-active:shadow-sm"
           >
             <Icon className="size-5 shrink-0" />
-            <span>{label}</span>
+            <span>{t(labelKey)}</span>
           </TabsTrigger>
         ))}
       </TabsList>
@@ -99,10 +101,10 @@ export function WorkspaceModeTabs({ wideMode = false, showPromptGallery = false 
         dragStateRef.current.dragged = false;
       }}
     >
-      {allTabs.map(({ value, icon: Icon, label }) => (
+      {allTabs.map(({ value, icon: Icon, labelKey }) => (
         <TabsTrigger key={value} value={value} className={horizontalTriggerClass}>
           <Icon className="size-4 shrink-0" />
-          <span className={labelClass}>{label}</span>
+          <span className={labelClass}>{t(labelKey)}</span>
         </TabsTrigger>
       ))}
     </TabsList>

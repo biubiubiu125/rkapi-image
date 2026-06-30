@@ -9,6 +9,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { useI18n } from '@/components/LanguageProvider';
 
 interface MissingApiKeyDialogProps {
   open: boolean;
@@ -17,6 +18,7 @@ interface MissingApiKeyDialogProps {
 }
 
 export function MissingApiKeyDialog({ open, onOpenChange, onConfigure }: MissingApiKeyDialogProps) {
+  const { t } = useI18n();
   const handleConfigure = () => {
     onOpenChange(false);
     onConfigure();
@@ -26,17 +28,17 @@ export function MissingApiKeyDialog({ open, onOpenChange, onConfigure }: Missing
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>请先配置 API 密钥</DialogTitle>
+          <DialogTitle>{t('missingApiKey.title')}</DialogTitle>
           <DialogDescription>
-            Nova 模式需要先配置 API 密钥，配置完成后即可生成或转换图片。
+            {t('missingApiKey.description')}
           </DialogDescription>
         </DialogHeader>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>
-            取消
+            {t('common.cancel')}
           </Button>
           <Button onClick={handleConfigure}>
-            配置
+            {t('common.configure')}
           </Button>
         </DialogFooter>
       </DialogContent>

@@ -52,7 +52,7 @@ import {
 import { syncDynamicModelExports } from '@/lib/gemini-config';
 import { exportAllData, importAllData, downloadBlob, generateBackupFilename, type BackupProgress as BackupProgressType } from '@/lib/backup-utils';
 import { checkModelsAvailability, type ModelStatus } from '@/lib/ccode-task-client';
-import { hasAnyApiKey } from '@/lib/settings-storage';
+import { hasConfiguredImageModel } from '@/lib/settings-storage';
 import { BA_RANDOM_URL, BING_WALLPAPER_URL } from '@/lib/constants';
 import { PROMPT_DATA_SOURCES, getPromptSourceLabel } from '@/lib/prompt-gallery-data';
 
@@ -269,16 +269,12 @@ export function SettingsModal({ isOpen, onClose, onApiKeyChange }: SettingsModal
       setError('至少填写一个图片模型');
       return;
     }
-    if (textModels.length === 0) {
-      setError('至少填写一个文本模型');
-      return;
-    }
     if (!imageModels.some(isCompleteImageModel)) {
       setError('至少完成一个图片模型的全部信息');
       return;
     }
-    if (!textModels.some(isCompleteTextModel)) {
-      setError('至少完成一个文本模型的全部信息');
+    if (textModels.length > 0 && !textModels.every(isCompleteTextModel)) {
+      setError('文本模型如需启用，请填写完整；不需要文本功能时可以删除文本模型配置');
       return;
     }
 
@@ -291,7 +287,7 @@ export function SettingsModal({ isOpen, onClose, onApiKeyChange }: SettingsModal
     saveRegistry(registry);
     syncDynamicModelExports();
     window.dispatchEvent(new Event('nova-model-registry-updated'));
-    onApiKeyChange?.(hasAnyApiKey());
+    onApiKeyChange?.(hasConfiguredImageModel());
     setSuccess('设置已保存');
     setError(null);
     setModelStatuses(null);

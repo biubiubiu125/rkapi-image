@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { hasAnyApiKey } from '@/lib/settings-storage';
+import { hasConfiguredTextModel } from '@/lib/settings-storage';
 import { generateUUID } from '@/lib/uuid';
 import { createNovaTask, getNovaTask, resolveImageTaskProvider, type ImageReference } from '@/lib/ccode-task-client';
 import { fetchImageAsBlob } from '@/lib/image-downloader';
@@ -95,6 +95,17 @@ function blobToDataUrl(blob: Blob): Promise<string> {
   });
 }
 
+function getLocalStorageItem(key: string): string | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    return typeof window.localStorage?.getItem === 'function'
+      ? window.localStorage.getItem(key)
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 function loadImage(src: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
     const img = new Image();
@@ -174,7 +185,7 @@ async function resultImageToBlob(ref: string): Promise<Blob> {
 
 export function useAgentChat() {
   const [ready, setReady] = useState(false);
-  const [hasApiKey] = useState(() => hasAnyApiKey());
+  const [hasApiKey] = useState(() => hasConfiguredTextModel());
   const [phase, setPhase] = useState<AgentPhase>('idle');
   const [messages, setMessages] = useState<AgentMessage[]>([]);
   const [images, setImages] = useState<AgentImageRecord[]>([]);
@@ -188,10 +199,10 @@ export function useAgentChat() {
   const [generationDraft, setGenerationDraft] = useState<AgentGenerationDraft | null>(null);
   const [isSyncing, setIsSyncing] = useState(false);
   const [webSearchEnabled, setWebSearchEnabled] = useState(() =>
-    typeof localStorage !== 'undefined' ? localStorage.getItem('nova-agent-web-search') === 'true' : false
+    getLocalStorageItem('nova-agent-web-search') === 'true'
   );
   const [intentRecognition, setIntentRecognition] = useState(() =>
-    typeof localStorage !== 'undefined' ? localStorage.getItem('nova-agent-intent-recognition') !== 'false' : true
+    getLocalStorageItem('nova-agent-intent-recognition') !== 'false'
   );
 
   const streamHandleRef = useRef<StreamAgentHandle | null>(null);

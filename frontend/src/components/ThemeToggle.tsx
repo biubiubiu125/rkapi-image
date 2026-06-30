@@ -11,29 +11,17 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { Button, buttonVariants } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
+import { useI18n } from '@/components/LanguageProvider';
+import { applyTheme, isTheme, type Theme } from '@/lib/theme';
 
-type Theme = 'light' | 'dark' | 'system';
-
-const themeOptions: { value: Theme; label: string; icon: typeof Sun }[] = [
-  { value: 'light', label: '亮色', icon: Sun },
-  { value: 'dark', label: '暗色', icon: Moon },
-  { value: 'system', label: '跟随系统', icon: Monitor },
+const themeOptions: { value: Theme; labelKey: 'theme.light' | 'theme.dark' | 'theme.system'; icon: typeof Sun }[] = [
+  { value: 'system', labelKey: 'theme.system', icon: Monitor },
+  { value: 'light', labelKey: 'theme.light', icon: Sun },
+  { value: 'dark', labelKey: 'theme.dark', icon: Moon },
 ];
 
-function isTheme(value: string | null): value is Theme {
-  return value === 'light' || value === 'dark' || value === 'system';
-}
-
-function applyTheme(newTheme: Theme) {
-  const root = document.documentElement;
-  if (newTheme === 'system') {
-    root.removeAttribute('data-theme');
-  } else {
-    root.setAttribute('data-theme', newTheme);
-  }
-}
-
-export function ThemeToggle() {
+export function ThemeToggle({ iconOnly = false }: { iconOnly?: boolean }) {
+  const { t } = useI18n();
   const [theme, setTheme] = useState<Theme>('system');
   const [mounted, setMounted] = useState(false);
 
@@ -46,9 +34,9 @@ export function ThemeToggle() {
       setMounted(true);
       try {
         const stored = localStorage.getItem('theme');
-        if (!isTheme(stored)) return;
-        setTheme(stored);
-        applyTheme(stored);
+        const nextTheme = isTheme(stored) ? stored : 'system';
+        setTheme(nextTheme);
+        applyTheme(nextTheme);
       } catch {
         applyTheme('system');
       }
@@ -72,7 +60,7 @@ export function ThemeToggle() {
 
   if (!mounted) {
     return (
-      <Button variant="outline" size="icon" aria-label="切换主题">
+      <Button variant={iconOnly ? 'ghost' : 'outline'} size={iconOnly ? 'icon-sm' : 'icon'} aria-label={t('theme.switch')}>
         <div className="w-5 h-5" />
       </Button>
     );
@@ -80,16 +68,20 @@ export function ThemeToggle() {
 
   const currentOption = themeOptions.find(o => o.value === theme)!;
   const CurrentIcon = currentOption.icon;
+  const currentLabel = t(currentOption.labelKey);
 
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
-        className={cn(buttonVariants({ variant: "outline", size: "sm" }), "gap-0 px-2 sm:gap-2 sm:px-3")}
-        title={`主题：${currentOption.label}`}
-        aria-label="切换主题"
+        className={cn(
+          buttonVariants({ variant: iconOnly ? 'ghost' : 'outline', size: iconOnly ? 'icon-sm' : 'sm' }),
+          iconOnly ? 'rounded-md' : 'gap-0 px-2 sm:gap-2 sm:px-3'
+        )}
+        title={`${t('theme.label')}: ${currentLabel}`}
+        aria-label={t('theme.switch')}
       >
         <CurrentIcon className="size-4" />
-        <span className="hidden sm:inline">{currentOption.label}</span>
+        {!iconOnly && <span className="hidden sm:inline">{currentLabel}</span>}
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-40">
         <DropdownMenuRadioGroup value={theme} onValueChange={selectTheme}>
@@ -98,7 +90,7 @@ export function ThemeToggle() {
             return (
               <DropdownMenuRadioItem key={option.value} value={option.value}>
                 <Icon className="size-4" />
-                {option.label}
+                {t(option.labelKey)}
               </DropdownMenuRadioItem>
             );
           })}

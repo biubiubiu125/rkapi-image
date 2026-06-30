@@ -25,6 +25,8 @@ import { ConfirmDialog } from '@/components/workspace/dialogs/ConfirmDialog';
 import { Toast, type ToastData } from '@/components/workspace/Toast';
 import { Button, buttonVariants } from '@/components/ui/button';
 import { ThemeToggle } from '@/components/ThemeToggle';
+import { LanguageToggle } from '@/components/LanguageToggle';
+import { useI18n } from '@/components/LanguageProvider';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -46,6 +48,7 @@ import { cn } from '@/lib/utils';
 import { BA_RANDOM_URL, BING_WALLPAPER_URL } from '@/lib/constants';
 
 export function WorkspaceShell() {
+  const { locale, t } = useI18n();
   const queueStatus = useQueueStatus();
   const { wideMode, toggleWideMode } = useWideMode();
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -57,7 +60,7 @@ export function WorkspaceShell() {
   const [referenceDraft, setReferenceDraft] = useState<{ id: number; refImages: RefImageData[] } | null>(null);
   const workspace = useWorkspaceJobs();
   const galleryConfig = usePromptGalleryConfig();
-  const promptGallery = usePromptGalleryAccess(galleryConfig.mode, galleryConfig.passwordEnabled, setError, () => setActiveTab('prompt-gallery'));
+  const promptGallery = usePromptGalleryAccess(galleryConfig.mode, galleryConfig.passwordEnabled, setError, () => setActiveTab('prompt-gallery'), locale);
 
   // Toast state
   const [toasts, setToasts] = useState<ToastData[]>([]);
@@ -102,7 +105,7 @@ export function WorkspaceShell() {
   useServerTaskPolling(workspace.jobs, submitActions, workspace.hasJob);
 
   const handleSubmitError = useCallback((message: string) => {
-    if (message === '请先配置 API 密钥') {
+    if (message === '请先配置 API 密钥' || message === 'Please configure an API key first') {
       setError(null);
       setMissingApiKeyDialogOpen(true);
       return;
@@ -118,23 +121,23 @@ export function WorkspaceShell() {
     try {
       const task = await getNovaTask(job.serverTaskId);
       if (task.status === 'completed') {
-        showToast('生成完成，正在下载图片…', 'success');
+        showToast(locale === 'zh' ? '生成完成，正在下载图片…' : 'Generation complete. Downloading images...', 'success');
         await finalizeCompletedServerTask(job, task, submitActions);
       } else if (task.status === 'failed' || task.status === 'expired') {
         const { terminal } = classifyTaskFailure(task);
         const message = task.error || task.warning
-          || (task.status === 'expired' ? '该任务已超出取回时间' : '任务失败');
+          || (task.status === 'expired' ? (locale === 'zh' ? '该任务已超出取回时间' : 'This task has expired') : t('history.failed'));
         void submitActions.failJob(job.id, message, { terminal });
-        showToast(`任务失败：${message}`, 'error');
+        showToast(locale === 'zh' ? `任务失败：${message}` : `Task failed: ${message}`, 'error');
       } else if (task.status === 'processing') {
         submitActions.replaceJob(job.id, cur => ({ ...cur, status: 'processing' }));
-        showToast('任务正在生成中，请稍候…', 'info');
+        showToast(locale === 'zh' ? '任务正在生成中，请稍候…' : 'The task is still generating. Please wait...', 'info');
       } else if (task.status === 'queued' || task.status === '排队中') {
         submitActions.replaceJob(job.id, cur => ({ ...cur, status: '排队中' }));
-        showToast('任务排队中，请耐心等待…', 'info');
+        showToast(locale === 'zh' ? '任务排队中，请耐心等待…' : 'The task is queued. Please wait...', 'info');
       }
     } catch {
-      showToast('查询失败，请稍后重试', 'error');
+      showToast(locale === 'zh' ? '查询失败，请稍后重试' : 'Status check failed. Please try again later.', 'error');
     } finally {
       setCheckingJobIds(prev => { const next = new Set(prev); next.delete(job.id); return next; });
       // Cleanup cooldown after 5s
@@ -146,7 +149,7 @@ export function WorkspaceShell() {
         });
       }, 5000);
     }
-  }, [checkingJobIds, cooldowns, submitActions, showToast]);
+  }, [checkingJobIds, cooldowns, locale, submitActions, showToast, t]);
 
   const generationInitialData = useMemo(() => (
     workspace.retryData
@@ -177,17 +180,17 @@ export function WorkspaceShell() {
     [generationHistoryFilter, generationJobs]
   );
   const generationEmptyDescription = generationHistoryFilter === 'text-to-image'
-    ? '提交一段文字描述来生成图片'
+    ? t('history.emptyTextToImage')
     : generationHistoryFilter === 'image-to-image'
-      ? '添加参考图并输入描述来转换'
-      : '输入提示词，或添加参考图后再生成';
+      ? t('history.emptyImageToImage')
+      : t('history.emptyGenerationAll');
   const clearScopeLabel = generationClearScope === 'all'
-    ? '文生图和图生图'
+    ? `${t('history.filterTextToImage')} / ${t('history.filterImageToImage')}`
     : generationClearScope === 'text-to-image'
-      ? '文生图'
+      ? t('history.filterTextToImage')
       : generationClearScope === 'image-to-image'
-        ? '图生图'
-        : '当前模式';
+        ? t('history.filterImageToImage')
+        : locale === 'zh' ? '当前模式' : 'current mode';
 
   const handleConfirmClearGeneration = useCallback(() => {
     if (!generationClearScope) return;
@@ -263,7 +266,7 @@ export function WorkspaceShell() {
                   />
                   <div className="min-w-0">
                     <h2 className="truncate text-base font-semibold tracking-tight leading-tight">Nova Image</h2>
-                    <p className="truncate text-[11px] text-muted-foreground leading-tight">批量 API 图像生成器</p>
+                    <p className="truncate text-[11px] text-muted-foreground leading-tight">{t('app.subtitle')}</p>
                   </div>
                 </button>
               )}
@@ -272,39 +275,34 @@ export function WorkspaceShell() {
               </div>
 
               {wideMode && (
-                <div className="hidden flex-col gap-1 xl:flex">
+                <div className="hidden flex-col gap-1 xl:flex xl:min-h-0">
                   <div className="flex flex-col gap-1">
                     <DropdownMenu modal={false}>
                       <DropdownMenuTrigger
                         className={cn(buttonVariants({ variant: 'outline', size: 'sm' }), 'w-full justify-start gap-2 rounded-xl px-3 text-xs')}
-                        title="随机图片"
-                        aria-label="随机图片"
+                        title={t('toolbar.randomImage')}
+                        aria-label={t('toolbar.randomImage')}
                       >
                         <Shuffle className="size-4 shrink-0" />
-                        随机图片
+                        {t('toolbar.randomImage')}
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="start" sideOffset={4}>
-                        <DropdownMenuItem onClick={() => headerRef.current?.openRandomImage(BA_RANDOM_URL, 'BA人物')}>
+                        <DropdownMenuItem onClick={() => headerRef.current?.openRandomImage(BA_RANDOM_URL, t('toolbar.baPeople'))}>
                           <User className="w-4 h-4" />
-                          BA人物
+                          {t('toolbar.baPeople')}
                         </DropdownMenuItem>
-                        <DropdownMenuItem onClick={() => headerRef.current?.openRandomImage(BING_WALLPAPER_URL, 'Bing壁纸')}>
+                        <DropdownMenuItem onClick={() => headerRef.current?.openRandomImage(BING_WALLPAPER_URL, t('toolbar.bingWallpaper'))}>
                           <Wallpaper className="w-4 h-4" />
-                          Bing壁纸
+                          {t('toolbar.bingWallpaper')}
                         </DropdownMenuItem>
                       </DropdownMenuContent>
                     </DropdownMenu>
                   </div>
 
-                  <div className="flex flex-col gap-1 [&_button]:w-full [&_button]:justify-start [&_button]:rounded-xl [&_button_svg]:size-4 [&_button_svg]:shrink-0">
-                    <ThemeToggle />
+                  <div className="flex flex-col gap-1">
                     <Button variant="outline" size="sm" className="w-full justify-start gap-2 rounded-xl px-3 text-xs" onClick={toggleWideMode}>
                       {wideMode ? <PanelLeftClose className="size-4 shrink-0" /> : <PanelLeftOpen className="size-4 shrink-0" />}
-                      {wideMode ? '退出宽屏' : '宽屏'}
-                    </Button>
-                    <Button variant="outline" size="sm" className="w-full justify-start gap-2 rounded-xl px-3 text-xs" onClick={() => setSettingsOpen(true)}>
-                      <Settings className="size-4 shrink-0" />
-                      设置
+                      {wideMode ? t('toolbar.exitWideMode') : t('toolbar.wideMode')}
                     </Button>
                   </div>
 
@@ -313,7 +311,7 @@ export function WorkspaceShell() {
                     {queueStatus ? (
                       <div className="flex flex-col gap-1">
                         <span className="rounded-full bg-muted px-3 py-1 text-center text-xs text-muted-foreground">
-                          并发 {queueStatus.processingCount}
+                          {t('queue.concurrency', { count: queueStatus.processingCount })}
                         </span>
                         <span className={cn(
                           'rounded-full px-3 py-1 text-center text-xs',
@@ -321,10 +319,12 @@ export function WorkspaceShell() {
                             ? 'bg-destructive/10 text-destructive'
                             : 'bg-muted text-muted-foreground'
                         )}>
-                          排队 {queueStatus.queuedCount}{typeof queueStatus.maxQueueSize === 'number' ? ` (最大${queueStatus.maxQueueSize})` : ''}
+                          {typeof queueStatus.maxQueueSize === 'number'
+                            ? t('queue.queuedMax', { count: queueStatus.queuedCount, max: queueStatus.maxQueueSize })
+                            : t('queue.queued', { count: queueStatus.queuedCount })}
                         </span>
                         <span className="rounded-full bg-muted px-3 py-1 text-center text-xs text-muted-foreground">
-                          状态 {queueStatus.acceptingNewTasks ? '开启' : '关闭'}
+                          {t('queue.status', { status: queueStatus.acceptingNewTasks ? t('queue.statusOpen') : t('queue.statusClosed') })}
                         </span>
                         {queueStatus.serverMessage && (
                           <span className="rounded-xl bg-destructive/10 px-3 py-1 text-center text-xs text-destructive">
@@ -333,8 +333,18 @@ export function WorkspaceShell() {
                         )}
                       </div>
                     ) : (
-                      <span className="text-center text-xs text-muted-foreground">排队状态未知</span>
+                      <span className="text-center text-xs text-muted-foreground">{t('queue.unknown')}</span>
                     )}
+                  </div>
+                  <div className="mt-auto flex flex-col gap-1 pt-3">
+                    <div className="h-px bg-border" />
+                    <div className="grid grid-cols-3 gap-0.5 rounded-xl border border-border bg-background p-0.5 shadow-sm dark:border-input dark:bg-input/20">
+                      <ThemeToggle iconOnly />
+                      <LanguageToggle iconOnly />
+                      <Button variant="ghost" size="icon-sm" className="w-full rounded-lg" onClick={() => setSettingsOpen(true)} title={t('common.settings')} aria-label={t('common.settings')}>
+                        <Settings className="size-4 shrink-0" />
+                      </Button>
+                    </div>
                   </div>
                 </div>)}
             </div>
@@ -363,7 +373,7 @@ export function WorkspaceShell() {
                   <HistoryJobList
                     wideMode={wideMode}
                     active={activeTab === 'image-generation'}
-                    title="生图任务"
+                    title={t('history.generationTitle')}
                     mode="text-to-image"
                     historyFilter={generationHistoryFilter}
                     onHistoryFilterChange={setGenerationHistoryFilter}
@@ -393,7 +403,7 @@ export function WorkspaceShell() {
               >
                 <AgentChatWorkspace
                   wideMode={wideMode}
-                  disabled={!workspace.hasApiKey}
+                  disabled={false}
                   onConfigureApiKey={() => setSettingsOpen(true)}
                 />
               </TabsContent>
@@ -415,7 +425,7 @@ export function WorkspaceShell() {
               <TabsContent value="reverse-prompt" keepMounted className={cn(wideMode ? 'space-y-6 xl:min-h-0 xl:flex xl:flex-col' : 'space-y-6')}>
                 <ReversePromptForm
                   wideMode={wideMode}
-                  disabled={!workspace.hasApiKey}
+                  disabled={false}
                   onConfigureApiKey={() => setSettingsOpen(true)}
                 />
               </TabsContent>
@@ -460,18 +470,21 @@ export function WorkspaceShell() {
         onPasswordChange={promptGallery.setPasswordInput}
         onClose={() => promptGallery.setPasswordDialogOpen(false)}
         onSubmit={() => void promptGallery.handlePasswordSubmit()}
+        locale={locale}
       />
 
       {workspace.cancelJobId && createPortal(
         <ConfirmDialog
-          title="取消生成任务"
+          title={locale === 'zh' ? '取消生成任务' : 'Cancel generation task'}
           message={
             <>
-              取消后会删除本地任务记录并停止前端等待流程。
-              <span className="mt-1 block text-warning">如果任务已进入服务端队列，可能仍会继续执行。</span>
+              {locale === 'zh' ? '取消后会删除本地任务记录并停止前端等待流程。' : 'Cancelling will delete the local task record and stop the frontend waiting flow.'}
+              <span className="mt-1 block text-warning">
+                {locale === 'zh' ? '如果任务已进入服务端队列，可能仍会继续执行。' : 'If the task already entered the server queue, it may still continue running.'}
+              </span>
             </>
           }
-          confirmText="取消并删除"
+          confirmText={locale === 'zh' ? '取消并删除' : 'Cancel and delete'}
           onConfirm={() => {
             const jobId = workspace.cancelJobId;
             workspace.setCancelJobId(null);
@@ -486,9 +499,9 @@ export function WorkspaceShell() {
 
       {generationClearScope && createPortal(
         <ConfirmDialog
-          title="清空记录"
-          message={`确定要清空${clearScopeLabel}历史记录吗？此操作无法撤销。`}
-          confirmText="清空"
+          title={locale === 'zh' ? '清空记录' : 'Clear records'}
+          message={locale === 'zh' ? `确定要清空${clearScopeLabel}历史记录吗？此操作无法撤销。` : `Clear ${clearScopeLabel} history records? This cannot be undone.`}
+          confirmText={locale === 'zh' ? '清空' : 'Clear'}
           onConfirm={handleConfirmClearGeneration}
           onCancel={() => setGenerationClearScope(null)}
         />,

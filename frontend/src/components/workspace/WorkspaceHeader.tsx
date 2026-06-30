@@ -5,7 +5,9 @@ import { useState, useRef, useCallback, useEffect, useLayoutEffect, useMemo, use
 import { Button, buttonVariants } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { ThemeToggle } from '@/components/ThemeToggle';
+import { LanguageToggle } from '@/components/LanguageToggle';
 import { WideModeToggle } from '@/components/WideModeToggle';
+import { useI18n } from '@/components/LanguageProvider';
 import type { NovaQueueStatus } from '@/lib/ccode-task-client';
 import {
   DropdownMenu,
@@ -56,6 +58,7 @@ export const WorkspaceHeader = forwardRef<WorkspaceHeaderRef, WorkspaceHeaderPro
   { queueStatus, wideMode, onToggleWideMode, onOpenSettings, onLogoClick, sidebarMode = false },
   ref,
 ) {
+  const { t } = useI18n();
   const [viewerOpen, setViewerOpen] = useState(false);
   const [imageSrc, setImageSrc] = useState('');
   const [imageTitle, setImageTitle] = useState('');
@@ -143,7 +146,7 @@ export const WorkspaceHeader = forwardRef<WorkspaceHeaderRef, WorkspaceHeaderPro
           </button>
           <div className="hidden min-w-0 space-y-1 sm:block">
             <h1 className="truncate text-2xl font-semibold tracking-tight">Nova Image</h1>
-            <p className="text-sm text-muted-foreground">批量 API 图像生成器</p>
+            <p className="text-sm text-muted-foreground">{t('app.subtitle')}</p>
           </div>
         </div>
 
@@ -153,7 +156,7 @@ export const WorkspaceHeader = forwardRef<WorkspaceHeaderRef, WorkspaceHeaderPro
             {queueStatus ? (
               <>
                 <span className="shrink-0 rounded-full bg-muted px-1.5 py-0.5 text-[10px] leading-5 text-muted-foreground sm:px-3 sm:py-1 sm:text-xs sm:leading-normal">
-                  并发 {queueStatus.processingCount}
+                  {t('queue.concurrency', { count: queueStatus.processingCount })}
                 </span>
                 {typeof queueStatus.queuedCount === 'number' && typeof queueStatus.maxQueueSize === 'number' && (
                   <span className={cn(
@@ -162,16 +165,16 @@ export const WorkspaceHeader = forwardRef<WorkspaceHeaderRef, WorkspaceHeaderPro
                       ? 'bg-destructive/10 text-destructive'
                       : 'bg-muted text-muted-foreground'
                   )}>
-                    排队 {queueStatus.queuedCount}<span className="hidden sm:inline"> (最大{queueStatus.maxQueueSize})</span>
+                    {t('queue.queued', { count: queueStatus.queuedCount })}<span className="hidden sm:inline"> {t('queue.queuedMax', { count: queueStatus.queuedCount, max: queueStatus.maxQueueSize }).replace(t('queue.queued', { count: queueStatus.queuedCount }), '')}</span>
                   </span>
                 )}
                 {typeof queueStatus.queuedCount === 'number' && typeof queueStatus.maxQueueSize !== 'number' && (
                   <span className="shrink-0 rounded-full bg-muted px-1.5 py-0.5 text-[10px] leading-5 text-muted-foreground sm:px-3 sm:py-1 sm:text-xs sm:leading-normal">
-                    排队 {queueStatus.queuedCount}
+                    {t('queue.queued', { count: queueStatus.queuedCount })}
                   </span>
                 )}
                 <span className="shrink-0 rounded-full bg-muted px-1.5 py-0.5 text-[10px] leading-5 text-muted-foreground sm:px-3 sm:py-1 sm:text-xs sm:leading-normal">
-                  状态 {queueStatus.acceptingNewTasks ? '开启' : '关闭'}
+                  {t('queue.status', { status: queueStatus.acceptingNewTasks ? t('queue.statusOpen') : t('queue.statusClosed') })}
                 </span>
                 {queueStatus.serverMessage && (
                   <span className="max-w-24 shrink-0 truncate rounded-full bg-destructive/10 px-1.5 py-0.5 text-[10px] leading-5 text-destructive sm:max-w-none sm:px-3 sm:py-1 sm:text-xs sm:leading-normal">
@@ -180,36 +183,38 @@ export const WorkspaceHeader = forwardRef<WorkspaceHeaderRef, WorkspaceHeaderPro
                 )}
               </>
             ) : (
-              <span className="shrink-0 text-[10px] text-muted-foreground sm:text-xs">排队状态未知</span>
+              <span className="shrink-0 text-[10px] text-muted-foreground sm:text-xs">{t('queue.unknown')}</span>
             )}
           </div>
           <div className="order-2 flex shrink-0 items-center justify-end gap-1.5 sm:order-1 sm:max-w-full sm:flex-wrap sm:gap-2">
             <DropdownMenu modal={false}>
               <DropdownMenuTrigger
                 className={cn(buttonVariants({ variant: "outline", size: "sm" }), "gap-0 px-2 sm:gap-2 sm:px-2.5")}
-                title="随机图片"
-                aria-label="随机图片"
+                title={t('toolbar.randomImage')}
+                aria-label={t('toolbar.randomImage')}
               >
                 <Shuffle className="w-4 h-4" />
-                <span className="hidden sm:inline">随机图片</span>
+                <span className="hidden sm:inline">{t('toolbar.randomImage')}</span>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" sideOffset={4}>
-                <DropdownMenuItem onClick={() => openRandomImage(BA_RANDOM_URL, 'BA人物')}>
+                <DropdownMenuItem onClick={() => openRandomImage(BA_RANDOM_URL, t('toolbar.baPeople'))}>
                   <User className="w-4 h-4" />
-                  BA人物
+                  {t('toolbar.baPeople')}
                 </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => openRandomImage(BING_WALLPAPER_URL, 'Bing壁纸')}>
+                <DropdownMenuItem onClick={() => openRandomImage(BING_WALLPAPER_URL, t('toolbar.bingWallpaper'))}>
                   <Wallpaper className="w-4 h-4" />
-                  Bing壁纸
+                  {t('toolbar.bingWallpaper')}
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
-            <ThemeToggle />
             <WideModeToggle enabled={wideMode} onToggle={onToggleWideMode} />
-            <Button variant="outline" size="sm" onClick={onOpenSettings} className="gap-0 px-2 sm:gap-2 sm:px-2.5" title="设置" aria-label="设置">
-              <Settings className="w-4 h-4" />
-              <span className="hidden sm:inline">设置</span>
-            </Button>
+            <div className="flex items-center gap-0.5 rounded-lg border border-border bg-background p-0.5 shadow-sm dark:border-input dark:bg-input/20">
+              <ThemeToggle iconOnly />
+              <LanguageToggle iconOnly />
+              <Button variant="ghost" size="icon-sm" onClick={onOpenSettings} className="rounded-md" title={t('common.settings')} aria-label={t('common.settings')}>
+                <Settings className="w-4 h-4" />
+              </Button>
+            </div>
           </div>
         </div>
       </div>

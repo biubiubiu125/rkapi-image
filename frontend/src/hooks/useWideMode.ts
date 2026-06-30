@@ -14,7 +14,9 @@ function readStoredWideMode(): boolean {
   if (typeof window === 'undefined') return false;
 
   try {
-    return localStorage.getItem(WIDE_MODE_STORAGE_KEY) === 'enabled';
+    return typeof window.localStorage?.getItem === 'function'
+      ? window.localStorage.getItem(WIDE_MODE_STORAGE_KEY) === 'enabled'
+      : false;
   } catch {
     return false;
   }
@@ -25,7 +27,9 @@ function writeStoredWideMode(enabled: boolean): void {
 
   try {
     const value: StoredWideMode = enabled ? 'enabled' : 'disabled';
-    localStorage.setItem(WIDE_MODE_STORAGE_KEY, value);
+    if (typeof window.localStorage?.setItem === 'function') {
+      window.localStorage.setItem(WIDE_MODE_STORAGE_KEY, value);
+    }
   } catch {
     // Storage can be unavailable in hardened/private browser modes.
   }

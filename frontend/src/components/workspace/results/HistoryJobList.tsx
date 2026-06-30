@@ -8,14 +8,15 @@ import type { Mode, StoredJob } from '@/lib/job-store';
 import { cn } from '@/lib/utils';
 import { getModelDisplayName } from '@/lib/model-capabilities';
 import { CompletedJobCard } from '@/components/workspace/results/CompletedJobCard';
+import { useI18n } from '@/components/LanguageProvider';
 
 export type GenerationHistoryFilter = 'all' | 'text-to-image' | 'image-to-image';
 export type HistoryClearScope = GenerationHistoryFilter;
 
-const historyFilterOptions: { value: GenerationHistoryFilter; label: string }[] = [
-  { value: 'all', label: '同时显示' },
-  { value: 'text-to-image', label: '文生图' },
-  { value: 'image-to-image', label: '图生图' },
+const historyFilterOptions: { value: GenerationHistoryFilter; labelKey: 'history.filterAll' | 'history.filterTextToImage' | 'history.filterImageToImage' }[] = [
+  { value: 'all', labelKey: 'history.filterAll' },
+  { value: 'text-to-image', labelKey: 'history.filterTextToImage' },
+  { value: 'image-to-image', labelKey: 'history.filterImageToImage' },
 ];
 
 function isWaitingJob(job: StoredJob): boolean {
@@ -49,12 +50,13 @@ const WaitingJobCard = memo(function WaitingJobCard({
   onCancel: (jobId: string) => void;
   onCheckStatus: (job: StoredJob) => void;
 }) {
+  const { t } = useI18n();
   const parallelCount = job.parallelCount || 1;
   const statusText = job.status === 'queued' || job.status === '排队中'
-    ? '排队中...'
+    ? t('history.waitQueued')
     : job.mode === 'text-to-image'
-      ? (parallelCount > 1 ? `生成中 (x${parallelCount})...` : '生成中...')
-      : (parallelCount > 1 ? `转换中 (x${parallelCount})...` : '转换中...');
+      ? (parallelCount > 1 ? t('history.waitGeneratingMany', { count: parallelCount }) : t('history.waitGenerating'))
+      : (parallelCount > 1 ? t('history.waitConvertingMany', { count: parallelCount }) : t('history.waitConverting'));
   const elapsedSeconds = Math.max(0, Math.floor((now - Date.parse(job.created_at)) / 1000));
 
   return (
@@ -69,7 +71,7 @@ const WaitingJobCard = memo(function WaitingJobCard({
           <p className="truncate text-base text-foreground">&quot;{job.prompt}&quot;</p>
           <p className="mt-0.5 text-xs text-muted-foreground">{statusText}</p>
           <p className="mt-0.5 text-xs text-muted-foreground">
-            已用 <span className="font-mono text-foreground">{elapsedSeconds}</span> 秒 · {getModelDisplayName(job.model)}
+            {t('history.elapsed', { seconds: elapsedSeconds, model: getModelDisplayName(job.model) })}
           </p>
         </div>
         {job.serverTaskId && (
@@ -78,7 +80,7 @@ const WaitingJobCard = memo(function WaitingJobCard({
             size="icon-sm"
             onClick={() => onCheckStatus(job)}
             disabled={isChecking || (cooldownEnd !== undefined && now < cooldownEnd)}
-            title="查看进度"
+            title={t('history.checkProgress')}
           >
             {isChecking
               ? <Loader2 className="w-4 h-4 animate-spin" />
@@ -89,7 +91,7 @@ const WaitingJobCard = memo(function WaitingJobCard({
           variant="ghost"
           size="icon-sm"
           onClick={() => onCancel(job.id)}
-          title="取消"
+          title={t('common.cancel')}
           className="text-muted-foreground hover:text-destructive"
         >
           <X className="w-4 h-4" />
@@ -114,6 +116,7 @@ function JobsHeader({
   onFilterChange?: (filter: GenerationHistoryFilter) => void;
   onClearAll: () => void;
 }) {
+  const { t } = useI18n();
   if (!hasAnyJobs) return null;
 
   const completed = jobsList.filter(job => job.status === 'completed').length;
@@ -125,7 +128,7 @@ function JobsHeader({
       <div className="space-y-1">
         <h3 className="text-base font-medium text-foreground">{title}</h3>
         <p className="text-xs text-muted-foreground">
-          共 {jobsList.length} 条 · 完成 {completed} · 处理中 {processing} · 排队 {queued}
+          {t('history.summary', { total: jobsList.length, completed, processing, queued })}
         </p>
       </div>
       <div className="flex flex-wrap items-center gap-2">
@@ -143,13 +146,13 @@ function JobsHeader({
                     : 'text-muted-foreground hover:bg-muted hover:text-foreground'
                 )}
               >
-                {option.label}
+                {t(option.labelKey)}
               </button>
             ))}
           </div>
         )}
         <Button variant="outline" size="sm" onClick={onClearAll} disabled={jobsList.length === 0}>
-          清空记录
+          {t('history.clearRecords')}
         </Button>
       </div>
     </div>
@@ -298,6 +301,7 @@ export function HistoryJobList({
   onCancel,
   onCheckStatus,
 }: HistoryJobListProps) {
+  const { t } = useI18n();
   const hasActiveTimers = useMemo(() => active && jobs.some(job => isWaitingJob(job)), [active, jobs]);
   const now = useNow(hasActiveTimers);
   const clearScope: HistoryClearScope = historyFilter || (mode === 'image-to-image' ? 'image-to-image' : 'text-to-image');
@@ -319,21 +323,21 @@ export function HistoryJobList({
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0 space-y-1">
               <p className="truncate text-base text-foreground">&quot;{job.prompt}&quot;</p>
-              <p className="max-h-20 overflow-y-auto text-sm text-destructive">{job.error || '任务失败'}</p>
+              <p className="max-h-20 overflow-y-auto text-sm text-destructive">{job.error || t('history.failed')}</p>
               <p className="text-xs text-muted-foreground">{getModelDisplayName(job.model)}</p>
             </div>
             <div className="flex gap-1">
               {allowCheckStatus && (
-                <Button variant="ghost" size="icon-sm" onClick={() => onCheckStatus(job)} disabled={checkingJobIds.has(job.id) || (cooldowns.get(job.id) !== undefined && now < cooldowns.get(job.id)!)} title="查看进度">
+                <Button variant="ghost" size="icon-sm" onClick={() => onCheckStatus(job)} disabled={checkingJobIds.has(job.id) || (cooldowns.get(job.id) !== undefined && now < cooldowns.get(job.id)!)} title={t('history.checkProgress')}>
                   {checkingJobIds.has(job.id)
                     ? <Loader2 className="w-4 h-4 animate-spin" />
                     : <RefreshCw className="w-4 h-4" />}
                 </Button>
               )}
-              <Button variant="ghost" size="icon-sm" onClick={() => onRetry(job)} title="重试">
+              <Button variant="ghost" size="icon-sm" onClick={() => onRetry(job)} title={t('common.retry')}>
                 <Loader2 className="w-4 h-4" />
               </Button>
-              <Button variant="ghost" size="icon-sm" onClick={() => onClear(job.id)} title="删除">
+              <Button variant="ghost" size="icon-sm" onClick={() => onClear(job.id)} title={t('common.delete')}>
                 <X className="w-4 h-4" />
               </Button>
             </div>
@@ -359,9 +363,9 @@ export function HistoryJobList({
           'flex flex-col items-center justify-center text-center text-muted-foreground',
           wideMode ? 'flex-1 py-16' : 'py-6'
         )}>
-          <p className="text-sm">暂无记录</p>
+          <p className="text-sm">{t('history.noRecords')}</p>
           <p className="mt-1 text-xs opacity-70">
-            {emptyDescription || (mode === 'text-to-image' ? '提交一段文字描述来生成图片' : '上传图片并输入描述来转换')}
+            {emptyDescription || (mode === 'text-to-image' ? t('history.emptyTextToImage') : t('history.emptyImageToImage'))}
           </p>
         </div>
       ) : (
