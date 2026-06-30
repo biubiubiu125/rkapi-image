@@ -105,6 +105,9 @@ export function ReversePromptForm({ wideMode = false, disabled = false, onConfig
 
   const streamHandleRef = useRef<StreamReverseHandle | null>(null);
   const formRef = useRef<HTMLDivElement>(null);
+  const reverseModelOptions = getReversePromptModelOptionsList();
+  const textModelMissing = reverseModelOptions.length === 0;
+  const formDisabled = disabled || textModelMissing;
 
   // 挂载后恢复缓存设置 + 从 IndexedDB 恢复反推结果
   useEffect(() => {
@@ -207,14 +210,14 @@ export function ReversePromptForm({ wideMode = false, disabled = false, onConfig
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     setIsDragOver(false);
-    if (!disabled && e.dataTransfer.files.length > 0) {
+    if (!formDisabled && e.dataTransfer.files.length > 0) {
       void processFiles(e.dataTransfer.files);
     }
-  }, [disabled, processFiles]);
+  }, [formDisabled, processFiles]);
 
   const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault();
-    if (!disabled) setIsDragOver(true);
+    if (!formDisabled) setIsDragOver(true);
   };
 
   const handleDragLeave = () => setIsDragOver(false);
@@ -234,7 +237,7 @@ export function ReversePromptForm({ wideMode = false, disabled = false, onConfig
   // 粘贴图片支持
   useEffect(() => {
     const handlePaste = (e: ClipboardEvent) => {
-      if (disabled || uploading || streaming) return;
+      if (formDisabled || uploading || streaming) return;
       const target = e.target as HTMLElement;
       // 只处理粘贴目标在本表单容器内的事件，避免与其他全局粘贴处理器冲突
       if (!formRef.current?.contains(target)) return;
@@ -254,10 +257,10 @@ export function ReversePromptForm({ wideMode = false, disabled = false, onConfig
     };
     document.addEventListener('paste', handlePaste);
     return () => document.removeEventListener('paste', handlePaste);
-  }, [disabled, uploading, streaming, processFiles]);
+  }, [formDisabled, uploading, streaming, processFiles]);
 
   const handleSubmit = () => {
-    if (!pendingFile || streaming || disabled) return;
+    if (!pendingFile || streaming || formDisabled) return;
     const configuredModel = getConfiguredTextModel(model);
     if (!configuredModel?.apiKey || !configuredModel.baseUrl || !configuredModel.modelId) {
       setMissingApiKeyDialogOpen(true);
@@ -379,8 +382,7 @@ export function ReversePromptForm({ wideMode = false, disabled = false, onConfig
     void clearReverseDraft();
   };
 
-  const canSubmit = !!pendingFile && !disabled && !uploading && !streaming;
-  const reverseModelOptions = getReversePromptModelOptionsList();
+  const canSubmit = !!pendingFile && !formDisabled && !uploading && !streaming;
   const modelLabel = getReverseModelOption(model).label;
   const modeOption = getReverseModeOption(mode);
 
@@ -389,12 +391,12 @@ export function ReversePromptForm({ wideMode = false, disabled = false, onConfig
       ref={formRef}
       className={cn(
         'space-y-4',
-        wideMode && !disabled && 'xl:grid xl:grid-cols-[minmax(400px,0.8fr)_minmax(0,1.2fr)] xl:gap-5 xl:space-y-0 xl:items-start'
+        wideMode && !formDisabled && 'xl:grid xl:grid-cols-[minmax(400px,0.8fr)_minmax(0,1.2fr)] xl:gap-5 xl:space-y-0 xl:items-start'
       )}
     >
-      <div className={cn('space-y-4', wideMode && !disabled && 'xl:sticky xl:top-4')}>
+      <div className={cn('space-y-4', wideMode && !formDisabled && 'xl:sticky xl:top-4')}>
       <div className="bg-muted/50 border border-border rounded-xl shadow-md">
-        {disabled ? (
+        {formDisabled ? (
           <div className="flex min-h-40 flex-col items-center justify-center gap-4 px-4 py-8 text-center">
             <div className="flex h-11 w-11 items-center justify-center rounded-full bg-primary/10 text-primary">
               <Info className="h-5 w-5" />
@@ -402,7 +404,9 @@ export function ReversePromptForm({ wideMode = false, disabled = false, onConfig
             <div className="max-w-md">
               <p className="text-base font-medium text-foreground">需要先配置令牌</p>
               <p className="mt-2 text-sm text-muted-foreground">
-                请先在设置中配置 Nova API 密钥，配置完成后即可使用反推提示词功能。
+                {textModelMissing
+                  ? '请先在设置中完成至少一个文本模型配置，才能使用反推提示词功能。'
+                  : '请先在设置中配置 Nova API 密钥，配置完成后即可使用反推提示词功能。'}
               </p>
             </div>
             <Button onClick={() => setMissingApiKeyDialogOpen(true)}>配置</Button>
@@ -524,7 +528,7 @@ export function ReversePromptForm({ wideMode = false, disabled = false, onConfig
                   variant="outline"
                   size="icon"
                   onClick={handleClearDraft}
-                  disabled={disabled || (!pendingFile && !uploadError)}
+                  disabled={formDisabled || (!pendingFile && !uploadError)}
                   title="清空已上传图片"
                 >
                   <X className="w-5 h-5" />
@@ -561,10 +565,10 @@ export function ReversePromptForm({ wideMode = false, disabled = false, onConfig
       <div
         className={cn(
           'space-y-4',
-          wideMode && !disabled && 'xl:max-h-[calc(100vh-7rem)] xl:overflow-y-auto xl:pr-1'
+          wideMode && !formDisabled && 'xl:max-h-[calc(100vh-7rem)] xl:overflow-y-auto xl:pr-1'
         )}
       >
-      {wideMode && !disabled && !currentResult && !previousResult && (
+      {wideMode && !formDisabled && !currentResult && !previousResult && (
         <div className="flex min-h-60 flex-col items-center justify-center gap-3 rounded-xl border border-dashed border-border bg-card/40 p-8 text-center">
           <ScanSearch className="h-7 w-7 text-muted-foreground" />
           <p className="text-sm text-muted-foreground">反推结果会显示在这里</p>

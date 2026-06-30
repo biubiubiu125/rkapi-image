@@ -38,6 +38,7 @@ import type { ReferenceImage } from "./types-media";
 import { PromptOptimizeDialog } from "@/components/PromptOptimizeDialog";
 import { streamPromptOptimize, type StreamPromptOptimizeHandle, type OptimizeImageInput } from "@/lib/prompt-optimize-client";
 import { requireDefaultConfiguredTextModel } from "@/lib/model-endpoints";
+import { usePromptOptimizeSetting } from "@/hooks/usePromptOptimizeSetting";
 import { MODEL_IMAGE_LIMITS } from "@/lib/gemini-config";
 import { normalizeModel } from "@/lib/model-capabilities";
 import type { PromptWithKey } from "@/lib/prompt-gallery-data";
@@ -106,10 +107,17 @@ async function importPromptGalleryImage(url: string, promptContent: string) {
   }
 }
 
-async function optimizeImportedPromptContent(prompt: PromptWithKey, referenceImageCount: number): Promise<{ content: string; optimized: boolean }> {
+async function optimizeImportedPromptContent(prompt: PromptWithKey, referenceImageCount: number, enabled: boolean): Promise<{ content: string; optimized: boolean }> {
   const original = prompt.content.trim();
-  const textModel = requireDefaultConfiguredTextModel("promptOptimize");
   if (!original) return { content: original, optimized: false };
+  if (!enabled) return { content: original, optimized: false };
+
+  let textModel;
+  try {
+    textModel = requireDefaultConfiguredTextModel("promptOptimize");
+  } catch {
+    return { content: original, optimized: false };
+  }
 
   let output = "";
   let failed = false;
@@ -135,6 +143,7 @@ async function optimizeImportedPromptContent(prompt: PromptWithKey, referenceIma
 
 export function CanvasEditor({ projectId, onBack, onRequireApiKey, showToast, showPromptGallery = true }: CanvasEditorProps) {
   const theme = canvasTheme;
+  const { enabled: promptOptimizeEnabled } = usePromptOptimizeSetting();
   const openProject = useCanvasStore((state) => state.openProject);
   const updateProject = useCanvasStore((state) => state.updateProject);
   const renameProject = useCanvasStore((state) => state.renameProject);
@@ -510,7 +519,7 @@ export function CanvasEditor({ projectId, onBack, onRequireApiKey, showToast, sh
       setPromptGalleryImporting(true);
       try {
         const imageUrls = prompt.images.filter(Boolean);
-        const optimizedPrompt = await optimizeImportedPromptContent(prompt, imageUrls.length);
+        const optimizedPrompt = await optimizeImportedPromptContent(prompt, imageUrls.length, promptOptimizeEnabled);
         const promptContent = optimizedPrompt.content || prompt.content;
         const importedImages = await Promise.all(imageUrls.map((url) => importPromptGalleryImage(url, promptContent)));
         const failedCount = importedImages.filter((image) => !image.downloaded).length;
@@ -599,7 +608,7 @@ export function CanvasEditor({ projectId, onBack, onRequireApiKey, showToast, sh
         setPromptGalleryImporting(false);
       }
     },
-    [createImageNode, defaultConfig, promptGalleryImporting, pushHistory, showToast, viewportCenterWorld],
+    [createImageNode, defaultConfig, promptGalleryImporting, promptOptimizeEnabled, pushHistory, showToast, viewportCenterWorld],
   );
 
   const applyCanvasTemplate = useCallback(
@@ -1441,6 +1450,7 @@ export function CanvasEditor({ projectId, onBack, onRequireApiKey, showToast, sh
                   referenceLimit={referenceLimit ?? getConfigReferenceLimit(configNode)}
                   busy={busyNodeIds.includes(configNode.id)}
                   optimizing={optimizing && optimizeNodeId === configNode.id}
+                  showOptimizePrompt={promptOptimizeEnabled}
                   onPromptChange={(value) => patchNode(configNode.id, (n) => ({ ...n, metadata: { ...n.metadata, composerContent: value } }))}
                   onConfigChange={(patch) => handleConfigChange(configNode.id, patch)}
                   onToggleLock={() => patchNode(configNode.id, (n) => ({ ...n, metadata: { ...n.metadata, lockResultNodes: !n.metadata?.lockResultNodes } }))}

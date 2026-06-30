@@ -12,6 +12,7 @@ import { PromptOptimizeDialog } from '@/components/PromptOptimizeDialog';
 import { AgentAssetPickerDialog, AgentTextAssetPickerDialog } from '@/components/agent/AgentAssetPickerDialog';
 import { GenerationParamsBar, type GenerationParamsValue } from '@/components/GenerationParamsBar';
 import { ConfirmDialog } from '@/components/workspace/dialogs/ConfirmDialog';
+import { usePromptOptimizeSetting } from '@/hooks/usePromptOptimizeSetting';
 import { streamPromptOptimize, type StreamPromptOptimizeHandle } from '@/lib/prompt-optimize-client';
 import { loadJsonFromStorage, saveJsonToStorage } from '@/lib/settings-storage';
 import { requireDefaultConfiguredTextModel } from '@/lib/model-endpoints';
@@ -135,6 +136,7 @@ export function ImageGenerationWorkbench({
   const [optimizing, setOptimizing] = useState(false);
   const [optimizeError, setOptimizeError] = useState<string | null>(null);
   const optimizeHandleRef = useRef<StreamPromptOptimizeHandle | null>(null);
+  const { enabled: promptOptimizeEnabled } = usePromptOptimizeSetting();
 
   const modelLimit = MODEL_IMAGE_LIMITS[model] || { max: 1, description: '最多 1 张参考图片' };
   const maxImages = modelLimit.max;
@@ -234,8 +236,14 @@ export function ImageGenerationWorkbench({
   }, [model, outputSize, customSize, aspectRatio, temperature, gptImageAdvancedParams, parallelCount, settingsReady]);
 
   const handleOptimize = useCallback(() => {
-    const textModel = requireDefaultConfiguredTextModel('promptOptimize');
     if (!prompt.trim()) return;
+    let textModel;
+    try {
+      textModel = requireDefaultConfiguredTextModel('promptOptimize');
+    } catch (error) {
+      dispatchImageActionToast(error instanceof Error ? error.message : '请先完成默认文本模型配置', 'error');
+      return;
+    }
 
     optimizeHandleRef.current?.abort();
     setOptimizedText('');
@@ -664,9 +672,11 @@ export function ImageGenerationWorkbench({
               <Button variant="ghost" size="icon" onClick={() => void handleSavePromptAsset()} disabled={!prompt.trim()} title="存为提示词素材">
                 <Save className="w-4 h-4" />
               </Button>
-              <Button variant="ghost" size="icon" onClick={handleOptimize} disabled={!prompt.trim()} title="优化提示词">
-                <Sparkles className="w-4 h-4" />
-              </Button>
+              {promptOptimizeEnabled && (
+                <Button variant="ghost" size="icon" onClick={handleOptimize} disabled={!prompt.trim()} title="优化提示词">
+                  <Sparkles className="w-4 h-4" />
+                </Button>
+              )}
               <Button variant="outline" size="icon" onClick={handleClearDraft} disabled={!canClear} title="清空提示词和图片">
                 <X className="w-5 h-5" />
               </Button>

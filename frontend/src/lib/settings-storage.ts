@@ -2,6 +2,9 @@
 
 import { getCompleteImageModels, getCompleteTextModels, loadRegistry } from '@/lib/nova-models';
 
+export const PROMPT_OPTIMIZE_ENABLED_KEY = 'nova-prompt-optimize-enabled';
+export const PROMPT_OPTIMIZE_SETTING_EVENT = 'nova-prompt-optimize-setting-updated';
+
 export function getStoredApiKey(): string {
   const registry = loadRegistry();
   const imageModel = getCompleteImageModels(registry)[0];
@@ -37,6 +40,24 @@ export function hasConfiguredImageModel(): boolean {
 export function hasConfiguredTextModel(): boolean {
   const registry = loadRegistry();
   return getCompleteTextModels(registry).length > 0;
+}
+
+export function isPromptOptimizeEnabled(): boolean {
+  if (typeof window === 'undefined') return false;
+  return localStorage.getItem(PROMPT_OPTIMIZE_ENABLED_KEY) === 'true';
+}
+
+export function canEnablePromptOptimize(): boolean {
+  return hasConfiguredTextModel();
+}
+
+export function setPromptOptimizeEnabled(enabled: boolean): boolean {
+  if (typeof window === 'undefined') return false;
+  if (enabled && !canEnablePromptOptimize()) return false;
+
+  localStorage.setItem(PROMPT_OPTIMIZE_ENABLED_KEY, enabled ? 'true' : 'false');
+  window.dispatchEvent(new Event(PROMPT_OPTIMIZE_SETTING_EVENT));
+  return true;
 }
 
 export function loadJsonFromStorage<T>(key: string): Partial<T> {

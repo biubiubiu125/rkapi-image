@@ -13,6 +13,7 @@ import { PromptOptimizeDialog } from '@/components/PromptOptimizeDialog';
 import { AgentTextAssetPickerDialog } from '@/components/agent/AgentAssetPickerDialog';
 import { GenerationParamsBar, type GenerationParamsValue } from '@/components/GenerationParamsBar';
 import { ConfirmDialog } from '@/components/workspace/dialogs/ConfirmDialog';
+import { usePromptOptimizeSetting } from '@/hooks/usePromptOptimizeSetting';
 import { addTextAsset, type TextAsset } from '@/lib/asset-store';
 import { dispatchImageActionToast } from '@/lib/image-actions';
 import { streamPromptOptimize, type StreamPromptOptimizeHandle } from '@/lib/prompt-optimize-client';
@@ -94,10 +95,17 @@ export function TextToImageForm({ onSubmit, disabled = false, onDraftConsumed, o
   const [optimizing, setOptimizing] = useState(false);
   const [optimizeError, setOptimizeError] = useState<string | null>(null);
   const optimizeHandleRef = useRef<StreamPromptOptimizeHandle | null>(null);
+  const { enabled: promptOptimizeEnabled } = usePromptOptimizeSetting();
 
   const handleOptimize = useCallback(() => {
-    const textModel = requireDefaultConfiguredTextModel('promptOptimize');
     if (!prompt.trim()) return;
+    let textModel;
+    try {
+      textModel = requireDefaultConfiguredTextModel('promptOptimize');
+    } catch (error) {
+      dispatchImageActionToast(error instanceof Error ? error.message : '请先完成默认文本模型配置', 'error');
+      return;
+    }
 
     // 清理上一次请求
     optimizeHandleRef.current?.abort();
@@ -375,15 +383,17 @@ export function TextToImageForm({ onSubmit, disabled = false, onDraftConsumed, o
             >
               <Save className="w-4 h-4" />
             </Button>
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={handleOptimize}
-              disabled={disabled || !prompt.trim()}
-              title="优化提示词"
-            >
-              <Sparkles className="w-4 h-4" />
-            </Button>
+            {promptOptimizeEnabled && (
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={handleOptimize}
+                disabled={disabled || !prompt.trim()}
+                title="优化提示词"
+              >
+                <Sparkles className="w-4 h-4" />
+              </Button>
+            )}
             <Button
               variant="outline"
               size="icon"

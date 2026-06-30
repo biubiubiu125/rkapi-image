@@ -20,6 +20,7 @@ export function CanvasConfigNodePanel({
   referenceLimit,
   busy,
   optimizing,
+  showOptimizePrompt,
   onPromptChange,
   onConfigChange,
   onToggleLock,
@@ -34,6 +35,7 @@ export function CanvasConfigNodePanel({
   referenceLimit: { imageCount: number; max: number; exceeded: boolean };
   busy: boolean;
   optimizing: boolean;
+  showOptimizePrompt: boolean;
   onPromptChange: (value: string) => void;
   onConfigChange: (patch: Partial<CanvasGenerationConfig>) => void;
   onToggleLock: () => void;
@@ -80,16 +82,18 @@ export function CanvasConfigNodePanel({
           size="xs"
         />
         <div className="flex items-center gap-1.5">
-          <Button
-            variant="outline"
-            size="xs"
-            onClick={onOptimizePrompt}
-            disabled={busy || optimizing || !prompt.trim()}
-            className="shrink-0 gap-1"
-            title="优化提示词（结合连接的上游图片/文字）"
-          >
-            {optimizing ? <Spinner className="size-3.5" /> : <Wand2 className="size-3.5" />}
-          </Button>
+          {showOptimizePrompt && (
+            <Button
+              variant="outline"
+              size="xs"
+              onClick={onOptimizePrompt}
+              disabled={busy || optimizing || !prompt.trim()}
+              className="shrink-0 gap-1"
+              title="优化提示词（结合连接的上游图片/文字）"
+            >
+              {optimizing ? <Spinner className="size-3.5" /> : <Wand2 className="size-3.5" />}
+            </Button>
+          )}
           <Button
             variant={lockResultNodes ? "secondary" : "outline"}
             size="xs"

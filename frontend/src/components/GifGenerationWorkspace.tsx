@@ -39,6 +39,7 @@ import {
 
 import { MAX_UPLOAD_SIZE_BYTES } from '@/lib/constants';
 import { useGifWorkflow } from '@/hooks/useGifWorkflow';
+import { usePromptOptimizeSetting } from '@/hooks/usePromptOptimizeSetting';
 import type { ImageActionPayload } from '@/lib/image-actions';
 import { getDefaultConfiguredTextModel } from '@/lib/model-endpoints';
 
@@ -67,6 +68,7 @@ interface PersistedSettings {
 export function GifGenerationWorkspace({ wideMode = false, hasApiKey, onConfigureApiKey, onError, showToast }: GifGenerationWorkspaceProps) {
   const workflow = useGifWorkflow();
   const gifModelOptions = useMemo(() => getGifCompatibleModels(), []);
+  const { enabled: promptOptimizeEnabled } = usePromptOptimizeSetting();
 
   const [prompt, setPrompt] = useState('');
   const [model, setModel] = useState<GifModel>(getDefaultGifModelId());
@@ -471,6 +473,7 @@ export function GifGenerationWorkspace({ wideMode = false, hasApiKey, onConfigur
           onSubmit={handleSubmitClick}
           onConfigureApiKey={() => setMissingKeyOpen(true)}
           onOptimize={handleOptimize}
+          showOptimize={promptOptimizeEnabled}
           onClear={handleClearClick}
         />
         <GifReviewPanel

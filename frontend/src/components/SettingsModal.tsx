@@ -52,7 +52,7 @@ import {
 import { syncDynamicModelExports } from '@/lib/gemini-config';
 import { exportAllData, importAllData, downloadBlob, generateBackupFilename, type BackupProgress as BackupProgressType } from '@/lib/backup-utils';
 import { checkModelsAvailability, type ModelStatus } from '@/lib/ccode-task-client';
-import { hasConfiguredImageModel } from '@/lib/settings-storage';
+import { hasConfiguredImageModel, isPromptOptimizeEnabled, setPromptOptimizeEnabled } from '@/lib/settings-storage';
 import { BA_RANDOM_URL, BING_WALLPAPER_URL } from '@/lib/constants';
 import { PROMPT_DATA_SOURCES, getPromptSourceLabel } from '@/lib/prompt-gallery-data';
 
@@ -107,6 +107,10 @@ function isCompleteTextModel(model: TextModelConfig): boolean {
   return Boolean(model.name.trim() && model.modelId.trim() && model.apiKey.trim() && model.baseUrl.trim());
 }
 
+function hasAnyTextModelField(model: TextModelConfig): boolean {
+  return Boolean(model.name.trim() || model.modelId.trim() || model.apiKey.trim() || model.baseUrl.trim());
+}
+
 function getImageModelLabel(models: ImageModelConfig[], id: string): string | undefined {
   return models.find((model) => model.id === id)?.name;
 }
@@ -148,6 +152,7 @@ export function SettingsModal({ isOpen, onClose, onApiKeyChange }: SettingsModal
   const [modelCheckError, setModelCheckError] = useState<string | null>(null);
   const [showImageApiKey, setShowImageApiKey] = useState(false);
   const [showTextApiKey, setShowTextApiKey] = useState(false);
+  const [promptOptimizeEnabled, setPromptOptimizeEnabledState] = useState(false);
 
   const [backupProgress, setBackupProgress] = useState<BackupProgressType>({ percent: 0, message: '' });
   const [isBackupActive, setIsBackupActive] = useState(false);
@@ -169,6 +174,7 @@ export function SettingsModal({ isOpen, onClose, onApiKeyChange }: SettingsModal
     setModelCheckError(null);
     setBackupError(null);
     setBackupSuccess(null);
+    setPromptOptimizeEnabledState(isPromptOptimizeEnabled());
   }, [isOpen]);
 
   useEffect(() => {
@@ -265,6 +271,7 @@ export function SettingsModal({ isOpen, onClose, onApiKeyChange }: SettingsModal
   };
 
   const persistRegistry = () => {
+    const enabledTextModels = textModels.filter(hasAnyTextModelField);
     if (imageModels.length === 0) {
       setError('至少填写一个图片模型');
       return;
@@ -273,18 +280,26 @@ export function SettingsModal({ isOpen, onClose, onApiKeyChange }: SettingsModal
       setError('至少完成一个图片模型的全部信息');
       return;
     }
-    if (textModels.length > 0 && !textModels.every(isCompleteTextModel)) {
-      setError('文本模型如需启用，请填写完整；不需要文本功能时可以删除文本模型配置');
+    if (enabledTextModels.length > 0 && !enabledTextModels.every(isCompleteTextModel)) {
+      setError('文本模型如需启用，请填写完整；不需要文本功能时可以留空或删除');
+      return;
+    }
+    if (promptOptimizeEnabled && !enabledTextModels.some(isCompleteTextModel)) {
+      setError('启用提示词优化前，请先完成至少一个文本模型配置');
       return;
     }
 
     const registry = {
       imageModels,
-      textModels,
-      defaults: normalizeDefaults(defaults, imageModels, textModels),
+      textModels: enabledTextModels,
+      defaults: normalizeDefaults(defaults, imageModels, enabledTextModels),
     };
 
     saveRegistry(registry);
+    if (!setPromptOptimizeEnabled(promptOptimizeEnabled)) {
+      setError('启用提示词优化前，请先完成至少一个文本模型配置');
+      return;
+    }
     syncDynamicModelExports();
     window.dispatchEvent(new Event('nova-model-registry-updated'));
     onApiKeyChange?.(hasConfiguredImageModel());
@@ -292,6 +307,16 @@ export function SettingsModal({ isOpen, onClose, onApiKeyChange }: SettingsModal
     setError(null);
     setModelStatuses(null);
     setModelCheckError(null);
+  };
+
+  const handlePromptOptimizeToggle = (checked: boolean) => {
+    if (checked && !textModels.some(isCompleteTextModel)) {
+      setError('启用提示词优化前，请先完成至少一个文本模型配置');
+      setPromptOptimizeEnabledState(false);
+      return;
+    }
+    setPromptOptimizeEnabledState(checked);
+    setError(null);
   };
 
   const handleCheckModels = async () => {
@@ -378,7 +403,7 @@ export function SettingsModal({ isOpen, onClose, onApiKeyChange }: SettingsModal
             <Settings className="w-5 h-5 text-muted-foreground" />
             <DialogTitle>设置</DialogTitle>
           </div>
-          <DialogDescription>按模型分别配置协议、URL 和 API Key。至少完成一个图片模型和一个文本模型后，外部功能才会解锁。</DialogDescription>
+          <DialogDescription>按模型分别配置协议、URL 和 API Key。基础生图只需要图片模型；Agent、反推、提示词优化等智能文本功能才需要文本模型。</DialogDescription>
         </DialogHeader>
 
         <Tabs defaultValue="models" className="min-h-0 flex-1 gap-0">
@@ -530,7 +555,7 @@ export function SettingsModal({ isOpen, onClose, onApiKeyChange }: SettingsModal
               <div className="flex items-center justify-between gap-3">
                 <div>
                   <p className="font-medium">文本模型</p>
-                  <p className="text-xs text-muted-foreground">无默认示范记录。请至少完成一个文本模型。</p>
+                  <p className="text-xs text-muted-foreground">可选。仅 Agent、反推、提示词优化、图片描述等功能需要。</p>
                 </div>
                 <Button variant="outline" size="sm" className="gap-2" onClick={handleAddTextModel}>
                   <Plus className="w-4 h-4" />
@@ -626,6 +651,18 @@ export function SettingsModal({ isOpen, onClose, onApiKeyChange }: SettingsModal
                   <RefreshCw className={`w-4 h-4 ${checkingModels ? 'animate-spin' : ''}`} />
                   {checkingModels ? '检查中...' : '检查模型'}
                 </Button>
+              </div>
+
+              <div className="flex items-center justify-between gap-4 rounded-lg border bg-muted/30 px-3 py-3">
+                <div className="min-w-0">
+                  <p className="text-sm font-medium">启用提示词优化按钮</p>
+                  <p className="text-xs text-muted-foreground">默认关闭。开启后会显示优化入口，并使用下方的提示词优化默认文本模型。</p>
+                </div>
+                <Switch
+                  checked={promptOptimizeEnabled}
+                  onCheckedChange={handlePromptOptimizeToggle}
+                  aria-label="启用提示词优化按钮"
+                />
               </div>
 
               <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
@@ -748,7 +785,7 @@ export function SettingsModal({ isOpen, onClose, onApiKeyChange }: SettingsModal
                   使用方法
                 </summary>
                 <ol className="mt-3 list-decimal list-inside space-y-2 text-muted-foreground">
-                  <li>先完成至少一个图片模型和一个文本模型的全部信息。</li>
+                  <li>基础生图只需先完成至少一个图片模型；文本模型是智能文本功能的可选配置。</li>
                   <li>保存后，外部工作区只会显示这些配置完整的模型。</li>
                   <li>再为各工作流指定默认模型，即可开始生图、反推或 Agent 工作流。</li>
                 </ol>

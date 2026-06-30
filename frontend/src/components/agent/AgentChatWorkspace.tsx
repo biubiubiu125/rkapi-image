@@ -68,6 +68,7 @@ import { requireDefaultConfiguredTextModel } from '@/lib/model-endpoints';
 import { AgentImageGallery } from '@/components/agent/AgentImageGallery';
 import { AgentGenerationProgress } from '@/components/agent/AgentGenerationResult';
 import { CustomSizeDialog } from '@/components/CustomSizeDialog';
+import { usePromptOptimizeSetting } from '@/hooks/usePromptOptimizeSetting';
 
 import { MAX_UPLOAD_SIZE_BYTES } from '@/lib/constants';
 import { loadJsonFromStorage, saveJsonToStorage } from '@/lib/settings-storage';
@@ -105,6 +106,7 @@ function phaseLabel(phase: AgentPhase): string | null {
 
 export function AgentChatWorkspace({ wideMode = false, disabled = false, onConfigureApiKey }: AgentChatWorkspaceProps) {
   const agent = useAgentChat();
+  const { enabled: promptOptimizeEnabled } = usePromptOptimizeSetting();
   const [uploads, setUploads] = useState<PendingUpload[]>([]);
   const [uploading, setUploading] = useState(false);
   const [assetPickerOpen, setAssetPickerOpen] = useState(false);
@@ -450,7 +452,13 @@ export function AgentChatWorkspace({ wideMode = false, disabled = false, onConfi
   const optimizeHandleRef = useRef<StreamPromptOptimizeHandle | null>(null);
 
   const handleOptimize = useCallback(() => {
-    const textModel = requireDefaultConfiguredTextModel('promptOptimize');
+    let textModel;
+    try {
+      textModel = requireDefaultConfiguredTextModel('promptOptimize');
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : '请先完成默认文本模型配置', 'error');
+      return;
+    }
     const editor = editorRef.current;
     if (!editor) return;
 
@@ -803,16 +811,18 @@ export function AgentChatWorkspace({ wideMode = false, disabled = false, onConfi
             </Button>
           ) : (
             <>
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                className="shrink-0"
-                onClick={handleOptimize}
-                disabled={!hasEditorContent || disabled || busy}
-                title="优化提示词"
-              >
-                <Sparkles className="h-4 w-4" />
-              </Button>
+              {promptOptimizeEnabled && (
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  className="shrink-0"
+                  onClick={handleOptimize}
+                  disabled={!hasEditorContent || disabled || busy}
+                  title="优化提示词"
+                >
+                  <Sparkles className="h-4 w-4" />
+                </Button>
+              )}
               <Button
                 variant="outline"
                 size="icon-sm"

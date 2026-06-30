@@ -55,6 +55,7 @@ export interface GifParametersPanelProps {
   onSubmit: () => void;
   onConfigureApiKey: () => void;
   onOptimize: () => void;
+  showOptimize: boolean;
   onClear: () => void;
 }
 
@@ -219,15 +220,17 @@ export function GifParametersPanel(props: GifParametersPanelProps) {
           </button>
 
           <div className="ml-auto flex justify-end gap-2">
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={props.onOptimize}
-              disabled={!props.canSubmit}
-              title="优化提示词"
-            >
-              <Sparkles className="h-4 w-4" />
-            </Button>
+            {props.showOptimize && (
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={props.onOptimize}
+                disabled={!props.canSubmit}
+                title="优化提示词"
+              >
+                <Sparkles className="h-4 w-4" />
+              </Button>
+            )}
             <Button
               variant="outline"
               size="icon"
