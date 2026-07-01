@@ -58,6 +58,8 @@ import { hasConfiguredImageModel, isPromptOptimizeEnabled, setPromptOptimizeEnab
 import { BA_RANDOM_URL, BING_WALLPAPER_URL, IMAGE_MODEL_KEY_GUIDE } from '@/lib/constants';
 import { PROMPT_DATA_SOURCES, getPromptSourceLabel } from '@/lib/prompt-gallery-data';
 
+type ImageModelKeyGuide = typeof IMAGE_MODEL_KEY_GUIDE;
+
 interface SettingsModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -195,6 +197,7 @@ export function SettingsModal({ isOpen, onClose, onApiKeyChange, externalModelCo
   const [showImageApiKey, setShowImageApiKey] = useState(false);
   const [showTextApiKey, setShowTextApiKey] = useState(false);
   const [promptOptimizeEnabled, setPromptOptimizeEnabledState] = useState(false);
+  const [imageModelKeyGuide, setImageModelKeyGuide] = useState<ImageModelKeyGuide>(IMAGE_MODEL_KEY_GUIDE);
 
   const [backupProgress, setBackupProgress] = useState<BackupProgressType>({ percent: 0, message: '' });
   const [isBackupActive, setIsBackupActive] = useState(false);
@@ -218,6 +221,29 @@ export function SettingsModal({ isOpen, onClose, onApiKeyChange, externalModelCo
     setBackupError(null);
     setBackupSuccess(null);
     setPromptOptimizeEnabledState(isPromptOptimizeEnabled());
+  }, [isOpen]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    let cancelled = false;
+
+    fetch('/api/flyreq/config', { cache: 'no-store' })
+      .then((res) => res.json())
+      .then((data: { imageModelKeyGuide?: Partial<ImageModelKeyGuide> }) => {
+        if (cancelled) return;
+        const guide = data.imageModelKeyGuide || {};
+        setImageModelKeyGuide({
+          title: guide.title || IMAGE_MODEL_KEY_GUIDE.title,
+          description: guide.description || IMAGE_MODEL_KEY_GUIDE.description,
+          ctaLabel: guide.ctaLabel || IMAGE_MODEL_KEY_GUIDE.ctaLabel,
+          url: guide.url || IMAGE_MODEL_KEY_GUIDE.url,
+        });
+      })
+      .catch(() => {
+        if (!cancelled) setImageModelKeyGuide(IMAGE_MODEL_KEY_GUIDE);
+      });
+
+    return () => { cancelled = true; };
   }, [isOpen]);
 
   useEffect(() => {
@@ -526,17 +552,17 @@ export function SettingsModal({ isOpen, onClose, onApiKeyChange, externalModelCo
                     <KeyRound className="h-4 w-4" />
                   </div>
                   <div className="space-y-1">
-                    <p className="font-medium text-foreground">{IMAGE_MODEL_KEY_GUIDE.title}</p>
-                    <p className="text-muted-foreground">{IMAGE_MODEL_KEY_GUIDE.description}</p>
+                    <p className="font-medium text-foreground">{imageModelKeyGuide.title}</p>
+                    <p className="text-muted-foreground">{imageModelKeyGuide.description}</p>
                   </div>
                 </div>
                 <a
-                  href={IMAGE_MODEL_KEY_GUIDE.url}
+                  href={imageModelKeyGuide.url}
                   target="_blank"
                   rel="noopener noreferrer"
                   className={buttonVariants({ className: 'shrink-0 gap-2' })}
                 >
-                  {IMAGE_MODEL_KEY_GUIDE.ctaLabel}
+                  {imageModelKeyGuide.ctaLabel}
                   <ExternalLink className="h-4 w-4" />
                 </a>
               </div>
@@ -884,15 +910,15 @@ export function SettingsModal({ isOpen, onClose, onApiKeyChange, externalModelCo
             <div className="space-y-4 text-sm">
               <h3 className="text-lg font-medium">FlyReq Image <span className="text-xs text-muted-foreground font-normal">v{process.env.NEXT_PUBLIC_APP_VERSION}</span></h3>
               <div className="rounded-lg border border-primary/20 bg-primary/10 p-3">
-                <p className="font-medium text-foreground">{IMAGE_MODEL_KEY_GUIDE.title}</p>
-                <p className="mt-1 text-sm text-muted-foreground">{IMAGE_MODEL_KEY_GUIDE.description}</p>
+                <p className="font-medium text-foreground">{imageModelKeyGuide.title}</p>
+                <p className="mt-1 text-sm text-muted-foreground">{imageModelKeyGuide.description}</p>
                 <a
-                  href={IMAGE_MODEL_KEY_GUIDE.url}
+                  href={imageModelKeyGuide.url}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="mt-2 inline-flex items-center gap-1 text-primary hover:underline"
                 >
-                  {IMAGE_MODEL_KEY_GUIDE.ctaLabel}
+                  {imageModelKeyGuide.ctaLabel}
                   <ExternalLink className="w-3 h-3" />
                 </a>
               </div>

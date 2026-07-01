@@ -30,6 +30,12 @@ const LIMIT_ERROR_MESSAGES = {
   tooManyPending: '你已有较多任务正在排队或生成，请稍后再提交。',
   notAcceptingTasks: '服务器正在升级维护，暂不接受新任务。未完成任务将继续完成。',
 };
+const DEFAULT_IMAGE_MODEL_KEY_GUIDE = {
+  title: '还没有图片模型 API Key？',
+  description: '默认已为你准备 FlyReq 的 GPT Image 2 图片模型，只需要前往 FlyReq 获取 API Key，填入后保存即可开始生成图片。1元=20张4k图。',
+  ctaLabel: '前往 flyreq.com',
+  url: 'https://flyreq.com',
+};
 
 function parseEnvFile(filePath = ENV_FILE_PATH) {
   if (!fs.existsSync(filePath)) return {};
@@ -94,6 +100,19 @@ function normalizeProtocolBaseUrl(protocol, url) {
 
 function resolveFlyreqApiBaseUrl() {
   return normalizeBaseUrl(getRuntimeEnv().FLYREQ_API_BASE_URL) || 'https://api.openai.com';
+}
+
+function resolveImageModelKeyGuide(env = getRuntimeEnv()) {
+  const title = String(env.FLYREQ_IMAGE_MODEL_KEY_GUIDE_TITLE || '').trim();
+  const description = String(env.FLYREQ_IMAGE_MODEL_KEY_GUIDE_DESCRIPTION || '').trim();
+  const ctaLabel = String(env.FLYREQ_IMAGE_MODEL_KEY_GUIDE_CTA_LABEL || '').trim();
+  const url = String(env.FLYREQ_IMAGE_MODEL_KEY_GUIDE_URL || '').trim();
+  return {
+    title: title || DEFAULT_IMAGE_MODEL_KEY_GUIDE.title,
+    description: description || DEFAULT_IMAGE_MODEL_KEY_GUIDE.description,
+    ctaLabel: ctaLabel || DEFAULT_IMAGE_MODEL_KEY_GUIDE.ctaLabel,
+    url: url || DEFAULT_IMAGE_MODEL_KEY_GUIDE.url,
+  };
 }
 
 function hashPromptGalleryPassword(password) {
@@ -1542,6 +1561,7 @@ async function handleApi(req, res, pathname) {
         {
           promptGalleryMode: mode,
           promptGalleryPasswordEnabled: String(env.PROMPT_GALLERY_PASSWORD || '').trim().length > 0,
+          imageModelKeyGuide: resolveImageModelKeyGuide(env),
         },
         {
           'Cache-Control': 'no-store, no-cache, must-revalidate',
