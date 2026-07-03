@@ -4,6 +4,8 @@ import {
   GPT_IMAGE_QUALITY_OPTIONS,
   getGptImageResolution,
   getOutputSizeLabel,
+  getSizeOptions,
+  getValidOutputSizes,
 } from '@/lib/model-capabilities';
 
 describe('model capabilities', () => {
@@ -27,5 +29,36 @@ describe('model capabilities', () => {
     expect(getGptImageResolution('2K', '1:1')).toBe('2048x2048');
     expect(getGptImageResolution('4K', '16:9')).toBe('3840x2160');
     expect(getGptImageResolution('4K', '1:1')).toBe('2880x2880');
+  });
+
+  it('marks output sizes above the configured model maximum as disabled', () => {
+    localStorage.setItem('flyreq-model-registry', JSON.stringify({
+      imageModels: [{
+        id: 'limited-gpt-image',
+        protocol: 'openai',
+        name: 'Limited GPT Image',
+        modelId: 'gpt-image-2',
+        apiKey: 'test-key',
+        baseUrl: 'https://api.openai.com',
+        builtinPreset: 'gpt-image-2',
+        maxRefImages: 16,
+        maxOutputSize: '2K',
+        supportsAdvancedParams: true,
+      }],
+      textModels: [],
+      defaults: { textToImage: 'limited-gpt-image', imageToImage: 'limited-gpt-image' },
+    }));
+
+    expect(getValidOutputSizes('limited-gpt-image')).toEqual(['auto', '1K', '2K']);
+    expect(getSizeOptions('limited-gpt-image')).toEqual([
+      { value: '1K', label: '1k', disabled: false, disabledReason: undefined },
+      { value: '2K', label: '2k', disabled: false, disabledReason: undefined },
+      {
+        value: '4K',
+        label: '4k',
+        disabled: true,
+        disabledReason: '当前模型最大分辨率为 2k，不支持 4k',
+      },
+    ]);
   });
 });

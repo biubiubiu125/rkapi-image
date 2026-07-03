@@ -6,7 +6,7 @@ import {
   isGptImageModel,
   type ModelId,
 } from '@/lib/gemini-config';
-import { getImageModelById, loadRegistry } from '@/lib/flyreq-models';
+import { getImageModelById, getImageModelOutputSizes, loadRegistry, type ImageModelConfig } from '@/lib/flyreq-models';
 import type { AspectRatio, OutputSize, RefImageData, StoredJob } from '@/lib/job-store';
 
 export type ParallelCount = 1 | 2 | 3 | 4;
@@ -129,6 +129,13 @@ export interface AspectRatioOption {
   value: AspectRatio;
   label: string;
   resolution: string;
+}
+
+export interface SizeOption {
+  value: OutputSize;
+  label: string;
+  disabled?: boolean;
+  disabledReason?: string;
 }
 
 export interface RetryData {
@@ -305,40 +312,43 @@ export function getGptImageAdvancedParamsForModel(
   };
 }
 
-export function getSizeOptions(model: ModelId): { value: OutputSize; label: string }[] {
+function getPresetSizeValues(presetId: string): OutputSize[] {
+  if (presetId === 'gemini-3.1-flash-image-preview') return ['512', '1K', '2K', '4K'];
+  if (presetId === 'gemini-3-pro-image-preview' || presetId === 'gpt-image-2') return ['1K', '2K', '4K'];
+  return ['1K'];
+}
+
+function toSizeOptions(values: OutputSize[], enabledValues = values, maxOutputSize?: string): SizeOption[] {
+  const enabled = new Set(enabledValues);
+  const maxLabel = maxOutputSize ? getOutputSizeLabel(maxOutputSize as OutputSize) : undefined;
+  return values.map((value) => {
+    const label = getOutputSizeLabel(value);
+    const disabled = !enabled.has(value);
+    return {
+      value,
+      label,
+      disabled,
+      disabledReason: disabled && maxLabel
+        ? `当前模型最大分辨率为 ${maxLabel}，不支持 ${label}`
+        : undefined,
+    };
+  });
+}
+
+export function getSizeOptions(model: ModelId): SizeOption[] {
   const modelConfig = getModelConfig(model);
   if (modelConfig) {
-    const values: OutputSize[] = modelConfig.maxOutputSize === '4K'
-      ? (modelConfig.builtinPreset === 'gemini-3.1-flash-image-preview' ? ['512', '1K', '2K', '4K'] : ['1K', '2K', '4K'])
-      : modelConfig.maxOutputSize === '2K'
-        ? (modelConfig.builtinPreset === 'gemini-3.1-flash-image-preview' ? ['512', '1K', '2K'] : ['1K', '2K'])
-        : modelConfig.maxOutputSize === '512'
-          ? ['512']
-          : (modelConfig.builtinPreset === 'gemini-3.1-flash-image-preview' ? ['512', '1K'] : ['1K']);
-    return values.map((value) => ({ value, label: getOutputSizeLabel(value) }));
+    const values = getPresetSizeValues(modelConfig.builtinPreset);
+    const enabledValues = getImageModelOutputSizes(modelConfig as ImageModelConfig) as OutputSize[];
+    return toSizeOptions(values, enabledValues, modelConfig.maxOutputSize);
   }
 
   const presetId = getBuiltinPresetId(model);
-  if (presetId === 'gemini-3.1-flash-image-preview') {
-    return [
-      { value: '512', label: getOutputSizeLabel('512') },
-      { value: '1K', label: getOutputSizeLabel('1K') },
-      { value: '2K', label: getOutputSizeLabel('2K') },
-      { value: '4K', label: getOutputSizeLabel('4K') },
-    ];
-  }
-  if (presetId === 'gemini-3-pro-image-preview' || presetId === 'gpt-image-2') {
-    return [
-      { value: '1K', label: getOutputSizeLabel('1K') },
-      { value: '2K', label: getOutputSizeLabel('2K') },
-      { value: '4K', label: getOutputSizeLabel('4K') },
-    ];
-  }
-  return [{ value: '1K', label: getOutputSizeLabel('1K') }];
+  return toSizeOptions(getPresetSizeValues(presetId));
 }
 
 export function getValidOutputSizes(model: ModelId): OutputSize[] {
-  const sizes = getSizeOptions(model).map(option => option.value);
+  const sizes = getSizeOptions(model).filter(option => !option.disabled).map(option => option.value);
   return supportsAutoLayout(model) ? ['auto', ...sizes] : sizes;
 }
 
