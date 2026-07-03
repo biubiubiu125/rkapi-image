@@ -17,4 +17,10 @@ services:
       - ./blacklist.json:/app/backend/blacklist.json
       - ./prompts.json:/app/backend/prompts.json
       - ./.env:/app/.env:ro
+    networks:
+      - 1panel-network
     restart: unless-stopped
+
+networks:
+  1panel-network:
+    external: true

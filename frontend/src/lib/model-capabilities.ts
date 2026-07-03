@@ -151,6 +151,10 @@ function roundToMultiple(value: number, multiple: number): number {
   return Math.max(multiple, Math.round(value / multiple) * multiple);
 }
 
+function floorToMultiple(value: number, multiple: number): number {
+  return Math.max(multiple, Math.floor(value / multiple) * multiple);
+}
+
 function parseImageSize(size?: string): { width: number; height: number } | undefined {
   const match = String(size || '').match(/^\s*(\d+)\s*[xX×]\s*(\d+)\s*$/);
   if (!match) return undefined;
@@ -189,29 +193,42 @@ export function getGptImageResolution(outputSize: OutputSize, aspectRatio: Aspec
   const [ratioWidth, ratioHeight] = aspectRatio.split(':').map(Number);
   if (!ratioWidth || !ratioHeight) return undefined;
 
-  if (ratioWidth === ratioHeight) {
-    const side = outputSize === '1K' ? 1024 : outputSize === '2K' ? 2048 : 3840;
-    return `${side}x${side}`;
-  }
-
+  let width: number;
+  let height: number;
   if (outputSize === '1K') {
     const shortSide = 1024;
-    const width = ratioWidth > ratioHeight
+    width = ratioWidth > ratioHeight
       ? roundToMultiple(shortSide * ratioWidth / ratioHeight, 16)
       : shortSide;
-    const height = ratioWidth > ratioHeight
+    height = ratioWidth > ratioHeight
       ? shortSide
       : roundToMultiple(shortSide * ratioHeight / ratioWidth, 16);
-    return `${width}x${height}`;
+  } else {
+    const longSide = outputSize === '2K' ? 2048 : 3840;
+    width = ratioWidth > ratioHeight
+      ? longSide
+      : roundToMultiple(longSide * ratioWidth / ratioHeight, 16);
+    height = ratioWidth > ratioHeight
+      ? roundToMultiple(longSide * ratioHeight / ratioWidth, 16)
+      : longSide;
   }
 
-  const longSide = outputSize === '2K' ? 2048 : 3840;
-  const width = ratioWidth > ratioHeight
-    ? longSide
-    : roundToMultiple(longSide * ratioWidth / ratioHeight, 16);
-  const height = ratioWidth > ratioHeight
-    ? roundToMultiple(longSide * ratioHeight / ratioWidth, 16)
-    : longSide;
+  if (!isImageSizeWithinLimits(width, height, getCustomSizeMaxSide('gpt-image-2'))) {
+    const maxPixels = CUSTOM_IMAGE_SIZE_LIMITS.maxPixels;
+    const maxSide = getCustomSizeMaxSide('gpt-image-2') || Number.POSITIVE_INFINITY;
+    const maxLongSideByPixels = ratioWidth >= ratioHeight
+      ? Math.sqrt(maxPixels * ratioWidth / ratioHeight)
+      : Math.sqrt(maxPixels * ratioHeight / ratioWidth);
+    const longSide = floorToMultiple(Math.min(maxSide, maxLongSideByPixels), 16);
+    width = ratioWidth >= ratioHeight
+      ? longSide
+      : floorToMultiple(longSide * ratioWidth / ratioHeight, 16);
+    height = ratioWidth >= ratioHeight
+      ? floorToMultiple(longSide * ratioHeight / ratioWidth, 16)
+      : longSide;
+  }
+
+  if (!isImageSizeWithinLimits(width, height, getCustomSizeMaxSide('gpt-image-2'))) return undefined;
   return `${width}x${height}`;
 }
 
@@ -298,26 +315,26 @@ export function getSizeOptions(model: ModelId): { value: OutputSize; label: stri
         : modelConfig.maxOutputSize === '512'
           ? ['512']
           : (modelConfig.builtinPreset === 'gemini-3.1-flash-image-preview' ? ['512', '1K'] : ['1K']);
-    return values.map((value) => ({ value, label: value === '512' ? '0.5K' : value }));
+    return values.map((value) => ({ value, label: getOutputSizeLabel(value) }));
   }
 
   const presetId = getBuiltinPresetId(model);
   if (presetId === 'gemini-3.1-flash-image-preview') {
     return [
-      { value: '512', label: '0.5K' },
-      { value: '1K', label: '1K' },
-      { value: '2K', label: '2K' },
-      { value: '4K', label: '4K' },
+      { value: '512', label: getOutputSizeLabel('512') },
+      { value: '1K', label: getOutputSizeLabel('1K') },
+      { value: '2K', label: getOutputSizeLabel('2K') },
+      { value: '4K', label: getOutputSizeLabel('4K') },
     ];
   }
   if (presetId === 'gemini-3-pro-image-preview' || presetId === 'gpt-image-2') {
     return [
-      { value: '1K', label: '1K' },
-      { value: '2K', label: '2K' },
-      { value: '4K', label: '4K' },
+      { value: '1K', label: getOutputSizeLabel('1K') },
+      { value: '2K', label: getOutputSizeLabel('2K') },
+      { value: '4K', label: getOutputSizeLabel('4K') },
     ];
   }
-  return [{ value: '1K', label: '1K' }];
+  return [{ value: '1K', label: getOutputSizeLabel('1K') }];
 }
 
 export function getValidOutputSizes(model: ModelId): OutputSize[] {
@@ -327,7 +344,7 @@ export function getValidOutputSizes(model: ModelId): OutputSize[] {
 
 export function getOutputSizeLabel(size: OutputSize): string {
   if (size === 'auto') return '自动';
-  return size === '512' ? '0.5K' : size;
+  return size === '512' ? '0.5k' : size.toLowerCase();
 }
 
 export function getAspectRatioOptions(model: ModelId, outputSize: OutputSize): AspectRatioOption[] {

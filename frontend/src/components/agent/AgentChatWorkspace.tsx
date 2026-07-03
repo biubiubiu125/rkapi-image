@@ -48,6 +48,7 @@ import {
   getAspectRatioOptions,
   getCustomSizeMaxSide,
   getGptImageAdvancedParamsForModel,
+  getOutputSizeLabel,
   getSizeOptions,
   getSupportsTemperature,
   getValidOutputSizes,
@@ -987,7 +988,7 @@ export function AgentChatWorkspace({ wideMode = false, disabled = false, onConfi
                   className={cn(buttonVariants({ variant: 'outline', size: 'xs' }), 'gap-1')}
                 >
                   <Sparkles className="h-3 w-3" />
-                  <span className="text-[11px]">{userCustomSize || (userOutputSize === '512' ? '0.5K' : userOutputSize)}</span>
+                  <span className="text-[11px]">{userCustomSize || getOutputSizeLabel(userOutputSize)}</span>
                 </PopoverTrigger>
                 <PopoverContent className="w-36 p-1" align="start">
                   {getSizeOptions(userModel).map(option => (
