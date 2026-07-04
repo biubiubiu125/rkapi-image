@@ -11,6 +11,13 @@ const serverSource = fs.readFileSync(
 
 function loadRewriteHelpers(): {
   resolveOutboundBaseUrl: (protocol: string, baseUrl: string, env: Record<string, string>) => string;
+  appendProtocolApiPath: (protocol: string, baseUrl: string, apiPath: string) => string;
+  shouldAuthorizeRemoteImageDownload: (imageUrl: string, request: { protocol: string; baseUrl: string }, env?: Record<string, string>) => boolean;
+  resolveOutboundBaseUrlDetails: (protocol: string, baseUrl: string, env: Record<string, string>) => {
+    baseUrl: string;
+    originalBaseUrl: string;
+    rewritten: boolean;
+  };
 } {
   const start = serverSource.indexOf('function normalizeBaseUrl');
   const end = serverSource.indexOf('function resolveImageModelKeyGuide');
@@ -18,21 +25,29 @@ function loadRewriteHelpers(): {
     throw new Error('Unable to locate Base URL rewrite helpers in backend/server.js');
   }
 
-  const source = `${serverSource.slice(start, end)}\nreturn { resolveOutboundBaseUrl };`;
+  const source = `${serverSource.slice(start, end)}\nreturn { resolveOutboundBaseUrl, resolveOutboundBaseUrlDetails, appendProtocolApiPath, shouldAuthorizeRemoteImageDownload };`;
   return new Function(source)() as {
     resolveOutboundBaseUrl: (protocol: string, baseUrl: string, env: Record<string, string>) => string;
+    appendProtocolApiPath: (protocol: string, baseUrl: string, apiPath: string) => string;
+    shouldAuthorizeRemoteImageDownload: (imageUrl: string, request: { protocol: string; baseUrl: string }, env?: Record<string, string>) => boolean;
+    resolveOutboundBaseUrlDetails: (protocol: string, baseUrl: string, env: Record<string, string>) => {
+      baseUrl: string;
+      originalBaseUrl: string;
+      rewritten: boolean;
+    };
   };
 }
 
 describe('backend Base URL rewrite map', () => {
-  const { resolveOutboundBaseUrl } = loadRewriteHelpers();
+  const { resolveOutboundBaseUrl, resolveOutboundBaseUrlDetails, appendProtocolApiPath, shouldAuthorizeRemoteImageDownload } = loadRewriteHelpers();
 
   it('rewrites public OpenAI-compatible URLs to Docker internal URLs', () => {
     const env = {
       FLYREQ_BASE_URL_REWRITE_MAP: '{"https://flyreq.com":"http://new-api:3000"}',
     };
 
-    expect(resolveOutboundBaseUrl('openai', 'https://flyreq.com/v1', env)).toBe('http://new-api:3000');
+    expect(resolveOutboundBaseUrl('openai', 'https://flyreq.com', env)).toBe('http://new-api:3000');
+    expect(resolveOutboundBaseUrl('openai', 'https://flyreq.com/v1', env)).toBe('http://new-api:3000/v1');
   });
 
   it('supports multiple mappings', () => {
@@ -48,6 +63,40 @@ describe('backend Base URL rewrite map', () => {
       FLYREQ_BASE_URL_REWRITE_MAP: '{"https://flyreq.com":"http://new-api:3000"}',
     };
 
-    expect(resolveOutboundBaseUrl('openai', 'https://other.example.com/v1', env)).toBe('https://other.example.com');
+    expect(resolveOutboundBaseUrl('openai', 'https://other.example.com/v1', env)).toBe('https://other.example.com/v1');
+  });
+
+  it('reports rewrite details for diagnostics', () => {
+    const env = {
+      FLYREQ_BASE_URL_REWRITE_MAP: '{"https://flyreq.com":"http://new-api:3000"}',
+    };
+
+    expect(resolveOutboundBaseUrlDetails('openai', 'https://flyreq.com', env)).toEqual({
+      baseUrl: 'http://new-api:3000',
+      originalBaseUrl: 'https://flyreq.com',
+      rewritten: true,
+    });
+    expect(resolveOutboundBaseUrlDetails('openai', 'https://flyreq.com/v1', env)).toEqual({
+      baseUrl: 'http://new-api:3000/v1',
+      originalBaseUrl: 'https://flyreq.com/v1',
+      rewritten: true,
+    });
+  });
+
+  it('does not duplicate protocol API prefixes when building URLs', () => {
+    expect(appendProtocolApiPath('openai', 'http://new-api:3000', '/v1/images/generations')).toBe('http://new-api:3000/v1/images/generations');
+    expect(appendProtocolApiPath('openai', 'http://new-api:3000/v1', '/v1/images/generations')).toBe('http://new-api:3000/v1/images/generations');
+    expect(appendProtocolApiPath('google', 'http://new-api:3000/v1beta', '/v1beta/models/gemini:generateContent')).toBe('http://new-api:3000/v1beta/models/gemini:generateContent');
+  });
+
+  it('only authorizes remote image downloads for configured or rewritten API origins', () => {
+    const env = {
+      FLYREQ_BASE_URL_REWRITE_MAP: '{"https://flyreq.com":"http://new-api:3000"}',
+    };
+    const request = { protocol: 'openai', baseUrl: 'https://flyreq.com/v1' };
+
+    expect(shouldAuthorizeRemoteImageDownload('https://flyreq.com/v1/files/image-1', request, env)).toBe(true);
+    expect(shouldAuthorizeRemoteImageDownload('http://new-api:3000/v1/files/image-1', request, env)).toBe(true);
+    expect(shouldAuthorizeRemoteImageDownload('https://cdn.example.com/image-1.png', request, env)).toBe(false);
   });
 });
