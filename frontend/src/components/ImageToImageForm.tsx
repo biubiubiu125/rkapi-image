@@ -26,7 +26,6 @@ import {
 import { cn } from '@/lib/utils';
 import { getDefaultModelId, MODEL_OPTIONS, MODEL_IMAGE_LIMITS, isGptImageModel, type ModelId } from '@/lib/gemini-config';
 import {
-  detectClosestAspectRatio,
   getAspectRatioOptions,
   getCustomSizeMaxSide,
   getOutputSizeLabel,
@@ -432,19 +431,6 @@ export function ImageToImageForm({
     // eslint-disable-next-line react-hooks/exhaustive-deps -- referenceDraft.id is the stable identity; refImages is consumed via ref guard
   }, [maxImages, model, onDraftConsumed, referenceDraft?.id]);
 
-  // 获取图片尺寸并自动检测比例
-  const detectImageAspectRatio = useCallback(async (dataUrl: string): Promise<AspectRatio | null> => {
-    return new Promise((resolve) => {
-      const img = new Image();
-      img.onload = () => {
-        const detectedRatio = detectClosestAspectRatio(img.width, img.height, aspectRatioOptions);
-        resolve(detectedRatio);
-      };
-      img.onerror = () => resolve(null);
-      img.src = dataUrl;
-    });
-  }, [aspectRatioOptions]);
-
   const processFiles = useCallback(async (fileList: FileList | File[]) => {
     const filesToProcess = Array.from(fileList).filter(f => f.type.startsWith('image/'));
 
@@ -465,7 +451,6 @@ export function ImageToImageForm({
 
     try {
       const newFiles: UploadedFile[] = [];
-      let firstDetectedRatio: AspectRatio | null = null;
 
       for (const file of filesToProcess) {
         const optimized = await prepareUploadImage(file);
@@ -474,11 +459,6 @@ export function ImageToImageForm({
         if (optimized.processedSize > MAX_UPLOAD_SIZE_BYTES) {
           setUploadError(`文件过大: ${file.name}，压缩后仍超过 10MB`);
           continue;
-        }
-
-        // 自动检测第一张图片的比例
-        if (!autoLayoutLocked && newFiles.length === 0 && pendingFiles.length === 0) {
-          firstDetectedRatio = await detectImageAspectRatio(optimized.preview);
         }
 
         newFiles.push({
@@ -496,17 +476,12 @@ export function ImageToImageForm({
         const uniqueNew = newFiles.filter(f => !existingIds.has(f.id));
         return uniqueNew.length > 0 ? [...prev, ...uniqueNew] : prev;
       });
-
-      // 如果检测到比例且当前没有上传的文件，自动设置比例
-      if (firstDetectedRatio && pendingFiles.length === 0) {
-        setAspectRatio(firstDetectedRatio);
-      }
     } catch {
       setUploadError('文件读取失败');
     } finally {
       setLoading(false);
     }
-  }, [pendingFiles.length, maxImages, autoLayoutLocked, model, detectImageAspectRatio]);
+  }, [pendingFiles.length, maxImages, model]);
 
   const handleImportAssets = useCallback(async (selectedAssets: ImageAsset[]) => {
     if (selectedAssets.length === 0) return;
@@ -522,7 +497,6 @@ export function ImageToImageForm({
 
     try {
       const importedFiles: UploadedFile[] = [];
-      let firstDetectedRatio: AspectRatio | null = null;
 
       for (const asset of selectedAssets.slice(0, Math.min(remainingSlots, MAX_ASSET_IMPORTS))) {
         const blob = await getAssetBlob(asset.id);
@@ -534,10 +508,6 @@ export function ImageToImageForm({
         if (optimized.processedSize > MAX_UPLOAD_SIZE_BYTES) {
           setUploadError(`文件过大: ${asset.name}，压缩后仍超过 10MB`);
           continue;
-        }
-
-        if (!autoLayoutLocked && importedFiles.length === 0 && pendingFiles.length === 0) {
-          firstDetectedRatio = await detectImageAspectRatio(optimized.preview);
         }
 
         importedFiles.push({
@@ -556,10 +526,6 @@ export function ImageToImageForm({
         return uniqueImported.length > 0 ? [...prev, ...uniqueImported] : prev;
       });
 
-      if (firstDetectedRatio && pendingFiles.length === 0) {
-        setAspectRatio(firstDetectedRatio);
-      }
-
       if (selectedAssets.length > remainingSlots) {
         setUploadError(`${MODEL_OPTIONS.find(o => o.value === model)?.label} 最多支持 ${maxImages} 张参考图，已导入可容纳的图片`);
       }
@@ -568,7 +534,7 @@ export function ImageToImageForm({
     } finally {
       setLoading(false);
     }
-  }, [autoLayoutLocked, detectImageAspectRatio, maxImages, model, pendingFiles.length]);
+  }, [maxImages, model, pendingFiles.length]);
 
   const applyTextAsset = useCallback((asset: TextAsset) => {
     setPrompt(asset.content);

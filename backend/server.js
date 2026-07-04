@@ -90,12 +90,34 @@ function normalizeBaseUrl(url) {
 }
 
 function normalizeProtocolBaseUrl(protocol, url) {
+  return normalizeBaseUrl(url);
+}
+
+function getProtocolApiPrefix(protocol) {
+  return protocol === 'google' ? '/v1beta' : '/v1';
+}
+
+function getProtocolVersionSuffix(protocol, url) {
   const normalized = normalizeBaseUrl(url);
   if (!normalized) return '';
-  if (protocol === 'google') {
-    return normalized.endsWith('/v1beta') ? normalized.slice(0, -7) : normalized;
+  const apiPrefix = getProtocolApiPrefix(protocol);
+  return normalized.toLowerCase().endsWith(apiPrefix) ? apiPrefix : '';
+}
+
+function stripProtocolVersionSuffix(protocol, url) {
+  const normalized = normalizeBaseUrl(url);
+  const suffix = getProtocolVersionSuffix(protocol, normalized);
+  return suffix ? normalized.slice(0, -suffix.length) : normalized;
+}
+
+function appendProtocolApiPath(protocol, baseUrl, apiPath) {
+  const normalizedBaseUrl = normalizeBaseUrl(baseUrl);
+  const normalizedPath = apiPath.startsWith('/') ? apiPath : `/${apiPath}`;
+  const apiPrefix = getProtocolApiPrefix(protocol);
+  if (normalizedBaseUrl.toLowerCase().endsWith(apiPrefix) && normalizedPath.toLowerCase().startsWith(`${apiPrefix}/`)) {
+    return `${normalizedBaseUrl}${normalizedPath.slice(apiPrefix.length)}`;
   }
-  return normalized.endsWith('/v1') ? normalized.slice(0, -3) : normalized;
+  return `${normalizedBaseUrl}${normalizedPath}`;
 }
 
 function resolveFlyreqApiBaseUrl() {
@@ -139,17 +161,58 @@ function parseBaseUrlRewriteMap(rawValue) {
 }
 
 function resolveOutboundBaseUrl(protocol, baseUrl, env = getRuntimeEnv()) {
+  return resolveOutboundBaseUrlDetails(protocol, baseUrl, env).baseUrl;
+}
+
+function resolveOutboundBaseUrlDetails(protocol, baseUrl, env = getRuntimeEnv()) {
   const normalizedBaseUrl = normalizeProtocolBaseUrl(protocol, baseUrl);
+  const matchBaseUrl = stripProtocolVersionSuffix(protocol, normalizedBaseUrl);
+  const sourceVersionSuffix = getProtocolVersionSuffix(protocol, normalizedBaseUrl);
   const rewrites = parseBaseUrlRewriteMap(env.FLYREQ_BASE_URL_REWRITE_MAP);
 
   for (const rewrite of rewrites) {
-    const from = normalizeProtocolBaseUrl(protocol, rewrite.from);
-    if (!from || from.toLowerCase() !== normalizedBaseUrl.toLowerCase()) continue;
+    const from = stripProtocolVersionSuffix(protocol, rewrite.from);
+    if (!from || from.toLowerCase() !== matchBaseUrl.toLowerCase()) continue;
     const to = normalizeProtocolBaseUrl(protocol, rewrite.to);
-    if (to) return to;
+    if (to) {
+      const targetVersionSuffix = getProtocolVersionSuffix(protocol, to);
+      const rewrittenBaseUrl = sourceVersionSuffix && !targetVersionSuffix
+        ? `${to}${sourceVersionSuffix}`
+        : to;
+      return { baseUrl: rewrittenBaseUrl, originalBaseUrl: normalizedBaseUrl, rewritten: true };
+    }
   }
 
-  return normalizedBaseUrl;
+  return { baseUrl: normalizedBaseUrl, originalBaseUrl: normalizedBaseUrl, rewritten: false };
+}
+
+function getUrlOrigin(value) {
+  try {
+    return new URL(normalizeBaseUrl(value)).origin.toLowerCase();
+  } catch {
+    return '';
+  }
+}
+
+function getSafeUrlLabel(value) {
+  try {
+    const url = new URL(value);
+    return `${url.origin}${url.pathname}`;
+  } catch {
+    return String(value || '').slice(0, 120);
+  }
+}
+
+function shouldAuthorizeRemoteImageDownload(imageUrl, request, env = getRuntimeEnv()) {
+  const imageOrigin = getUrlOrigin(imageUrl);
+  if (!imageOrigin) return false;
+
+  const allowedOrigins = new Set([
+    getUrlOrigin(request?.baseUrl),
+    getUrlOrigin(request?.baseUrl ? resolveOutboundBaseUrl(request.protocol, request.baseUrl, env) : resolveFlyreqApiBaseUrl()),
+  ].filter(Boolean));
+
+  return allowedOrigins.has(imageOrigin);
 }
 
 function resolveImageModelKeyGuide(env = getRuntimeEnv()) {
@@ -438,9 +501,16 @@ function saveImageToDisk(taskId, itemIndex, subIndex, imageBuffer, mimeType) {
   return { filePath, httpUrl: `/api/flyreq/images/${taskId}/${itemIndex}` };
 }
 
-async function downloadUrlToDisk(taskId, itemIndex, subIndex, imageUrl) {
-  const response = await fetchWithTimeout(imageUrl, {});
-  if (!response.ok) throw new Error(`远程图片下载失败: ${response.status}`);
+async function downloadUrlToDisk(taskId, itemIndex, subIndex, imageUrl, options = {}) {
+  const headers = {};
+  if (options.apiKey && shouldAuthorizeRemoteImageDownload(imageUrl, options.request)) {
+    headers.Authorization = `Bearer ${options.apiKey}`;
+  }
+  const response = await fetchWithTimeout(imageUrl, Object.keys(headers).length > 0 ? { headers } : {});
+  if (!response.ok) {
+    console.warn(`[image-download] 远程图片下载失败: status=${response.status} task=${taskId} item=${itemIndex} sub=${subIndex} url=${getSafeUrlLabel(imageUrl)}`);
+    throw new Error(`远程图片下载失败: ${response.status}`);
+  }
   const contentType = response.headers.get('content-type') || 'image/png';
   const buffer = Buffer.from(await response.arrayBuffer());
   return saveImageToDisk(taskId, itemIndex, subIndex, buffer, contentType);
@@ -1145,7 +1215,7 @@ async function requestGptImage(apiKey, request, resolvedSize, options = {}) {
 
   try {
     const response = await fetchWithTimeout(
-      `${baseUrl}${endpoint}`,
+      appendProtocolApiPath('openai', baseUrl, endpoint),
       createGptImageRequestInit(apiKey, request, resolvedSize, { ...options, stream })
     );
     return await parseGptImageResponse(response);
@@ -1155,7 +1225,7 @@ async function requestGptImage(apiKey, request, resolvedSize, options = {}) {
     }
     console.warn('[image-stream] 上游不支持流式图片请求，已回退非流式:', error?.message || error);
     const response = await fetchWithTimeout(
-      `${baseUrl}${endpoint}`,
+      appendProtocolApiPath('openai', baseUrl, endpoint),
       createGptImageRequestInit(apiKey, request, resolvedSize, { ...options, stream: false })
     );
     return parseGptImageResponse(response);
@@ -1195,9 +1265,13 @@ async function fetchWithTimeout(url, init) {
 
 async function generateFlyreqImage(apiKey, request) {
   // 开源版：根据前端传入的 protocol 字段路由到对应的 API 协议
-  const baseUrl = request.baseUrl
-    ? resolveOutboundBaseUrl(request.protocol, request.baseUrl)
-    : resolveFlyreqApiBaseUrl();
+  const baseUrlDetails = request.baseUrl
+    ? resolveOutboundBaseUrlDetails(request.protocol, request.baseUrl)
+    : { baseUrl: resolveFlyreqApiBaseUrl(), originalBaseUrl: '', rewritten: false };
+  const baseUrl = baseUrlDetails.baseUrl;
+  if (baseUrlDetails.rewritten) {
+    console.info(`[base-url-rewrite] ${request.protocol}: ${baseUrlDetails.originalBaseUrl} -> ${baseUrl}`);
+  }
   if (request.protocol === 'openai') {
     return requestGptImage(apiKey, request, resolveGptImageRequestSize(request), {
       baseUrl,
@@ -1221,7 +1295,7 @@ async function generateFlyreqGeminiImage(apiKey, request, options = {}) {
     { text: request.prompt },
     ...request.images.map(img => ({ inlineData: { data: img.data, mimeType: img.mimeType } })),
   ];
-  const response = await fetchWithTimeout(`${baseUrl}/v1beta/models/${encodeURIComponent(request.model)}:generateContent`, {
+  const response = await fetchWithTimeout(appendProtocolApiPath('google', baseUrl, `/v1beta/models/${encodeURIComponent(request.model)}:generateContent`), {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -1287,7 +1361,7 @@ async function generateSingleImage(apiKey, request, taskId, index) {
       const img = expanded[subIdx];
       if (img.startsWith('URL:')) {
         const remoteUrl = img.substring(4);
-        const result = await downloadUrlToDisk(taskId, index, subIdx, remoteUrl);
+        const result = await downloadUrlToDisk(taskId, index, subIdx, remoteUrl, { apiKey, request });
         diskRefs.push(`URL:${result.httpUrl}`);
       } else {
         const buffer = Buffer.from(img, 'base64');
@@ -1722,11 +1796,11 @@ async function handleApi(req, res, pathname) {
         const authHeaders = { 'Content-Type': 'application/json' };
 
         if (protocol === 'google') {
-          targetUrl = `${normalizedBaseUrl}/v1beta/models/${encodeURIComponent(model || '')}:streamGenerateContent?alt=sse`;
+          targetUrl = appendProtocolApiPath('google', normalizedBaseUrl, `/v1beta/models/${encodeURIComponent(model || '')}:streamGenerateContent?alt=sse`);
           authHeaders['x-goog-api-key'] = apiKey;
           authHeaders['Authorization'] = `Bearer ${apiKey}`;
         } else {
-          targetUrl = `${normalizedBaseUrl}/v1/responses`;
+          targetUrl = appendProtocolApiPath('openai', normalizedBaseUrl, '/v1/responses');
           authHeaders['Authorization'] = `Bearer ${apiKey}`;
         }
 
@@ -1800,7 +1874,7 @@ async function handleApi(req, res, pathname) {
         }
 
         const normalizedBaseUrl = resolveOutboundBaseUrl(protocol, baseUrl);
-        const modelsUrl = `${normalizedBaseUrl}/v1/models`;
+        const modelsUrl = `${stripProtocolVersionSuffix(protocol, normalizedBaseUrl)}/v1/models`;
         // 模型列表查询只发送 Authorization 头。x-goog-api-key 仅用于 Gemini 生成端点，
         // 对 /v1/models (兼容 OpenAI 格式的 NewAPI 等) 会引发错误或返回空列表。
         const headers = { Authorization: `Bearer ${apiKey}` };
