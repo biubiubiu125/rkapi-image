@@ -6,6 +6,8 @@ import {
   getImageModelById,
   getTextModelById,
   loadRegistry,
+  getImageApiFlavor,
+  type ImageApiFlavor,
   type ProviderProtocol,
 } from '@/lib/flyreq-models';
 import {
@@ -35,6 +37,7 @@ export interface CreateFlyreqTaskInput {
   apiKey: string;
   baseUrl: string;
   protocol: ProviderProtocol;
+  imageApiFlavor?: ImageApiFlavor;
   mode: FlyreqTaskMode;
   prompt: string;
   outputSize: OutputSize;
@@ -285,7 +288,7 @@ export async function checkModelsAvailability(
   }
 }
 
-export function resolveImageTaskProvider(modelId: string): { apiKey: string; baseUrl: string; protocol: ProviderProtocol; modelId: string; streamImages?: boolean } {
+export function resolveImageTaskProvider(modelId: string): { apiKey: string; baseUrl: string; protocol: ProviderProtocol; modelId: string; imageApiFlavor?: ImageApiFlavor; streamImages?: boolean } {
   const registry = loadRegistry();
   const model = getImageModelById(registry, modelId);
   if (!model) throw new Error(`未找到图片模型配置: ${modelId}`);
@@ -295,6 +298,7 @@ export function resolveImageTaskProvider(modelId: string): { apiKey: string; bas
     baseUrl: normalizedBaseUrl,
     protocol: model.protocol,
     modelId: model.modelId,
+    imageApiFlavor: getImageApiFlavor(model),
     streamImages: model.protocol === 'openai' ? Boolean(model.streamImages) : false,
   };
 }

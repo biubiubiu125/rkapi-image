@@ -346,7 +346,7 @@ export const CompletedJobCard = memo(function CompletedJobCard({ job, onClear, o
               {getModelDisplayName(job.model)}
               <span>·</span>
               {outputSizeLabel}
-              {job.aspect_ratio !== '1:1' && job.aspect_ratio !== 'auto' && <><span>·</span><span>{job.aspect_ratio}</span></>}
+              {job.aspect_ratio !== 'auto' && <><span>·</span><span>{job.aspect_ratio}</span></>}
               {supportsTemperature && <><span>·</span><Thermometer className="w-3 h-3" /><span>{job.temperature?.toFixed(2) ?? 1}</span></>}
               {isMultiple && <><span>·</span><span className="font-medium text-primary">x{sourceImages.length}{job.parallelCount && job.parallelCount > sourceImages.length ? `/${job.parallelCount}` : ''}</span></>}
             </p>

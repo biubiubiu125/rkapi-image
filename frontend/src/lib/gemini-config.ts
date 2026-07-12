@@ -8,7 +8,7 @@ import {
 } from '@/lib/flyreq-models';
 
 export type OutputSize = 'auto' | '512' | '1K' | '2K' | '4K';
-export type AspectRatio = 'auto' | '1:1' | '1:4' | '1:8' | '2:3' | '3:2' | '3:4' | '4:1' | '4:3' | '4:5' | '5:4' | '8:1' | '9:16' | '16:9' | '21:9';
+export type AspectRatio = 'auto' | '1:1' | '1:2' | '1:4' | '1:8' | '2:1' | '2:3' | '3:2' | '3:4' | '4:1' | '4:3' | '4:5' | '5:4' | '8:1' | '9:16' | '9:19.5' | '9:20' | '16:9' | '19.5:9' | '20:9' | '21:9';
 export type ModelId = string;
 
 export interface ModelOption {
@@ -52,7 +52,7 @@ function getBuiltinPresetId(modelId: string): BuiltinImagePresetId | undefined {
 
 export function isGptImageModel(modelId: string): boolean {
   const presetId = getBuiltinPresetId(modelId) || modelId;
-  return String(presetId).startsWith('gpt-image-2');
+  return String(presetId).startsWith('gpt-image-2') || String(presetId).startsWith('grok-imagine-image');
 }
 
 export function getModelImageLimits(): Record<string, ModelImageLimit> {

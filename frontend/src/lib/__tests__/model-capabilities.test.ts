@@ -3,9 +3,12 @@ import { describe, expect, it } from 'vitest';
 import {
   GPT_IMAGE_QUALITY_OPTIONS,
   getGptImageResolution,
+  getAspectRatioOptions,
   getOutputSizeLabel,
   getSizeOptions,
   getValidOutputSizes,
+  supportsCustomSize,
+  supportsGptImageAdvancedParams,
 } from '@/lib/model-capabilities';
 
 describe('model capabilities', () => {
@@ -60,5 +63,34 @@ describe('model capabilities', () => {
         disabledReason: '当前模型最大分辨率为 2k，不支持 4k',
       },
     ]);
+  });
+
+  it('exposes Grok Imagine native layouts without GPT Image-only controls', () => {
+    localStorage.setItem('flyreq-model-registry', JSON.stringify({
+      imageModels: [{
+        id: 'grok-imagine-quality',
+        protocol: 'openai',
+        name: 'Grok Imagine Quality',
+        modelId: 'grok-imagine-image-quality',
+        apiKey: 'test-key',
+        baseUrl: 'https://api.x.ai',
+        builtinPreset: 'grok-imagine-image-quality',
+        maxRefImages: 1,
+        maxOutputSize: '2K',
+        supportsAdvancedParams: false,
+      }],
+      textModels: [],
+      defaults: { textToImage: 'grok-imagine-quality', imageToImage: 'grok-imagine-quality' },
+    }));
+
+    expect(getValidOutputSizes('grok-imagine-quality')).toEqual(['1K', '2K']);
+    expect(getSizeOptions('grok-imagine-quality')).toEqual([
+      { value: '1K', label: '1k', disabled: false, disabledReason: undefined },
+      { value: '2K', label: '2k', disabled: false, disabledReason: undefined },
+    ]);
+    expect(getAspectRatioOptions('grok-imagine-quality', '1K').map(option => option.value)).toContain('19.5:9');
+    expect(getAspectRatioOptions('grok-imagine-quality', '1K').map(option => option.value)).toContain('auto');
+    expect(supportsGptImageAdvancedParams('grok-imagine-quality')).toBe(false);
+    expect(supportsCustomSize('grok-imagine-quality')).toBe(false);
   });
 });

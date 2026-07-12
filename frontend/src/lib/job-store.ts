@@ -4,7 +4,7 @@ import { openImageDb, IMG_STORE } from '@/lib/image-db';
 
 export type Mode = 'text-to-image' | 'image-to-image' | 'prompt-gallery';
 export type OutputSize = 'auto' | '512' | '1K' | '2K' | '4K';
-export type AspectRatio = 'auto' | '1:1' | '1:4' | '1:8' | '2:3' | '3:2' | '3:4' | '4:1' | '4:3' | '4:5' | '5:4' | '8:1' | '9:16' | '16:9' | '21:9';
+export type AspectRatio = 'auto' | '1:1' | '1:2' | '1:4' | '1:8' | '2:1' | '2:3' | '3:2' | '3:4' | '4:1' | '4:3' | '4:5' | '5:4' | '8:1' | '9:16' | '9:19.5' | '9:20' | '16:9' | '19.5:9' | '20:9' | '21:9';
 
 export interface RefImageData {
   id: string;

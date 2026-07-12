@@ -23,6 +23,8 @@ function normalizePreset(value: string | null): BuiltinImagePresetId | undefined
     || value === 'gemini-3-pro-image-preview'
     || value === 'gemini-3.1-flash-image-preview'
     || value === 'gpt-image-2'
+    || value === 'grok-imagine-image'
+    || value === 'grok-imagine-image-quality'
     ? value
     : undefined;
 }

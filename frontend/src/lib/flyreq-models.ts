@@ -6,7 +6,11 @@ export type BuiltinImagePresetId =
   | 'gemini-2.5-flash-image'
   | 'gemini-3-pro-image-preview'
   | 'gemini-3.1-flash-image-preview'
-  | 'gpt-image-2';
+  | 'gpt-image-2'
+  | 'grok-imagine-image'
+  | 'grok-imagine-image-quality';
+
+export type ImageApiFlavor = 'xai-imagine';
 
 export interface ImageModelConfig {
   id: string;
@@ -107,6 +111,28 @@ export const BUILTIN_IMAGE_PRESETS: Record<BuiltinImagePresetId, BuiltinImagePre
     supportsAdvancedParams: true,
     streamImages: false,
   },
+  'grok-imagine-image': {
+    id: 'grok-imagine-image',
+    protocol: 'openai',
+    name: 'Grok Imagine',
+    modelId: 'grok-imagine-image',
+    baseUrl: 'https://api.x.ai',
+    maxRefImages: 1,
+    maxOutputSize: '2K',
+    supportsAdvancedParams: false,
+    streamImages: false,
+  },
+  'grok-imagine-image-quality': {
+    id: 'grok-imagine-image-quality',
+    protocol: 'openai',
+    name: 'Grok Imagine Quality',
+    modelId: 'grok-imagine-image-quality',
+    baseUrl: 'https://api.x.ai',
+    maxRefImages: 1,
+    maxOutputSize: '2K',
+    supportsAdvancedParams: false,
+    streamImages: false,
+  },
 };
 
 export const BUILTIN_IMAGE_PRESET_OPTIONS = Object.values(BUILTIN_IMAGE_PRESETS).map((preset) => ({
@@ -160,6 +186,16 @@ export const DEFAULT_IMAGE_MODELS: ImageModelConfig[] = [
   },
 ];
 
+export function isXaiImaginePresetId(presetId: string): boolean {
+  return presetId === 'grok-imagine-image' || presetId === 'grok-imagine-image-quality';
+}
+
+export function getImageApiFlavor(model: Pick<ImageModelConfig, 'builtinPreset' | 'modelId'>): ImageApiFlavor | undefined {
+  return isXaiImaginePresetId(model.builtinPreset) || isXaiImaginePresetId(model.modelId)
+    ? 'xai-imagine'
+    : undefined;
+}
+
 function isProviderProtocol(value: unknown): value is ProviderProtocol {
   return value === 'google' || value === 'openai';
 }
@@ -175,8 +211,9 @@ function normalizeImageOutputSize(value: unknown, fallback: ImageOutputSize): Im
 }
 
 function inferBuiltinPresetId(raw: Partial<ImageModelConfig>): BuiltinImagePresetId {
-  const candidate = raw.builtinPreset || raw.id || raw.modelId;
-  if (isBuiltinImagePresetId(candidate)) return candidate;
+  for (const candidate of [raw.builtinPreset, raw.modelId, raw.id]) {
+    if (isBuiltinImagePresetId(candidate)) return candidate;
+  }
   if (String(raw.protocol || '').trim() === 'google') return 'gemini-3-pro-image-preview';
   return 'gpt-image-2';
 }
@@ -187,7 +224,10 @@ function normalizeImageModelConfig(raw: Partial<ImageModelConfig>): ImageModelCo
   const id = String(raw.id || '').trim();
   if (!id) return null;
 
-  const protocol = isProviderProtocol(raw.protocol) ? raw.protocol : preset.protocol;
+  const isXaiImagine = isXaiImaginePresetId(presetId);
+  const protocol = isXaiImagine
+    ? preset.protocol
+    : (isProviderProtocol(raw.protocol) ? raw.protocol : preset.protocol);
   return {
     id,
     protocol,
@@ -196,14 +236,20 @@ function normalizeImageModelConfig(raw: Partial<ImageModelConfig>): ImageModelCo
     apiKey: String(raw.apiKey || '').trim(),
     baseUrl: String(raw.baseUrl || preset.baseUrl).trim(),
     builtinPreset: presetId,
-    maxRefImages: Number.isFinite(raw.maxRefImages) && Number(raw.maxRefImages) > 0
-      ? Math.max(1, Math.floor(Number(raw.maxRefImages)))
-      : preset.maxRefImages,
-    maxOutputSize: normalizeImageOutputSize(raw.maxOutputSize, preset.maxOutputSize),
-    supportsAdvancedParams: protocol === 'openai'
+    maxRefImages: isXaiImagine
+      ? preset.maxRefImages
+      : (Number.isFinite(raw.maxRefImages) && Number(raw.maxRefImages) > 0
+        ? Math.max(1, Math.floor(Number(raw.maxRefImages)))
+        : preset.maxRefImages),
+    maxOutputSize: isXaiImagine
+      ? (raw.maxOutputSize === '1K' ? '1K' : preset.maxOutputSize)
+      : normalizeImageOutputSize(raw.maxOutputSize, preset.maxOutputSize),
+    supportsAdvancedParams: protocol === 'openai' && preset.supportsAdvancedParams
       ? (typeof raw.supportsAdvancedParams === 'boolean' ? raw.supportsAdvancedParams : preset.supportsAdvancedParams)
       : false,
-    streamImages: protocol === 'openai' ? Boolean(raw.streamImages ?? preset.streamImages) : false,
+    streamImages: protocol === 'openai' && preset.id === 'gpt-image-2'
+      ? Boolean(raw.streamImages ?? preset.streamImages)
+      : false,
   };
 }
 
