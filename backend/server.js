@@ -4,7 +4,9 @@ const fs = require('fs');
 const path = require('path');
 const next = process.env.NODE_ENV !== 'production' ? require('next') : null;
 const Database = require('better-sqlite3');
+const sharp = require('sharp');
 const { WebSocketServer } = require('ws');
+const { createXaiImagineRequestInit, getXaiImagineEndpoint } = require('./xai-imagine');
 
 const ENV_FILE_PATH = path.join(process.cwd(), '.env');
 const TASK_STATUS = {
@@ -241,6 +243,10 @@ const DB_PATH = process.env.FLYREQ_TASK_DB || path.join(__dirname, 'flyreq-tasks
 const TASK_TTL_MS = 12 * 60 * 60 * 1000;
 const CLEANUP_INTERVAL_MS = 5 * 60 * 1000;
 const REQUEST_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
+const XAI_IMAGINE_MAX_REQUESTS_PER_SECOND = 5;
+const XAI_IMAGINE_REQUEST_INTERVAL_MS = 1000 / XAI_IMAGINE_MAX_REQUESTS_PER_SECOND;
+const XAI_IMAGINE_MAX_RETRIES = 1;
+const XAI_IMAGINE_DEFAULT_RETRY_DELAY_MS = 1000;
 const IMAGE_STREAM_UNSUPPORTED_PATTERN = /(?:stream.*(?:unsupported|not supported|unknown|unrecognized|invalid)|(?:unsupported|not supported|unknown|unrecognized|invalid).*stream|stream.*(?:不支持|未知|无效)|(?:不支持|未知|无效).*stream)/i;
 // 开源版：不再硬编码模型列表，由前端通过 protocol 字段指定协议类型
 const VALID_PROTOCOLS = new Set(['google', 'openai']);
@@ -248,6 +254,12 @@ const GPT_IMAGE_QUALITIES = new Set(['auto', 'high', 'medium', 'low']);
 const GPT_IMAGE_STYLES = new Set(['auto', 'vivid', 'natural']);
 const GPT_IMAGE_BACKGROUNDS = new Set(['auto', 'transparent', 'opaque']);
 const GPT_IMAGE_OUTPUT_FORMATS = new Set(['png', 'jpeg', 'webp']);
+const IMAGE_API_FLAVORS = new Set(['xai-imagine']);
+const XAI_IMAGINE_OUTPUT_SIZES = new Set(['1K', '2K']);
+const XAI_IMAGINE_ASPECT_RATIOS = new Set([
+  'auto', '1:1', '16:9', '9:16', '4:3', '3:4', '3:2', '2:3',
+  '2:1', '1:2', '19.5:9', '9:19.5', '20:9', '9:20',
+]);
 const DEFAULT_GPT_IMAGE_ADVANCED_PARAMS = {
   quality: 'auto',
   style: 'auto',
@@ -274,6 +286,7 @@ const taskSources = new Map(); // taskId -> { ip, apiKeyHash }
 const rateLimitBuckets = new Map(); // key -> { windowStart: number, count: number }
 const pendingCountByIp = new Map(); // ip -> count
 const pendingCountByApiKeyHash = new Map(); // apiKeyHash -> count
+const xaiImagineNextRequestAtByApiKeyHash = new Map(); // apiKeyHash -> next request start timestamp
 const queue = [];
 let activeCount = 0;
 
@@ -340,6 +353,33 @@ function hashApiKey(apiKey) {
   return createHash('sha256').update(String(apiKey || '')).digest('hex').slice(0, 24);
 }
 
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function waitForXaiImagineRequestSlot(apiKey) {
+  const apiKeyHash = hashApiKey(apiKey);
+  const now = Date.now();
+  const nextRequestAt = xaiImagineNextRequestAtByApiKeyHash.get(apiKeyHash) || now;
+  const scheduledAt = Math.max(now, nextRequestAt);
+  xaiImagineNextRequestAtByApiKeyHash.set(apiKeyHash, scheduledAt + XAI_IMAGINE_REQUEST_INTERVAL_MS);
+
+  if (scheduledAt > now) {
+    await delay(scheduledAt - now);
+  }
+}
+
+function getRetryAfterDelayMs(response) {
+  const retryAfter = response.headers.get('retry-after');
+  const seconds = Number(retryAfter);
+  if (Number.isFinite(seconds) && seconds > 0) return Math.ceil(seconds * 1000);
+
+  const retryAt = retryAfter ? Date.parse(retryAfter) : Number.NaN;
+  return Number.isFinite(retryAt)
+    ? Math.max(0, retryAt - Date.now())
+    : XAI_IMAGINE_DEFAULT_RETRY_DELAY_MS;
+}
+
 function cleanupTaskRuntimeState(taskId) {
   const source = taskSources.get(taskId);
   if (source) {
@@ -403,6 +443,11 @@ function cleanupRateLimitBuckets() {
   for (const [key, bucket] of rateLimitBuckets) {
     if (!bucket || now - bucket.windowStart > maxWindowMs * 2) {
       rateLimitBuckets.delete(key);
+    }
+  }
+  for (const [apiKeyHash, nextRequestAt] of xaiImagineNextRequestAtByApiKeyHash) {
+    if (!Number.isFinite(nextRequestAt) || now - nextRequestAt > maxWindowMs * 2) {
+      xaiImagineNextRequestAtByApiKeyHash.delete(apiKeyHash);
     }
   }
 }
@@ -521,6 +566,105 @@ function saveImageToDisk(taskId, itemIndex, subIndex, imageBuffer, mimeType) {
   return { filePath, httpUrl: `/api/flyreq/images/${taskId}/${itemIndex}` };
 }
 
+function getImageMimeType(format, fallback = 'image/png') {
+  if (format === 'jpeg') return 'image/jpeg';
+  if (format === 'webp') return 'image/webp';
+  if (format === 'png') return 'image/png';
+  return fallback;
+}
+
+function parseAspectRatio(aspectRatio) {
+  const match = String(aspectRatio || '').match(/^(\d+(?:\.\d+)?):(\d+(?:\.\d+)?)$/);
+  if (!match) return undefined;
+
+  const decimalPlaces = Math.max(
+    (match[1].split('.')[1] || '').length,
+    (match[2].split('.')[1] || '').length,
+  );
+  const multiplier = 10 ** decimalPlaces;
+  const width = Math.round(Number(match[1]) * multiplier);
+  const height = Math.round(Number(match[2]) * multiplier);
+  return width > 0 && height > 0 ? { width, height } : undefined;
+}
+
+function getImageLayoutTargetSize(request) {
+  const customSize = normalizeCustomImageSize(request.customSize, 3840);
+  if (customSize) return parseImageSize(customSize);
+
+  const requestedSize = getGptImageSize(request.outputSize, request.aspectRatio);
+  if (request.protocol === 'openai' && request.imageApiFlavor !== 'xai-imagine' && requestedSize) {
+    return parseImageSize(requestedSize);
+  }
+
+  // Every supported provider uses 1024x1024 for the 1K square preset.
+  if (request.outputSize === '1K' && request.aspectRatio === '1:1') {
+    return { width: 1024, height: 1024 };
+  }
+
+  return undefined;
+}
+
+function getCenteredAspectCrop(width, height, aspectRatio) {
+  const ratio = parseAspectRatio(aspectRatio);
+  if (!ratio || width <= 0 || height <= 0) return undefined;
+
+  const scale = Math.floor(Math.min(width / ratio.width, height / ratio.height));
+  if (scale <= 0) return undefined;
+
+  const cropWidth = scale * ratio.width;
+  const cropHeight = scale * ratio.height;
+  return {
+    left: Math.floor((width - cropWidth) / 2),
+    top: Math.floor((height - cropHeight) / 2),
+    width: cropWidth,
+    height: cropHeight,
+  };
+}
+
+/**
+ * Providers are asked for the requested layout first. This is a final guard for
+ * OpenAI-compatible gateways that return an image with a different layout.
+ */
+async function enforceGeneratedImageLayout(imageBuffer, mimeType, request) {
+  const metadata = await sharp(imageBuffer).metadata();
+  const sourceWidth = metadata.width;
+  const sourceHeight = metadata.height;
+  if (!sourceWidth || !sourceHeight) {
+    throw new Error('无法读取生成图片尺寸，无法确认输出比例');
+  }
+
+  const detectedMimeType = getImageMimeType(metadata.format, mimeType);
+  const targetSize = getImageLayoutTargetSize(request);
+  if (targetSize && (sourceWidth !== targetSize.width || sourceHeight !== targetSize.height)) {
+    const result = await sharp(imageBuffer)
+      .rotate()
+      .resize(targetSize.width, targetSize.height, { fit: 'cover', position: 'centre' })
+      .toBuffer({ resolveWithObject: true });
+    console.warn(`[image-layout] 已归一化图片尺寸: ${sourceWidth}x${sourceHeight} -> ${targetSize.width}x${targetSize.height}`);
+    return {
+      buffer: result.data,
+      mimeType: getImageMimeType(result.info.format, detectedMimeType),
+    };
+  }
+
+  if (!targetSize && request.aspectRatio !== 'auto') {
+    const crop = getCenteredAspectCrop(sourceWidth, sourceHeight, request.aspectRatio);
+    if (crop && (crop.width !== sourceWidth || crop.height !== sourceHeight)) {
+      const result = await sharp(imageBuffer)
+        .rotate()
+        .extract(crop)
+        .toBuffer({ resolveWithObject: true });
+      console.warn(`[image-layout] 已归一化图片比例: ${sourceWidth}x${sourceHeight} -> ${crop.width}x${crop.height}`);
+      return {
+        buffer: result.data,
+        mimeType: getImageMimeType(result.info.format, detectedMimeType),
+      };
+    }
+  }
+
+  return { buffer: imageBuffer, mimeType: detectedMimeType };
+}
+
 async function downloadUrlToDisk(taskId, itemIndex, subIndex, imageUrl, options = {}) {
   const headers = {};
   if (options.apiKey && shouldAuthorizeRemoteImageDownload(imageUrl, options.request)) {
@@ -533,7 +677,8 @@ async function downloadUrlToDisk(taskId, itemIndex, subIndex, imageUrl, options 
   }
   const contentType = response.headers.get('content-type') || 'image/png';
   const buffer = Buffer.from(await response.arrayBuffer());
-  return saveImageToDisk(taskId, itemIndex, subIndex, buffer, contentType);
+  const normalized = await enforceGeneratedImageLayout(buffer, contentType, options.request || {});
+  return saveImageToDisk(taskId, itemIndex, subIndex, normalized.buffer, normalized.mimeType);
 }
 
 function getTaskImageFiles(taskId) {
@@ -799,6 +944,7 @@ function validateCreatePayload(body) {
   if (typeof body.prompt !== 'string' || body.prompt.trim().length === 0) throw new Error('提示词不能为空');
   if (typeof body.model !== 'string' || body.model.trim().length === 0) throw new Error('模型名称不能为空');
   if (!Number.isInteger(body.parallelCount) || body.parallelCount < 1 || body.parallelCount > MAX_PARALLEL_COUNT) throw new Error('并发数量无效');
+  if (body.imageApiFlavor !== undefined && !IMAGE_API_FLAVORS.has(body.imageApiFlavor)) throw new Error('图片 API 类型无效');
 
   if (!Array.isArray(body.images)) body.images = [];
   if (!Array.isArray(body.promptVariants)) {
@@ -811,6 +957,14 @@ function validateCreatePayload(body) {
   body.baseUrl = normalizeProtocolBaseUrl(body.protocol, body.baseUrl);
   if (!body.baseUrl) throw new Error('缺少 API 基础地址');
   body.streamImages = body.protocol === 'openai' ? Boolean(body.streamImages) : false;
+  if (body.imageApiFlavor === 'xai-imagine') {
+    if (body.protocol !== 'openai') throw new Error('xAI Imagine 仅支持 OpenAI 兼容协议');
+    if (!XAI_IMAGINE_OUTPUT_SIZES.has(body.outputSize)) throw new Error('xAI Imagine 仅支持 1K 或 2K 分辨率');
+    if (!XAI_IMAGINE_ASPECT_RATIOS.has(body.aspectRatio)) throw new Error('xAI Imagine 图片比例无效');
+    if (body.customSize) throw new Error('xAI Imagine 不支持自定义像素尺寸');
+    if (body.images.length > 1) throw new Error('xAI Imagine 首版仅支持 1 张参考图');
+    body.streamImages = false;
+  }
   // 开源版：不做模型级参数规范化，前端负责传递正确的参数，后端无条件透传
 }
 
@@ -829,6 +983,7 @@ function createTask(body, req) {
     mode: body.mode,
     source: 'flyreq',
     protocol: body.protocol,
+    imageApiFlavor: body.imageApiFlavor,
     baseUrl: body.baseUrl,
     prompt: body.prompt,
     outputSize: body.outputSize,
@@ -1260,6 +1415,27 @@ async function requestGptImage(apiKey, request, resolvedSize, options = {}) {
   }
 }
 
+async function requestXaiImagineImage(apiKey, request, options = {}) {
+  const baseUrl = options.baseUrl || 'https://api.x.ai';
+  const endpoint = getXaiImagineEndpoint(request.mode);
+  const url = appendProtocolApiPath('openai', baseUrl, endpoint);
+
+  for (let attempt = 0; attempt <= XAI_IMAGINE_MAX_RETRIES; attempt++) {
+    await waitForXaiImagineRequestSlot(apiKey);
+    const response = await fetchWithTimeout(url, createXaiImagineRequestInit(apiKey, request));
+    if (response.status !== 429 || attempt === XAI_IMAGINE_MAX_RETRIES) {
+      return parseGptImageResponse(response);
+    }
+
+    const retryDelayMs = getRetryAfterDelayMs(response);
+    await response.text();
+    console.warn(`[xai-imagine] 收到 429，${Math.ceil(retryDelayMs / 1000)} 秒后重试`);
+    await delay(retryDelayMs);
+  }
+
+  throw new Error('xAI Imagine 请求重试次数已耗尽');
+}
+
 // ===== 加强网络连接：启用 TCP keepalive，防止 Docker 回环连接被静默断开 =====
 // Node.js 内置 fetch 基于 undici，默认不发送 TCP keepalive，
 // 导致长时间等待响应（如 4K 图片生成）时连接被 Docker 网络层丢弃。
@@ -1299,6 +1475,9 @@ async function generateFlyreqImage(apiKey, request) {
   const baseUrl = baseUrlDetails.baseUrl;
   if (baseUrlDetails.rewritten) {
     console.info(`[base-url-rewrite] ${request.protocol}: ${baseUrlDetails.originalBaseUrl} -> ${baseUrl}`);
+  }
+  if (request.imageApiFlavor === 'xai-imagine') {
+    return requestXaiImagineImage(apiKey, request, { baseUrl });
   }
   if (request.protocol === 'openai') {
     return requestGptImage(apiKey, request, resolveGptImageRequestSize(request), {
@@ -1399,7 +1578,8 @@ async function generateSingleImage(apiKey, request, taskId, index) {
         diskRefs.push(`URL:${result.httpUrl}`);
       } else {
         const buffer = Buffer.from(img, 'base64');
-        const result = saveImageToDisk(taskId, index, subIdx, buffer, 'image/png');
+        const normalized = await enforceGeneratedImageLayout(buffer, 'image/png', requestForImage);
+        const result = saveImageToDisk(taskId, index, subIdx, normalized.buffer, normalized.mimeType);
         diskRefs.push(`URL:${result.httpUrl}`);
       }
     }

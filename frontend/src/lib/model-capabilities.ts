@@ -106,6 +106,23 @@ const GPT_IMAGE_ASPECT_RATIOS: { value: AspectRatio; label: string }[] = [
   { value: '21:9', label: '超宽屏' },
 ];
 
+const XAI_IMAGINE_ASPECT_RATIOS: { value: AspectRatio; label: string }[] = [
+  { value: 'auto', label: '自动' },
+  { value: '1:1', label: '正方形' },
+  { value: '16:9', label: '宽屏' },
+  { value: '9:16', label: '竖屏' },
+  { value: '4:3', label: '横向' },
+  { value: '3:4', label: '竖向' },
+  { value: '3:2', label: '横向' },
+  { value: '2:3', label: '竖向' },
+  { value: '2:1', label: '横幅' },
+  { value: '1:2', label: '竖幅' },
+  { value: '19.5:9', label: '手机宽屏' },
+  { value: '9:19.5', label: '手机竖屏' },
+  { value: '20:9', label: '超宽屏' },
+  { value: '9:20', label: '超长竖屏' },
+];
+
 export const CUSTOM_IMAGE_SIZE_LIMITS = {
   multiple: 16,
   maxAspectRatio: 3,
@@ -321,6 +338,7 @@ export function getGptImageAdvancedParamsForModel(
 function getPresetSizeValues(presetId: string): OutputSize[] {
   if (presetId === 'gemini-3.1-flash-image-preview') return ['512', '1K', '2K', '4K'];
   if (presetId === 'gemini-3-pro-image-preview' || presetId === 'gpt-image-2') return ['1K', '2K', '4K'];
+  if (presetId === 'grok-imagine-image' || presetId === 'grok-imagine-image-quality') return ['1K', '2K'];
   return ['1K'];
 }
 
@@ -387,6 +405,9 @@ export function getAspectRatioOptions(model: ModelId, outputSize: OutputSize): A
       resolution: getGptImageResolution(outputSize, ar.value) || '',
     })).filter(option => isGptImage2ProResolutionSupported(option.resolution));
   }
+  if (presetId === 'grok-imagine-image' || presetId === 'grok-imagine-image-quality') {
+    return XAI_IMAGINE_ASPECT_RATIOS.map(ar => ({ ...ar, resolution: '' }));
+  }
   if (String(presetId).startsWith('gpt-image-2')) {
     return BANANA_ASPECT_RATIOS.map(ar => ({ ...ar, resolution: '' }));
   }
@@ -447,6 +468,10 @@ export function getDefaultRetryLayout(model: ModelId): { outputSize: OutputSize;
 
 export function isRetryLayoutCompatible(model: ModelId, outputSize: OutputSize, aspectRatio: AspectRatio): boolean {
   const presetId = getBuiltinPresetId(model);
+  if (presetId === 'grok-imagine-image' || presetId === 'grok-imagine-image-quality') {
+    return ['1K', '2K'].includes(outputSize)
+      && XAI_IMAGINE_ASPECT_RATIOS.some(option => option.value === aspectRatio);
+  }
   if (outputSize === 'auto' || aspectRatio === 'auto') {
     return supportsAutoLayout(model) && outputSize === 'auto' && aspectRatio === 'auto';
   }

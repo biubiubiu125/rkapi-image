@@ -92,6 +92,34 @@ describe('settings-storage model availability', () => {
     expect(hasConfiguredImageModel()).toBe(false);
   });
 
+  it('normalizes legacy Grok configurations to its immutable API contract', () => {
+    writeRegistry({
+      imageModels: [{
+        id: 'img-legacy-grok',
+        protocol: 'google',
+        name: 'Grok Imagine',
+        modelId: 'grok-imagine-image',
+        apiKey: 'key',
+        baseUrl: 'https://api.x.ai',
+        maxRefImages: 4,
+        maxOutputSize: '4K',
+        supportsAdvancedParams: true,
+        streamImages: true,
+      }],
+      textModels: [],
+      defaults: { textToImage: 'img-legacy-grok', imageToImage: 'img-legacy-grok' },
+    });
+
+    expect(loadRegistry().imageModels[0]).toMatchObject({
+      protocol: 'openai',
+      builtinPreset: 'grok-imagine-image',
+      maxRefImages: 1,
+      maxOutputSize: '2K',
+      supportsAdvancedParams: false,
+      streamImages: false,
+    });
+  });
+
   it('blocks prompt optimize when no complete text model exists', () => {
     writeRegistry({
       imageModels: [],

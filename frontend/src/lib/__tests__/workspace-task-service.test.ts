@@ -196,6 +196,39 @@ describe('submitTextToImage', () => {
       promptVariants,
     }));
   });
+
+  it('passes the Grok Imagine API flavor into the server task payload', async () => {
+    const job = makeJob();
+    const { actions } = createActions(job);
+    mockedResolveImageTaskProvider.mockReturnValue({
+      apiKey: 'xai-test-key',
+      baseUrl: 'https://api.x.ai',
+      protocol: 'openai',
+      modelId: 'grok-imagine-image',
+      imageApiFlavor: 'xai-imagine',
+    });
+
+    await submitTextToImage({
+      prompts: ['A neon city at night'],
+      outputSize: '2K',
+      aspectRatio: '19.5:9',
+      temperature: 1,
+      model: 'grok-imagine',
+      gptImageQuality: 'auto',
+      gptImageStyle: 'auto',
+      gptImageBackground: 'auto',
+      gptImageOutputFormat: 'png',
+      parallelCount: 1,
+    }, actions, vi.fn());
+
+    expect(mockedCreateFlyreqTask).toHaveBeenCalledWith(expect.objectContaining({
+      baseUrl: 'https://api.x.ai',
+      model: 'grok-imagine-image',
+      imageApiFlavor: 'xai-imagine',
+      outputSize: '2K',
+      aspectRatio: '19.5:9',
+    }));
+  });
 });
 
 describe('finalizeCompletedServerTask', () => {

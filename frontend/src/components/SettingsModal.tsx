@@ -43,6 +43,7 @@ import {
   getCompleteImageModels,
   getCompleteTextModels,
   getImageModelOutputSizes,
+  isXaiImaginePresetId,
   loadRegistry,
   saveRegistry,
   type DefaultModels,
@@ -94,9 +95,18 @@ function createImageModelDraft(): ImageModelConfig {
   };
 }
 
+function getExternalImagePresetId(config: ExternalModelConfig, fallback: ImageModelConfig['builtinPreset']) {
+  if (config.preset) return config.preset;
+  return isXaiImaginePresetId(config.modelId || '')
+    ? config.modelId as ImageModelConfig['builtinPreset']
+    : fallback;
+}
+
 function createExternalImageModelDraft(config: ExternalModelConfig): ImageModelConfig {
-  const preset = BUILTIN_IMAGE_PRESETS[config.preset || 'gpt-image-2'];
-  const protocol = config.protocol || preset.protocol;
+  const preset = BUILTIN_IMAGE_PRESETS[getExternalImagePresetId(config, 'gpt-image-2')];
+  const isXaiImagine = isXaiImaginePresetId(preset.id);
+  const protocol = isXaiImagine ? preset.protocol : (config.protocol || preset.protocol);
+  const isGptImage = preset.id === 'gpt-image-2';
   return {
     id: config.modelKey || generateModelId('img'),
     protocol,
@@ -105,16 +115,18 @@ function createExternalImageModelDraft(config: ExternalModelConfig): ImageModelC
     apiKey: config.apiKey || '',
     baseUrl: config.baseUrl || preset.baseUrl,
     builtinPreset: preset.id,
-    maxRefImages: config.maxRefImages || preset.maxRefImages,
-    maxOutputSize: config.maxOutputSize || preset.maxOutputSize,
-    supportsAdvancedParams: protocol === 'openai' ? preset.supportsAdvancedParams : false,
-    streamImages: protocol === 'openai' ? Boolean(config.streamImages ?? preset.streamImages) : false,
+    maxRefImages: isXaiImagine ? preset.maxRefImages : (config.maxRefImages || preset.maxRefImages),
+    maxOutputSize: isXaiImagine && config.maxOutputSize !== '1K' ? preset.maxOutputSize : (config.maxOutputSize || preset.maxOutputSize),
+    supportsAdvancedParams: protocol === 'openai' && isGptImage ? preset.supportsAdvancedParams : false,
+    streamImages: protocol === 'openai' && isGptImage ? Boolean(config.streamImages ?? preset.streamImages) : false,
   };
 }
 
 function patchImageModelFromExternal(model: ImageModelConfig, config: ExternalModelConfig): ImageModelConfig {
-  const preset = BUILTIN_IMAGE_PRESETS[config.preset || model.builtinPreset];
-  const protocol = config.protocol || model.protocol || preset.protocol;
+  const preset = BUILTIN_IMAGE_PRESETS[getExternalImagePresetId(config, model.builtinPreset)];
+  const isXaiImagine = isXaiImaginePresetId(preset.id);
+  const protocol = isXaiImagine ? preset.protocol : (config.protocol || model.protocol || preset.protocol);
+  const isGptImage = preset.id === 'gpt-image-2';
   return {
     ...model,
     protocol,
@@ -123,10 +135,12 @@ function patchImageModelFromExternal(model: ImageModelConfig, config: ExternalMo
     modelId: config.modelId || model.modelId || preset.modelId,
     baseUrl: config.baseUrl || model.baseUrl || preset.baseUrl,
     apiKey: config.apiKey ?? model.apiKey,
-    maxRefImages: config.maxRefImages || model.maxRefImages || preset.maxRefImages,
-    maxOutputSize: config.maxOutputSize || model.maxOutputSize || preset.maxOutputSize,
-    supportsAdvancedParams: protocol === 'openai' ? model.supportsAdvancedParams || preset.supportsAdvancedParams : false,
-    streamImages: protocol === 'openai' ? Boolean(config.streamImages ?? model.streamImages ?? preset.streamImages) : false,
+    maxRefImages: isXaiImagine ? preset.maxRefImages : (config.maxRefImages || model.maxRefImages || preset.maxRefImages),
+    maxOutputSize: isXaiImagine && config.maxOutputSize !== '1K'
+      ? preset.maxOutputSize
+      : (config.maxOutputSize || model.maxOutputSize || preset.maxOutputSize),
+    supportsAdvancedParams: protocol === 'openai' && isGptImage ? model.supportsAdvancedParams || preset.supportsAdvancedParams : false,
+    streamImages: protocol === 'openai' && isGptImage ? Boolean(config.streamImages ?? model.streamImages ?? preset.streamImages) : false,
   };
 }
 
@@ -315,7 +329,14 @@ export function SettingsModal({ isOpen, onClose, onApiKeyChange, externalModelCo
         next.supportsAdvancedParams = preset.supportsAdvancedParams;
         next.streamImages = preset.streamImages;
       }
-      if (patch.protocol === 'google') {
+      if (isXaiImaginePresetId(next.builtinPreset)) {
+        const preset = BUILTIN_IMAGE_PRESETS[next.builtinPreset];
+        next.protocol = preset.protocol;
+        next.maxRefImages = preset.maxRefImages;
+        next.maxOutputSize = next.maxOutputSize === '1K' ? '1K' : preset.maxOutputSize;
+        next.supportsAdvancedParams = false;
+        next.streamImages = false;
+      } else if (patch.protocol === 'google') {
         next.supportsAdvancedParams = false;
         next.streamImages = false;
       }
@@ -610,6 +631,7 @@ export function SettingsModal({ isOpen, onClose, onApiKeyChange, externalModelCo
                       <label className="text-xs text-muted-foreground">协议</label>
                       <Select
                         value={selectedImageModel.protocol}
+                        disabled={isXaiImaginePresetId(selectedImageModel.builtinPreset)}
                         onValueChange={(value) => handleUpdateImageModel(selectedImageModel.id, { protocol: value as ProviderProtocol })}
                         options={[
                           { value: 'google', label: 'Google' },
@@ -650,7 +672,14 @@ export function SettingsModal({ isOpen, onClose, onApiKeyChange, externalModelCo
                     </div>
                     <div className="space-y-2">
                       <label className="text-xs text-muted-foreground">最大参考图数量</label>
-                      <Input type="number" min={1} value={selectedImageModel.maxRefImages} onChange={(event) => handleUpdateImageModel(selectedImageModel.id, { maxRefImages: Number(event.target.value) || 1 })} />
+                      <Input
+                        type="number"
+                        min={1}
+                        max={isXaiImaginePresetId(selectedImageModel.builtinPreset) ? 1 : undefined}
+                        disabled={isXaiImaginePresetId(selectedImageModel.builtinPreset)}
+                        value={selectedImageModel.maxRefImages}
+                        onChange={(event) => handleUpdateImageModel(selectedImageModel.id, { maxRefImages: Number(event.target.value) || 1 })}
+                      />
                     </div>
                     <div className="space-y-2">
                       <label className="text-xs text-muted-foreground">最大分辨率</label>
@@ -660,7 +689,7 @@ export function SettingsModal({ isOpen, onClose, onApiKeyChange, externalModelCo
                         options={selectedImageOutputSizes.map((size) => ({ value: size, label: getOutputSizeLabel(size) }))}
                       />
                     </div>
-                    {selectedImageModel.protocol === 'openai' && (
+                    {selectedImageModel.protocol === 'openai' && selectedImageModel.builtinPreset === 'gpt-image-2' && (
                       <div className="grid gap-3 md:col-span-2">
                         <div className="flex items-center justify-between rounded-lg border px-3 py-2">
                           <div>
