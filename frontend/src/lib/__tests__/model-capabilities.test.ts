@@ -7,6 +7,7 @@ import {
   getOutputSizeLabel,
   getSizeOptions,
   getValidOutputSizes,
+  isRetryLayoutCompatible,
   supportsCustomSize,
   supportsGptImageAdvancedParams,
 } from '@/lib/model-capabilities';
@@ -92,5 +93,22 @@ describe('model capabilities', () => {
     expect(getAspectRatioOptions('grok-imagine-quality', '1K').map(option => option.value)).toContain('auto');
     expect(supportsGptImageAdvancedParams('grok-imagine-quality')).toBe(false);
     expect(supportsCustomSize('grok-imagine-quality')).toBe(false);
+  });
+
+  it('limits Banana 2 Lite to 1K while preserving all fourteen reference slots', () => {
+    localStorage.setItem('flyreq-model-registry', JSON.stringify({
+      imageModels: [{
+        id: 'banana-lite', protocol: 'google', name: 'Banana 2 Lite',
+        modelId: 'gemini-3.1-flash-lite-image', apiKey: 'test-key',
+        baseUrl: 'https://generativelanguage.googleapis.com',
+        builtinPreset: 'gemini-3.1-flash-lite-image', maxRefImages: 14,
+        maxOutputSize: '1K', supportsAdvancedParams: false,
+      }], textModels: [], defaults: { textToImage: 'banana-lite', imageToImage: 'banana-lite' },
+    }));
+
+    expect(getValidOutputSizes('banana-lite')).toEqual(['1K']);
+    expect(getAspectRatioOptions('banana-lite', '1K')).toHaveLength(14);
+    expect(isRetryLayoutCompatible('banana-lite', '1K', '16:9')).toBe(true);
+    expect(isRetryLayoutCompatible('banana-lite', '2K', '16:9')).toBe(false);
   });
 });

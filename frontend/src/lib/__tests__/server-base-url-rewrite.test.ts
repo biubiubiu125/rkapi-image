@@ -17,11 +17,13 @@ function loadRewriteHelpers(): {
     baseUrl: string;
     originalBaseUrl: string;
     rewritten: boolean;
+    rewriteCount: number;
   };
   resolveAndLogOutboundBaseUrl: (requestType: string, protocol: string, baseUrl: string, env: Record<string, string>) => {
     baseUrl: string;
     originalBaseUrl: string;
     rewritten: boolean;
+    rewriteCount: number;
   };
 } {
   const start = serverSource.indexOf('function normalizeBaseUrl');
@@ -39,11 +41,13 @@ function loadRewriteHelpers(): {
       baseUrl: string;
       originalBaseUrl: string;
       rewritten: boolean;
+      rewriteCount: number;
     };
     resolveAndLogOutboundBaseUrl: (requestType: string, protocol: string, baseUrl: string, env: Record<string, string>) => {
       baseUrl: string;
       originalBaseUrl: string;
       rewritten: boolean;
+      rewriteCount: number;
     };
   };
 }
@@ -85,15 +89,17 @@ describe('backend Base URL rewrite map', () => {
       baseUrl: 'http://new-api:3000',
       originalBaseUrl: 'https://flyreq.com',
       rewritten: true,
+      rewriteCount: 1,
     });
     expect(resolveOutboundBaseUrlDetails('openai', 'https://flyreq.com/v1', env)).toEqual({
       baseUrl: 'http://new-api:3000/v1',
       originalBaseUrl: 'https://flyreq.com/v1',
       rewritten: true,
+      rewriteCount: 1,
     });
   });
 
-  it('logs the original and rewritten Base URL only after a rewrite is applied', () => {
+  it('logs rewrite diagnostics for both applied and unapplied mappings', () => {
     const env = {
       FLYREQ_BASE_URL_REWRITE_MAP: '{"https://flyreq.com":"http://new-api:3000"}',
     };
@@ -105,10 +111,13 @@ describe('backend Base URL rewrite map', () => {
         originalBaseUrl: 'https://flyreq.com/v1',
         rewritten: true,
       });
-      expect(info).toHaveBeenCalledWith('[base-url-rewrite] 状态=已应用 请求=图片生成 协议=openai 原始Base URL=https://flyreq.com/v1 映射Base URL=http://new-api:3000/v1');
+      expect(info).toHaveBeenCalledWith('[base-url-rewrite] 状态=已应用 请求=图片生成 协议=openai 原始Base URL=https://flyreq.com/v1 最终Base URL=http://new-api:3000/v1 映射规则数=1');
 
       resolveAndLogOutboundBaseUrl('图片生成', 'openai', 'https://other.example.com/v1', env);
-      expect(info).toHaveBeenCalledTimes(1);
+      expect(info).toHaveBeenLastCalledWith('[base-url-rewrite] 状态=未命中 请求=图片生成 协议=openai 原始Base URL=https://other.example.com/v1 最终Base URL=https://other.example.com/v1 映射规则数=1');
+
+      resolveAndLogOutboundBaseUrl('图片生成', 'openai', 'https://other.example.com/v1', {});
+      expect(info).toHaveBeenLastCalledWith('[base-url-rewrite] 状态=未配置 请求=图片生成 协议=openai 原始Base URL=https://other.example.com/v1 最终Base URL=https://other.example.com/v1 映射规则数=0');
     } finally {
       info.mockRestore();
     }

@@ -8,7 +8,11 @@ const sharp = require('sharp');
 const { WebSocketServer } = require('ws');
 const { createXaiImagineRequestInit, getXaiImagineEndpoint } = require('./xai-imagine');
 
-const ENV_FILE_PATH = path.join(process.cwd(), '.env');
+const ENV_FILE_PATHS = [...new Set([
+  path.join(__dirname, '.env'),
+  path.join(process.cwd(), '.env'),
+  path.join(__dirname, '..', '.env'),
+])];
 const TASK_STATUS = {
   QUEUED: '排队中',
   LEGACY_QUEUED: 'queued',
@@ -39,8 +43,9 @@ const DEFAULT_IMAGE_MODEL_KEY_GUIDE = {
   ctaLabel: '前往 flyreq.com',
   url: 'https://flyreq.com',
 };
+const DEFAULT_OUTBOUND_USER_AGENT = 'FlyReq-Image-Studio/3.1.1';
 
-function parseEnvFile(filePath = ENV_FILE_PATH) {
+function parseEnvFile(filePath) {
   if (!fs.existsSync(filePath)) return {};
 
   const values = {};
@@ -60,6 +65,14 @@ function parseEnvFile(filePath = ENV_FILE_PATH) {
   return values;
 }
 
+/**
+ * 合并后端目录与项目根目录的环境变量文件。
+ * @returns 后加载文件覆盖先加载文件后的环境变量对象。
+ */
+function parseEnvFiles() {
+  return ENV_FILE_PATHS.reduce((values, filePath) => ({ ...values, ...parseEnvFile(filePath) }), {});
+}
+
 // .env 运行期读取加 1 秒 TTL 缓存：原本每次调用都同步 readFileSync，而
 // getQueueStats / 建任务 / 队列广播 / WS 订阅 / 出图前都走它（单次 getQueueStats
 // 触发 3 次读盘），在事件循环上造成不必要的同步 IO。1 秒对"改 .env 实时生效"
@@ -70,7 +83,7 @@ function getRuntimeEnv() {
   const now = Date.now();
   if (!_runtimeEnvCache.values || now >= _runtimeEnvCache.expiresAt) {
     _runtimeEnvCache = {
-      values: { ...process.env, ...parseEnvFile() },
+      values: { ...process.env, ...parseEnvFiles() },
       expiresAt: now + 1000,
     };
   }
@@ -78,7 +91,7 @@ function getRuntimeEnv() {
 }
 
 function loadEnvFile() {
-  const values = parseEnvFile();
+  const values = parseEnvFiles();
   for (const [key, value] of Object.entries(values)) {
     if (!(key in process.env)) {
       process.env[key] = value;
@@ -125,6 +138,46 @@ function appendProtocolApiPath(protocol, baseUrl, apiPath) {
 
 function resolveFlyreqApiBaseUrl() {
   return normalizeBaseUrl(getRuntimeEnv().FLYREQ_API_BASE_URL) || 'https://api.openai.com';
+}
+
+/**
+ * 解析用于上游请求的稳定服务标识，过滤非法字符以避免请求头注入。
+ * @param env 运行时环境变量，用于读取可配置的服务标识。
+ * @returns 可安全写入 User-Agent 请求头的服务标识。
+ */
+function resolveOutboundUserAgent(env = getRuntimeEnv()) {
+  const configured = sanitizeOutboundHeaderValue(String(env.FLYREQ_OUTBOUND_USER_AGENT || ''))
+    .trim()
+    .slice(0, 256);
+  return configured || DEFAULT_OUTBOUND_USER_AGENT;
+}
+
+/**
+ * 将 HTTP 请求头中不允许出现的控制字符替换为空格，避免 Headers 构造失败。
+ * @param value 待清理的请求头值。
+ * @returns 不含 HTTP 控制字符的请求头值。
+ */
+function sanitizeOutboundHeaderValue(value) {
+  let sanitized = '';
+  for (const character of value) {
+    const code = character.charCodeAt(0);
+    sanitized += code <= 31 || code === 127 ? ' ' : character;
+  }
+  return sanitized;
+}
+
+/**
+ * 合并上游请求头并确保携带稳定的服务标识，不覆盖调用方显式提供的 User-Agent。
+ * @param headers 调用方提供的请求头。
+ * @param env 运行时环境变量，用于读取服务标识配置。
+ * @returns 可直接传给 fetch 的完整请求头对象。
+ */
+function createOutboundHeaders(headers, env = getRuntimeEnv()) {
+  const mergedHeaders = new Headers(headers || {});
+  if (!mergedHeaders.has('user-agent')) {
+    mergedHeaders.set('user-agent', resolveOutboundUserAgent(env));
+  }
+  return mergedHeaders;
 }
 
 function parseBaseUrlRewriteMap(rawValue) {
@@ -182,15 +235,15 @@ function resolveOutboundBaseUrlDetails(protocol, baseUrl, env = getRuntimeEnv())
       const rewrittenBaseUrl = sourceVersionSuffix && !targetVersionSuffix
         ? `${to}${sourceVersionSuffix}`
         : to;
-      return { baseUrl: rewrittenBaseUrl, originalBaseUrl: normalizedBaseUrl, rewritten: true };
+      return { baseUrl: rewrittenBaseUrl, originalBaseUrl: normalizedBaseUrl, rewritten: true, rewriteCount: rewrites.length };
     }
   }
 
-  return { baseUrl: normalizedBaseUrl, originalBaseUrl: normalizedBaseUrl, rewritten: false };
+  return { baseUrl: normalizedBaseUrl, originalBaseUrl: normalizedBaseUrl, rewritten: false, rewriteCount: rewrites.length };
 }
 
 /**
- * 为即将发送到上游的请求解析 Base URL，并记录已实际应用的映射关系。
+ * 为即将发送到上游的请求解析 Base URL，并记录完整的映射诊断信息。
  * @param requestType 上游请求类别，用于在日志中区分图片生成、文本代理或模型列表请求。
  * @param protocol 上游 API 协议标识。
  * @param baseUrl 用户配置的原始 Base URL。
@@ -199,10 +252,21 @@ function resolveOutboundBaseUrlDetails(protocol, baseUrl, env = getRuntimeEnv())
  */
 function resolveAndLogOutboundBaseUrl(requestType, protocol, baseUrl, env = getRuntimeEnv()) {
   const details = resolveOutboundBaseUrlDetails(protocol, baseUrl, env);
-  if (details.rewritten) {
-    console.info(`[base-url-rewrite] 状态=已应用 请求=${requestType} 协议=${protocol} 原始Base URL=${details.originalBaseUrl} 映射Base URL=${details.baseUrl}`);
-  }
+  const status = details.rewritten ? '已应用' : details.rewriteCount > 0 ? '未命中' : '未配置';
+  console.info(`[base-url-rewrite] 状态=${status} 请求=${requestType} 协议=${protocol} 原始Base URL=${details.originalBaseUrl} 最终Base URL=${details.baseUrl} 映射规则数=${details.rewriteCount}`);
   return details;
+}
+
+/**
+ * 在服务启动时输出实际加载的 Base URL 映射，排除部署环境未挂载配置文件的可能。
+ * @returns 无返回值；日志仅包含映射地址，不包含 API Key 等敏感信息。
+ */
+function logBaseUrlRewriteConfiguration() {
+  const rewrites = parseBaseUrlRewriteMap(getRuntimeEnv().FLYREQ_BASE_URL_REWRITE_MAP);
+  const mappings = rewrites
+    .map(rewrite => `${normalizeBaseUrl(rewrite.from)}=>${normalizeBaseUrl(rewrite.to)}`)
+    .join(' | ');
+  console.info(`[base-url-rewrite] 启动配置 规则数=${rewrites.length}${mappings ? ` 规则=${mappings}` : ''}`);
 }
 
 function getUrlOrigin(value) {
@@ -366,6 +430,31 @@ function getClientIp(req) {
 
 function hashApiKey(apiKey) {
   return createHash('sha256').update(String(apiKey || '')).digest('hex').slice(0, 24);
+}
+
+/**
+ * 解析图片模板到实际模型 ID 的运行时环境变量映射。
+ * @param {Record<string, string>} env 当前运行时环境变量。
+ * @returns {Record<string, string>} 经白名单过滤后的模板模型 ID 映射。
+ */
+function resolveImagePresetModelIds(env = getRuntimeEnv()) {
+  const raw = String(env.FLYREQ_IMAGE_PRESET_MODEL_IDS || '').trim();
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+    const validIds = new Set([
+      'gemini-2.5-flash-image', 'gemini-3-pro-image-preview', 'gemini-3.1-flash-image-preview',
+      'gemini-3.1-flash-lite-image', 'gpt-image-2', 'grok-imagine-image', 'grok-imagine-image-quality',
+    ]);
+    const result = {};
+    for (const [presetId, value] of Object.entries(parsed)) {
+      if (validIds.has(presetId) && typeof value === 'string' && value.trim()) result[presetId] = value.trim();
+    }
+    return result;
+  } catch {
+    return {};
+  }
 }
 
 function delay(ms) {
@@ -1515,9 +1604,11 @@ async function requestGptImage(apiKey, request, resolvedSize, options = {}) {
     ? '/v1/images/edits'
     : '/v1/images/generations';
   const stream = Boolean(options.stream);
+  const url = appendProtocolApiPath('openai', baseUrl, endpoint);
+  logImageRequestUrl('openai', request.model, url);
 
   const response = await fetchWithTimeout(
-    appendProtocolApiPath('openai', baseUrl, endpoint),
+    url,
     createGptImageRequestInit(apiKey, request, resolvedSize, { ...options, stream })
   );
   const usesSse = isImageEventStreamResponse(response);
@@ -1536,6 +1627,7 @@ async function requestXaiImagineImage(apiKey, request, options = {}) {
   const baseUrl = options.baseUrl || 'https://api.x.ai';
   const endpoint = getXaiImagineEndpoint(request.mode);
   const url = appendProtocolApiPath('openai', baseUrl, endpoint);
+  logImageRequestUrl('xai-imagine', request.model, url);
 
   for (let attempt = 0; attempt <= XAI_IMAGINE_MAX_RETRIES; attempt++) {
     await waitForXaiImagineRequestSlot(apiKey);
@@ -1587,7 +1679,11 @@ async function fetchWithTimeout(url, init) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   try {
-    return await fetch(url, { ...init, signal: controller.signal });
+    return await fetch(url, {
+      ...init,
+      headers: createOutboundHeaders(init?.headers),
+      signal: controller.signal,
+    });
   } finally {
     clearTimeout(timeout);
   }
@@ -1626,7 +1722,9 @@ async function generateFlyreqGeminiImage(apiKey, request, options = {}) {
     { text: request.prompt },
     ...request.images.map(img => ({ inlineData: { data: img.data, mimeType: img.mimeType } })),
   ];
-  const response = await fetchWithTimeout(appendProtocolApiPath('google', baseUrl, `/v1beta/models/${encodeURIComponent(request.model)}:generateContent`), {
+  const url = appendProtocolApiPath('google', baseUrl, `/v1beta/models/${encodeURIComponent(request.model)}:generateContent`);
+  logImageRequestUrl('google', request.model, url);
+  const response = await fetchWithTimeout(url, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -1698,6 +1796,17 @@ function recordTaskSseResponse(taskId, requestCount) {
   result.sse = { responses: previousResponses + 1, requests };
   db.prepare('UPDATE tasks SET result_json = ? WHERE id = ?').run(JSON.stringify(result), taskId);
   broadcastTask(taskId);
+}
+
+/**
+ * 记录每次图片生成实际发往上游的完整请求地址。
+ * @param protocol 图片生成协议或图片 API 类型。
+ * @param model 实际发送给上游的模型 ID。
+ * @param url 最终请求 URL，不包含 API Key 等敏感信息。
+ * @returns 无返回值。
+ */
+function logImageRequestUrl(protocol, model, url) {
+  console.info(`[image-request] 协议=${protocol} 模型=${model} 最终请求URL=${getSafeUrlLabel(url)}`);
 }
 
 async function generateSingleImage(apiKey, request, taskId, index) {
@@ -2076,6 +2185,7 @@ async function handleApi(req, res, pathname) {
           promptGalleryMode: mode,
           promptGalleryPasswordEnabled: String(env.PROMPT_GALLERY_PASSWORD || '').trim().length > 0,
           imageModelKeyGuide: resolveImageModelKeyGuide(env),
+          imagePresetModelIds: resolveImagePresetModelIds(env),
         },
         {
           'Cache-Control': 'no-store, no-cache, must-revalidate',
@@ -2309,6 +2419,7 @@ async function handleApi(req, res, pathname) {
 
 initDatabase();
 ensureImageDir();
+logBaseUrlRewriteConfiguration();
 cleanupExpiredTasks();
 setInterval(cleanupExpiredTasks, CLEANUP_INTERVAL_MS).unref();
 setInterval(cleanupRateLimitBuckets, CLEANUP_INTERVAL_MS).unref();

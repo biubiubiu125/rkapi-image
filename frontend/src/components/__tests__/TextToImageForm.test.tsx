@@ -50,6 +50,7 @@ describe('TextToImageForm', () => {
     renderForm({ onSubmit })
 
     expect(screen.getByPlaceholderText('描述你想要生成的图像...')).toBeInTheDocument()
+    expect(screen.getByText('发送：Enter · 换行：Shift + Enter')).toBeInTheDocument()
   })
 
   it('submit button is disabled when prompt is empty', () => {
@@ -71,13 +72,13 @@ describe('TextToImageForm', () => {
     expect(submitButton).not.toBeDisabled()
   })
 
-  it('calls onSubmit with prompt when Shift+Enter is pressed', () => {
+  it('calls onSubmit with prompt when Enter is pressed by default', () => {
     const onSubmit = vi.fn()
     renderForm({ onSubmit })
 
     const textarea = screen.getByPlaceholderText('描述你想要生成的图像...')
     fireEvent.change(textarea, { target: { value: 'A beautiful sunset' } })
-    fireEvent.keyDown(textarea, { key: 'Enter', shiftKey: true })
+    fireEvent.keyDown(textarea, { key: 'Enter' })
 
     expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({
       prompts: ['A beautiful sunset'],
@@ -101,7 +102,7 @@ describe('TextToImageForm', () => {
 
     const textarea = screen.getByPlaceholderText('描述你想要生成的图像...')
     fireEvent.change(textarea, { target: { value: 'A beautiful sunset' } })
-    fireEvent.keyDown(textarea, { key: 'Enter', shiftKey: true })
+    fireEvent.keyDown(textarea, { key: 'Enter' })
 
     expect(onSubmit).not.toHaveBeenCalled()
     expect(textarea).toHaveValue('A beautiful sunset')
@@ -124,7 +125,7 @@ describe('TextToImageForm', () => {
 
     const textarea = screen.getByPlaceholderText('描述你想要生成的图像...')
     await screen.findByTitle('图像参数')
-    fireEvent.keyDown(textarea, { key: 'Enter', shiftKey: true })
+    fireEvent.keyDown(textarea, { key: 'Enter' })
 
     expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({
       model: 'flyreq-gpt-image-2',
@@ -135,15 +136,63 @@ describe('TextToImageForm', () => {
     }))
   })
 
-  it('does NOT submit when plain Enter is pressed', () => {
+  it('does NOT submit when Shift+Enter is pressed by default', () => {
     const onSubmit = vi.fn()
     renderForm({ onSubmit })
 
     const textarea = screen.getByPlaceholderText('描述你想要生成的图像...')
     fireEvent.change(textarea, { target: { value: 'A beautiful sunset' } })
-    fireEvent.keyDown(textarea, { key: 'Enter', shiftKey: false })
+    fireEvent.keyDown(textarea, { key: 'Enter', shiftKey: true })
 
     expect(onSubmit).not.toHaveBeenCalled()
+  })
+
+  it('uses and persists the selected Shift+Enter submission shortcut', () => {
+    const onSubmit = vi.fn()
+    const { unmount } = renderForm({ onSubmit })
+
+    fireEvent.click(screen.getByRole('button', { name: '发送快捷键' }))
+    fireEvent.click(screen.getByText('Shift + Enter 发送'))
+
+    expect(localStorage.getItem('flyreq-prompt-submission-shortcut')).toBe('shift-enter')
+    expect(screen.getByText('发送：Shift + Enter · 换行：Enter')).toBeInTheDocument()
+    expect(dispatchImageActionToast).toHaveBeenCalledWith('已设置：Shift + Enter 发送，Enter 换行', 'success')
+
+    const textarea = screen.getByPlaceholderText('描述你想要生成的图像...')
+    fireEvent.change(textarea, { target: { value: 'A beautiful sunset' } })
+    fireEvent.keyDown(textarea, { key: 'Enter' })
+    expect(onSubmit).not.toHaveBeenCalled()
+
+    fireEvent.keyDown(textarea, { key: 'Enter', shiftKey: true })
+    expect(onSubmit).toHaveBeenCalled()
+
+    unmount()
+    renderForm({ onSubmit: vi.fn() })
+    expect(screen.getByTitle('发送快捷键：Shift + Enter 发送，Enter 换行')).toBeInTheDocument()
+  })
+
+  it('requires clicking the send button on small viewports', () => {
+    const originalInnerWidth = window.innerWidth
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 375 })
+    const onSubmit = vi.fn()
+    const { unmount } = renderForm({ onSubmit })
+
+    try {
+      const textarea = screen.getByPlaceholderText('描述你想要生成的图像...')
+      fireEvent.change(textarea, { target: { value: 'A beautiful sunset' } })
+      fireEvent.keyDown(textarea, { key: 'Enter' })
+
+      expect(onSubmit).not.toHaveBeenCalled()
+      expect(screen.getByText('发送：点击发送按钮 · 换行：Enter 或 Shift + Enter')).toBeInTheDocument()
+
+      const submitButton = screen.getAllByRole('button').find(button => button.querySelector('.lucide-arrow-up'))
+      fireEvent.click(submitButton!)
+      expect(onSubmit).toHaveBeenCalled()
+    } finally {
+      unmount()
+      Object.defineProperty(window, 'innerWidth', { configurable: true, value: originalInnerWidth })
+      fireEvent(window, new Event('resize'))
+    }
   })
 
   it('shows configuration prompt when disabled prop is true', () => {

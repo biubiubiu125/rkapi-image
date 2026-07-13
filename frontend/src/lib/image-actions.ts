@@ -35,6 +35,7 @@ export interface ImageActionToastDetail {
 
 export interface UseAsImageReferenceDetail {
   refImages: RefImageData[];
+  prompt?: string;
 }
 
 const TOAST_EVENT = 'flyreq-image-action-toast';
@@ -260,6 +261,35 @@ export async function applyImagePayloadAsReference(payload: ImageActionPayload):
   touchAssetSilently(payload.assetId);
   window.dispatchEvent(new CustomEvent<UseAsImageReferenceDetail>(USE_AS_REFERENCE_EVENT, {
     detail: { refImages: [refImage] },
+  }));
+}
+
+/**
+ * 将标注编辑器输出的图片和用户指令发送到图生图工作台。
+ * @param dataUrl 标注完成后的 PNG Data URL。
+ * @param prompt 用户针对圈选区域输入的编辑指令。
+ * @param options 输出图片的名称和展示标签。
+ * @returns 标注图片完成压缩并成功派发工作台事件后结束。
+ */
+export async function applyAnnotatedImageAsReference(
+  dataUrl: string,
+  prompt: string,
+  options: { name?: string; badge?: string } = {},
+): Promise<void> {
+  const file = new File([dataUrlToBlob(dataUrl)], options.name || '标注图片.png', { type: 'image/png' });
+  const optimized = await prepareUploadImage(file);
+  if (optimized.processedSize > MAX_REFERENCE_UPLOAD_SIZE_BYTES) {
+    throw new Error('标注图片压缩后仍超过 10MB，无法作为图生图参考');
+  }
+  const refImage: RefImageData = {
+    id: makeId('annotation-ref'),
+    name: optimized.name || options.name || '标注图片',
+    dataUrl: optimized.dataUrl,
+    mimeType: optimized.mimeType,
+    badge: options.badge || '标注',
+  };
+  window.dispatchEvent(new CustomEvent<UseAsImageReferenceDetail>(USE_AS_REFERENCE_EVENT, {
+    detail: { refImages: [refImage], prompt: prompt.trim() },
   }));
 }
 

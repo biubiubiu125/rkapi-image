@@ -35,6 +35,12 @@ interface DownloadProgressSummary {
   percent: number;
 }
 
+interface ImageResolution {
+  imageRef: string;
+  width: number;
+  height: number;
+}
+
 function formatBytes(bytes: number): string {
   if (!Number.isFinite(bytes) || bytes <= 0) return '0 KB';
   if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`;
@@ -83,6 +89,7 @@ export const CompletedJobCard = memo(function CompletedJobCard({ job, onClear, o
   const [copyMenuOpen, setCopyMenuOpen] = useState(false);
   const [referenceMenuOpen, setReferenceMenuOpen] = useState(false);
   const [retryingDownload, setRetryingDownload] = useState(false);
+  const [primaryImageResolution, setPrimaryImageResolution] = useState<ImageResolution | null>(null);
 
   const sourceImages = useMemo(() => job.images || (job.imageData ? [job.imageData] : []), [job.imageData, job.images]);
   const [images, setImages] = useState(sourceImages);
@@ -160,6 +167,9 @@ export const CompletedJobCard = memo(function CompletedJobCard({ job, onClear, o
   }, [resolveImageAt]);
 
   const visiblePreviewImages = images.slice(0, 3);
+  const displayedPrimaryImageResolution = primaryImageResolution?.imageRef === images[0]
+    ? primaryImageResolution
+    : null;
   const isMultiple = sourceImages.length > 1;
   const supportsTemperature = !isGptImageModel(job.model);
   const outputSizeLabel = job.custom_size || getOutputSizeLabel(job.output_size);
@@ -171,10 +181,21 @@ export const CompletedJobCard = memo(function CompletedJobCard({ job, onClear, o
   });
   // 单独跟踪每个可见缩略图的加载状态，避免单图失败导致全部不显示
   const [loadedImageIndices, setLoadedImageIndices] = useState<Set<number>>(new Set());
-  const handleImageLoad = useCallback((index: number) => {
+  /**
+   * 在首张结果图加载后记录浏览器解码得到的真实像素尺寸，并同步缩略图加载状态。
+   * @param index 当前加载图片在任务结果中的索引。
+   * @param imageRef 当前加载图片的引用，用于避免任务图片更新后显示旧尺寸。
+   * @param event 图片加载事件，用于读取自然宽高。
+   * @returns 无返回值。
+   */
+  const handleImageLoad = useCallback((index: number, imageRef: string, event: React.SyntheticEvent<HTMLImageElement>) => {
     setLoadedImageIndices(prev => new Set(prev).add(index));
     // 第一张图加载完成时同步更新lazyLoad状态
     if (index === 0) {
+      const { naturalWidth, naturalHeight } = event.currentTarget;
+      if (naturalWidth > 0 && naturalHeight > 0) {
+        setPrimaryImageResolution({ imageRef, width: naturalWidth, height: naturalHeight });
+      }
       lazyLoad.handleImageLoad();
     }
   }, [lazyLoad]);
@@ -221,7 +242,12 @@ export const CompletedJobCard = memo(function CompletedJobCard({ job, onClear, o
     }
   };
 
-  const useAsReference = (index: number = 0) => {
+  /**
+   * 将指定生成结果作为下一次图生图的参考图片。
+   * @param index 结果图片在当前任务中的索引，默认使用第一张。
+   * @returns 无返回值。
+   */
+  const handleUseAsReference = (index: number = 0) => {
     const payload = actionPayloads[index];
     if (!payload) return;
     void runImageAction('use-as-reference', payload);
@@ -277,7 +303,7 @@ export const CompletedJobCard = memo(function CompletedJobCard({ job, onClear, o
                       transform: `rotate(${(index - 1) * 5}deg) translate(${(index - 1) * 2}px, ${(index - 1) * 2}px)`,
                       zIndex: 3 - index,
                     }}
-                    onLoad={() => handleImageLoad(index)}
+                    onLoad={(event) => handleImageLoad(index, image, event)}
                   />
                 ))}
                 {!lazyLoad.isLoaded && (
@@ -293,7 +319,7 @@ export const CompletedJobCard = memo(function CompletedJobCard({ job, onClear, o
                   src={lazyLoad.isVisible ? (getImageSrc(images[0]) || undefined) : undefined}
                   alt="生成的图像"
                   className={`h-full w-full object-cover transition-opacity duration-300 ${lazyLoad.isLoaded ? 'opacity-100' : 'opacity-0'}`}
-                  onLoad={lazyLoad.handleImageLoad}
+                  onLoad={(event) => handleImageLoad(0, images[0], event)}
                 />
                 {!lazyLoad.isLoaded && (
                   <div className="absolute inset-0 animate-pulse bg-gradient-to-r from-muted via-muted/50 to-muted" />
@@ -349,6 +375,7 @@ export const CompletedJobCard = memo(function CompletedJobCard({ job, onClear, o
               <span>·</span>
               {outputSizeLabel}
               {job.aspect_ratio !== 'auto' && <><span>·</span><span>{job.aspect_ratio}</span></>}
+              {displayedPrimaryImageResolution && <><span>·</span><span title="图片真实分辨率">{displayedPrimaryImageResolution.width}×{displayedPrimaryImageResolution.height}</span></>}
               {supportsTemperature && <><span>·</span><Thermometer className="w-3 h-3" /><span>{job.temperature?.toFixed(2) ?? 1}</span></>}
               {isMultiple && <><span>·</span><span className="font-medium text-primary">x{sourceImages.length}{job.parallelCount && job.parallelCount > sourceImages.length ? `/${job.parallelCount}` : ''}</span></>}
             </p>
@@ -458,14 +485,14 @@ export const CompletedJobCard = memo(function CompletedJobCard({ job, onClear, o
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end">
                   {sourceImages.map((_, index) => (
-                    <DropdownMenuItem key={index} onClick={() => useAsReference(index)}>
+                    <DropdownMenuItem key={index} onClick={() => handleUseAsReference(index)}>
                       作为参考图 {index + 1}
                     </DropdownMenuItem>
                   ))}
                 </DropdownMenuContent>
               </DropdownMenu>
             ) : (
-              <Button variant="ghost" size="icon-sm" onClick={() => useAsReference(0)} title="作为图生图参考">
+                <Button variant="ghost" size="icon-sm" onClick={() => handleUseAsReference(0)} title="作为图生图参考">
                 <Wand2 className="w-4 h-4" />
               </Button>
             )}

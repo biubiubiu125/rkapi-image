@@ -1321,14 +1321,19 @@ export function CanvasEditor({ projectId, onBack, onRequireApiKey, showToast, sh
           input: [{ role: "user", content: [{ type: "input_text" as const, text: `${systemPrompt}\n\n---\n\n用户输入：\n${prompt}` }] }],
         };
 
-        const response = await fetch("/api/nova/proxy/text", {
+        const response = await fetch("/api/flyreq/proxy/text", {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            "x-nova-base-url": textModel.baseUrl,
-            "x-nova-api-key": textModel.apiKey,
           },
-          body: JSON.stringify(body),
+          body: JSON.stringify({
+            protocol: textModel.protocol,
+            baseUrl: textModel.baseUrl,
+            apiKey: textModel.apiKey,
+            model: textModel.modelId,
+            stream: true,
+            requestBody: body,
+          }),
           signal: controller.signal,
         });
 
