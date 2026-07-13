@@ -215,6 +215,7 @@ function VirtualJobList({
 
   const virtualizer = useVirtualizer({
     count: active ? jobs.length : 0,
+    getItemKey: index => jobs[index]?.id ?? index,
     getScrollElement: () => parentRef.current,
     estimateSize: () => 120,
     overscan: 5,

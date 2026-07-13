@@ -43,6 +43,7 @@ const DEFAULT_IMAGE_MODEL_KEY_GUIDE = {
   ctaLabel: '前往 flyreq.com',
   url: 'https://flyreq.com',
 };
+const DEFAULT_OUTBOUND_USER_AGENT = 'FlyReq-Image-Studio/3.1.1';
 
 function parseEnvFile(filePath) {
   if (!fs.existsSync(filePath)) return {};
@@ -137,6 +138,46 @@ function appendProtocolApiPath(protocol, baseUrl, apiPath) {
 
 function resolveFlyreqApiBaseUrl() {
   return normalizeBaseUrl(getRuntimeEnv().FLYREQ_API_BASE_URL) || 'https://api.openai.com';
+}
+
+/**
+ * 解析用于上游请求的稳定服务标识，过滤非法字符以避免请求头注入。
+ * @param env 运行时环境变量，用于读取可配置的服务标识。
+ * @returns 可安全写入 User-Agent 请求头的服务标识。
+ */
+function resolveOutboundUserAgent(env = getRuntimeEnv()) {
+  const configured = sanitizeOutboundHeaderValue(String(env.FLYREQ_OUTBOUND_USER_AGENT || ''))
+    .trim()
+    .slice(0, 256);
+  return configured || DEFAULT_OUTBOUND_USER_AGENT;
+}
+
+/**
+ * 将 HTTP 请求头中不允许出现的控制字符替换为空格，避免 Headers 构造失败。
+ * @param value 待清理的请求头值。
+ * @returns 不含 HTTP 控制字符的请求头值。
+ */
+function sanitizeOutboundHeaderValue(value) {
+  let sanitized = '';
+  for (const character of value) {
+    const code = character.charCodeAt(0);
+    sanitized += code <= 31 || code === 127 ? ' ' : character;
+  }
+  return sanitized;
+}
+
+/**
+ * 合并上游请求头并确保携带稳定的服务标识，不覆盖调用方显式提供的 User-Agent。
+ * @param headers 调用方提供的请求头。
+ * @param env 运行时环境变量，用于读取服务标识配置。
+ * @returns 可直接传给 fetch 的完整请求头对象。
+ */
+function createOutboundHeaders(headers, env = getRuntimeEnv()) {
+  const mergedHeaders = new Headers(headers || {});
+  if (!mergedHeaders.has('user-agent')) {
+    mergedHeaders.set('user-agent', resolveOutboundUserAgent(env));
+  }
+  return mergedHeaders;
 }
 
 function parseBaseUrlRewriteMap(rawValue) {
@@ -1638,7 +1679,11 @@ async function fetchWithTimeout(url, init) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   try {
-    return await fetch(url, { ...init, signal: controller.signal });
+    return await fetch(url, {
+      ...init,
+      headers: createOutboundHeaders(init?.headers),
+      signal: controller.signal,
+    });
   } finally {
     clearTimeout(timeout);
   }

@@ -13,6 +13,8 @@ import { AgentAssetPickerDialog, AgentTextAssetPickerDialog } from '@/components
 import { GenerationParamsBar, type GenerationParamsValue } from '@/components/GenerationParamsBar';
 import { ConfirmDialog } from '@/components/workspace/dialogs/ConfirmDialog';
 import { usePromptOptimizeSetting } from '@/hooks/usePromptOptimizeSetting';
+import { getEffectivePromptSubmissionShortcutLabels, usePromptSubmissionShortcut } from '@/hooks/usePromptSubmissionShortcut';
+import { PromptSubmissionShortcutMenu } from '@/components/PromptSubmissionShortcutMenu';
 import { streamPromptOptimize, type StreamPromptOptimizeHandle } from '@/lib/prompt-optimize-client';
 import { loadJsonFromStorage, saveJsonToStorage } from '@/lib/settings-storage';
 import { requireDefaultConfiguredTextModel } from '@/lib/model-endpoints';
@@ -151,6 +153,8 @@ export function ImageGenerationWorkbench({
   const [optimizeError, setOptimizeError] = useState<string | null>(null);
   const optimizeHandleRef = useRef<StreamPromptOptimizeHandle | null>(null);
   const { enabled: promptOptimizeEnabled } = usePromptOptimizeSetting();
+  const { submissionShortcut, isSmallViewport, updateSubmissionShortcut } = usePromptSubmissionShortcut();
+  const shortcutLabels = getEffectivePromptSubmissionShortcutLabels(submissionShortcut, isSmallViewport);
 
   const modelLimit = MODEL_IMAGE_LIMITS[model] || { max: 1, description: '最多 1 张参考图片' };
   const maxImages = modelLimit.max;
@@ -581,8 +585,15 @@ export function ImageGenerationWorkbench({
     onDraftConsumed?.();
   };
 
+  /**
+   * 根据用户选择的快捷键提交提示词，未匹配的 Enter 按键保留为换行。
+   * @param e 文本框键盘事件。
+   * @returns 无返回值。
+   */
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && e.shiftKey) {
+    if (isSmallViewport) return;
+    const shouldSubmit = submissionShortcut === 'enter' ? !e.shiftKey : e.shiftKey;
+    if (e.key === 'Enter' && shouldSubmit && !e.ctrlKey && !e.metaKey && !e.nativeEvent.isComposing) {
       e.preventDefault();
       handleSubmit();
     }
@@ -676,6 +687,9 @@ export function ImageGenerationWorkbench({
               rows={3}
               className="resize-none rounded-none border-0 bg-transparent px-3 pt-3 placeholder:text-placeholder focus-visible:border-0 focus-visible:ring-0 sm:px-4 sm:pt-4"
             />
+            <p className="px-3 pb-1 text-xs text-muted-foreground sm:px-4" aria-live="polite">
+              发送：{shortcutLabels.submission} · 换行：{shortcutLabels.newline}
+            </p>
 
             <div className="px-3 pt-2 pb-2 sm:px-4">
               <GenerationParamsBar
@@ -719,6 +733,7 @@ export function ImageGenerationWorkbench({
             )}
 
             <div className="ml-auto flex w-full justify-end gap-2 px-3 pb-2 sm:w-auto sm:px-4">
+              <PromptSubmissionShortcutMenu value={submissionShortcut} isSmallViewport={isSmallViewport} onValueChange={updateSubmissionShortcut} />
               <Button variant="ghost" size="icon" onClick={() => setQuickPromptOpen(true)} title="快速提示词">
                 <Zap className="w-4 h-4" />
               </Button>

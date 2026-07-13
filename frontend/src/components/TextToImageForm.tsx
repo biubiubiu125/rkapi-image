@@ -14,6 +14,8 @@ import { AgentTextAssetPickerDialog } from '@/components/agent/AgentAssetPickerD
 import { GenerationParamsBar, type GenerationParamsValue } from '@/components/GenerationParamsBar';
 import { ConfirmDialog } from '@/components/workspace/dialogs/ConfirmDialog';
 import { usePromptOptimizeSetting } from '@/hooks/usePromptOptimizeSetting';
+import { getEffectivePromptSubmissionShortcutLabels, usePromptSubmissionShortcut } from '@/hooks/usePromptSubmissionShortcut';
+import { PromptSubmissionShortcutMenu } from '@/components/PromptSubmissionShortcutMenu';
 import { addTextAsset, type TextAsset } from '@/lib/asset-store';
 import { dispatchImageActionToast } from '@/lib/image-actions';
 import { streamPromptOptimize, type StreamPromptOptimizeHandle } from '@/lib/prompt-optimize-client';
@@ -99,6 +101,8 @@ export function TextToImageForm({ onSubmit, disabled = false, onDraftConsumed, o
   const [optimizeError, setOptimizeError] = useState<string | null>(null);
   const optimizeHandleRef = useRef<StreamPromptOptimizeHandle | null>(null);
   const { enabled: promptOptimizeEnabled } = usePromptOptimizeSetting();
+  const { submissionShortcut, isSmallViewport, updateSubmissionShortcut } = usePromptSubmissionShortcut();
+  const shortcutLabels = getEffectivePromptSubmissionShortcutLabels(submissionShortcut, isSmallViewport);
 
   const handleOptimize = useCallback(() => {
     if (!prompt.trim()) return;
@@ -299,8 +303,15 @@ export function TextToImageForm({ onSubmit, disabled = false, onDraftConsumed, o
     }
   }, [prompt]);
 
+  /**
+   * 根据用户选择的快捷键提交提示词，未匹配的 Enter 按键保留为换行。
+   * @param e 文本框键盘事件。
+   * @returns 无返回值。
+   */
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && e.shiftKey) {
+    if (isSmallViewport) return;
+    const shouldSubmit = submissionShortcut === 'enter' ? !e.shiftKey : e.shiftKey;
+    if (e.key === 'Enter' && shouldSubmit && !e.ctrlKey && !e.metaKey && !e.nativeEvent.isComposing) {
       e.preventDefault();
       handleSubmit();
     }
@@ -358,6 +369,9 @@ export function TextToImageForm({ onSubmit, disabled = false, onDraftConsumed, o
               rows={3}
               className="border-0 bg-transparent resize-none focus-visible:ring-0 focus-visible:border-0 px-3 pt-3 sm:px-4 sm:pt-4 placeholder:text-placeholder"
             />
+            <p className="px-3 pb-1 text-xs text-muted-foreground sm:px-4" aria-live="polite">
+              发送：{shortcutLabels.submission} · 换行：{shortcutLabels.newline}
+            </p>
 
             <div className="px-3 pt-2 pb-2 sm:px-4">
               <GenerationParamsBar
@@ -367,6 +381,7 @@ export function TextToImageForm({ onSubmit, disabled = false, onDraftConsumed, o
             </div>
 
           <div className="ml-auto flex w-full justify-end gap-2 px-3 pb-2 sm:w-auto sm:px-4">
+            <PromptSubmissionShortcutMenu value={submissionShortcut} isSmallViewport={isSmallViewport} onValueChange={updateSubmissionShortcut} />
             <Button
               variant="ghost"
               size="icon"
