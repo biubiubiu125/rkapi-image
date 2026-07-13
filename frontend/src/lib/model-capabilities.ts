@@ -337,6 +337,7 @@ export function getGptImageAdvancedParamsForModel(
 
 function getPresetSizeValues(presetId: string): OutputSize[] {
   if (presetId === 'gemini-3.1-flash-image-preview') return ['512', '1K', '2K', '4K'];
+  if (presetId === 'gemini-3.1-flash-lite-image') return ['1K'];
   if (presetId === 'gemini-3-pro-image-preview' || presetId === 'gpt-image-2') return ['1K', '2K', '4K'];
   if (presetId === 'grok-imagine-image' || presetId === 'grok-imagine-image-quality') return ['1K', '2K'];
   return ['1K'];
@@ -411,7 +412,7 @@ export function getAspectRatioOptions(model: ModelId, outputSize: OutputSize): A
   if (String(presetId).startsWith('gpt-image-2')) {
     return BANANA_ASPECT_RATIOS.map(ar => ({ ...ar, resolution: '' }));
   }
-  if (presetId === 'gemini-3.1-flash-image-preview') {
+  if (presetId === 'gemini-3.1-flash-image-preview' || presetId === 'gemini-3.1-flash-lite-image') {
     return BANANA2_ASPECT_RATIOS.map(ar => ({
       value: ar.value,
       label: ar.label,
@@ -471,6 +472,9 @@ export function isRetryLayoutCompatible(model: ModelId, outputSize: OutputSize, 
   if (presetId === 'grok-imagine-image' || presetId === 'grok-imagine-image-quality') {
     return ['1K', '2K'].includes(outputSize)
       && XAI_IMAGINE_ASPECT_RATIOS.some(option => option.value === aspectRatio);
+  }
+  if (presetId === 'gemini-3.1-flash-lite-image') {
+    return outputSize === '1K';
   }
   if (outputSize === 'auto' || aspectRatio === 'auto') {
     return supportsAutoLayout(model) && outputSize === 'auto' && aspectRatio === 'auto';
