@@ -194,15 +194,15 @@ function resolveOutboundBaseUrlDetails(protocol, baseUrl, env = getRuntimeEnv())
       const rewrittenBaseUrl = sourceVersionSuffix && !targetVersionSuffix
         ? `${to}${sourceVersionSuffix}`
         : to;
-      return { baseUrl: rewrittenBaseUrl, originalBaseUrl: normalizedBaseUrl, rewritten: true };
+      return { baseUrl: rewrittenBaseUrl, originalBaseUrl: normalizedBaseUrl, rewritten: true, rewriteCount: rewrites.length };
     }
   }
 
-  return { baseUrl: normalizedBaseUrl, originalBaseUrl: normalizedBaseUrl, rewritten: false };
+  return { baseUrl: normalizedBaseUrl, originalBaseUrl: normalizedBaseUrl, rewritten: false, rewriteCount: rewrites.length };
 }
 
 /**
- * 为即将发送到上游的请求解析 Base URL，并记录已实际应用的映射关系。
+ * 为即将发送到上游的请求解析 Base URL，并记录完整的映射诊断信息。
  * @param requestType 上游请求类别，用于在日志中区分图片生成、文本代理或模型列表请求。
  * @param protocol 上游 API 协议标识。
  * @param baseUrl 用户配置的原始 Base URL。
@@ -211,10 +211,21 @@ function resolveOutboundBaseUrlDetails(protocol, baseUrl, env = getRuntimeEnv())
  */
 function resolveAndLogOutboundBaseUrl(requestType, protocol, baseUrl, env = getRuntimeEnv()) {
   const details = resolveOutboundBaseUrlDetails(protocol, baseUrl, env);
-  if (details.rewritten) {
-    console.info(`[base-url-rewrite] 状态=已应用 请求=${requestType} 协议=${protocol} 原始Base URL=${details.originalBaseUrl} 映射Base URL=${details.baseUrl}`);
-  }
+  const status = details.rewritten ? '已应用' : details.rewriteCount > 0 ? '未命中' : '未配置';
+  console.info(`[base-url-rewrite] 状态=${status} 请求=${requestType} 协议=${protocol} 原始Base URL=${details.originalBaseUrl} 最终Base URL=${details.baseUrl} 映射规则数=${details.rewriteCount}`);
   return details;
+}
+
+/**
+ * 在服务启动时输出实际加载的 Base URL 映射，排除部署环境未挂载配置文件的可能。
+ * @returns 无返回值；日志仅包含映射地址，不包含 API Key 等敏感信息。
+ */
+function logBaseUrlRewriteConfiguration() {
+  const rewrites = parseBaseUrlRewriteMap(getRuntimeEnv().FLYREQ_BASE_URL_REWRITE_MAP);
+  const mappings = rewrites
+    .map(rewrite => `${normalizeBaseUrl(rewrite.from)}=>${normalizeBaseUrl(rewrite.to)}`)
+    .join(' | ');
+  console.info(`[base-url-rewrite] 启动配置 规则数=${rewrites.length}${mappings ? ` 规则=${mappings}` : ''}`);
 }
 
 function getUrlOrigin(value) {
@@ -1552,9 +1563,11 @@ async function requestGptImage(apiKey, request, resolvedSize, options = {}) {
     ? '/v1/images/edits'
     : '/v1/images/generations';
   const stream = Boolean(options.stream);
+  const url = appendProtocolApiPath('openai', baseUrl, endpoint);
+  logImageRequestUrl('openai', request.model, url);
 
   const response = await fetchWithTimeout(
-    appendProtocolApiPath('openai', baseUrl, endpoint),
+    url,
     createGptImageRequestInit(apiKey, request, resolvedSize, { ...options, stream })
   );
   const usesSse = isImageEventStreamResponse(response);
@@ -1573,6 +1586,7 @@ async function requestXaiImagineImage(apiKey, request, options = {}) {
   const baseUrl = options.baseUrl || 'https://api.x.ai';
   const endpoint = getXaiImagineEndpoint(request.mode);
   const url = appendProtocolApiPath('openai', baseUrl, endpoint);
+  logImageRequestUrl('xai-imagine', request.model, url);
 
   for (let attempt = 0; attempt <= XAI_IMAGINE_MAX_RETRIES; attempt++) {
     await waitForXaiImagineRequestSlot(apiKey);
@@ -1663,7 +1677,9 @@ async function generateFlyreqGeminiImage(apiKey, request, options = {}) {
     { text: request.prompt },
     ...request.images.map(img => ({ inlineData: { data: img.data, mimeType: img.mimeType } })),
   ];
-  const response = await fetchWithTimeout(appendProtocolApiPath('google', baseUrl, `/v1beta/models/${encodeURIComponent(request.model)}:generateContent`), {
+  const url = appendProtocolApiPath('google', baseUrl, `/v1beta/models/${encodeURIComponent(request.model)}:generateContent`);
+  logImageRequestUrl('google', request.model, url);
+  const response = await fetchWithTimeout(url, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -1735,6 +1751,17 @@ function recordTaskSseResponse(taskId, requestCount) {
   result.sse = { responses: previousResponses + 1, requests };
   db.prepare('UPDATE tasks SET result_json = ? WHERE id = ?').run(JSON.stringify(result), taskId);
   broadcastTask(taskId);
+}
+
+/**
+ * 记录每次图片生成实际发往上游的完整请求地址。
+ * @param protocol 图片生成协议或图片 API 类型。
+ * @param model 实际发送给上游的模型 ID。
+ * @param url 最终请求 URL，不包含 API Key 等敏感信息。
+ * @returns 无返回值。
+ */
+function logImageRequestUrl(protocol, model, url) {
+  console.info(`[image-request] 协议=${protocol} 模型=${model} 最终请求URL=${getSafeUrlLabel(url)}`);
 }
 
 async function generateSingleImage(apiKey, request, taskId, index) {
@@ -2347,6 +2374,7 @@ async function handleApi(req, res, pathname) {
 
 initDatabase();
 ensureImageDir();
+logBaseUrlRewriteConfiguration();
 cleanupExpiredTasks();
 setInterval(cleanupExpiredTasks, CLEANUP_INTERVAL_MS).unref();
 setInterval(cleanupRateLimitBuckets, CLEANUP_INTERVAL_MS).unref();
