@@ -526,6 +526,17 @@ docker push ghcr.io/doudou770/flyreq-image-studio:latest
 | `FLYREQ_IMAGE_MODEL_KEY_GUIDE_DESCRIPTION` | 否 | FlyReq 默认说明 | 设置页图片模型 Key 指引描述 |
 | `FLYREQ_IMAGE_MODEL_KEY_GUIDE_CTA_LABEL` | 否 | `前往 flyreq.com` | 设置页图片模型 Key 指引按钮文字 |
 | `FLYREQ_IMAGE_MODEL_KEY_GUIDE_URL` | 否 | `https://flyreq.com` | 设置页图片模型 Key 指引跳转地址 |
+| `FLYREQ_DEFAULT_IMAGE_MODEL_KEY` | 否 | `flyreq-gpt-image-2` | 首次默认图片模型的稳定内部 Key |
+| `FLYREQ_DEFAULT_IMAGE_MODEL_NAME` | 否 | `FlyReq` | 首次默认图片模型的显示名称 |
+| `FLYREQ_DEFAULT_IMAGE_MODEL_PROTOCOL` | 否 | `openai` | 首次默认图片模型协议：`openai` 或 `google` |
+| `FLYREQ_DEFAULT_IMAGE_MODEL_BASE_URL` | 否 | `https://flyreq.com` | 首次默认图片模型的 Base URL |
+| `FLYREQ_DEFAULT_IMAGE_MODEL_MODEL_ID` | 否 | 空 | 实际模型 ID；留空时使用预设模型 ID 映射 |
+| `FLYREQ_DEFAULT_IMAGE_MODEL_PRESET` | 否 | `gpt-image-2` | 内置图片预设 ID，决定模型能力边界 |
+| `FLYREQ_DEFAULT_IMAGE_MODEL_MAX_REF_IMAGES` | 否 | `16` | 最大参考图数量，范围 `1-16` |
+| `FLYREQ_DEFAULT_IMAGE_MODEL_MAX_OUTPUT_SIZE` | 否 | `4K` | 最大输出规格：`512`、`1K`、`2K`、`4K` |
+| `FLYREQ_DEFAULT_IMAGE_MODEL_SUPPORTS_ADVANCED_PARAMS` | 否 | `true` | 是否默认启用 GPT Image 2 额外参数 |
+| `FLYREQ_DEFAULT_IMAGE_MODEL_SUPPORTS_TEMPERATURE` | 否 | `false` | Google 图片模型是否默认支持 temperature |
+| `FLYREQ_DEFAULT_IMAGE_MODEL_STREAM_IMAGES` | 否 | `true` | 是否默认开启 OpenAI GPT Image 2 流式图片请求 |
 | `PROMPT_GALLERY_MODE` | 否 | `2` | `1` 常驻 / `2` 私密密码（点七下标题） / `3` 关闭 |
 | `PROMPT_GALLERY_PASSWORD` | 否 | 空 | 提示词广场私密模式密码；为空时私密模式可直接开启 |
 

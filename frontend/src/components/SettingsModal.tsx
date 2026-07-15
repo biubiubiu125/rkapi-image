@@ -96,7 +96,7 @@ function createImageModelDraft(): ImageModelConfig {
     maxOutputSize: preset.maxOutputSize,
     supportsAdvancedParams: preset.supportsAdvancedParams,
     supportsTemperature: false,
-    streamImages: preset.streamImages,
+    streamImages: true,
   };
 }
 

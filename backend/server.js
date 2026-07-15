@@ -48,6 +48,24 @@ const DEFAULT_PLATFORM_BRANDING = {
   logoUrl: '/favicon.png',
   iconUrl: '/favicon.png',
 };
+const DEFAULT_IMAGE_MODEL_DEPLOYMENT_CONFIG = {
+  id: 'flyreq-gpt-image-2',
+  protocol: 'openai',
+  name: 'FlyReq',
+  modelId: '',
+  usesPresetModelId: true,
+  baseUrl: 'https://flyreq.com',
+  builtinPreset: 'gpt-image-2',
+  maxRefImages: 16,
+  maxOutputSize: '4K',
+  supportsAdvancedParams: true,
+  supportsTemperature: false,
+  streamImages: true,
+};
+const BUILTIN_IMAGE_PRESET_IDS = new Set([
+  'gemini-2.5-flash-image', 'gemini-3-pro-image-preview', 'gemini-3.1-flash-image-preview',
+  'gemini-3.1-flash-lite-image', 'gpt-image-2', 'grok-imagine-image', 'grok-imagine-image-quality',
+]);
 const DEFAULT_OUTBOUND_USER_AGENT = 'FlyReq-Image-Studio/3.1.1';
 
 function parseEnvFile(filePath) {
@@ -469,18 +487,74 @@ function resolveImagePresetModelIds(env = getRuntimeEnv()) {
   try {
     const parsed = JSON.parse(raw);
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
-    const validIds = new Set([
-      'gemini-2.5-flash-image', 'gemini-3-pro-image-preview', 'gemini-3.1-flash-image-preview',
-      'gemini-3.1-flash-lite-image', 'gpt-image-2', 'grok-imagine-image', 'grok-imagine-image-quality',
-    ]);
     const result = {};
     for (const [presetId, value] of Object.entries(parsed)) {
-      if (validIds.has(presetId) && typeof value === 'string' && value.trim()) result[presetId] = value.trim();
+      if (BUILTIN_IMAGE_PRESET_IDS.has(presetId) && typeof value === 'string' && value.trim()) result[presetId] = value.trim();
     }
     return result;
   } catch {
     return {};
   }
+}
+
+/**
+ * 解析布尔型环境变量，仅接受常用的真值和假值字符串。
+ * @param value 环境变量原始值。
+ * @param fallback 变量缺失或无效时采用的默认值。
+ * @returns 归一化后的布尔值。
+ */
+function parseBooleanEnv(value, fallback) {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (['1', 'true', 'yes', 'on'].includes(normalized)) return true;
+  if (['0', 'false', 'no', 'off'].includes(normalized)) return false;
+  return fallback;
+}
+
+/**
+ * 读取部署级首次图片模型配置，不包含 API Key，避免将密钥下发给浏览器。
+ * @param env 合并后的运行时环境变量对象。
+ * @returns 可安全传递到前端并用于首次初始化的图片模型配置。
+ */
+function resolveDefaultImageModelConfig(env = getRuntimeEnv()) {
+  const presetCandidate = String(env.FLYREQ_DEFAULT_IMAGE_MODEL_PRESET || '').trim();
+  const builtinPreset = BUILTIN_IMAGE_PRESET_IDS.has(presetCandidate)
+    ? presetCandidate
+    : DEFAULT_IMAGE_MODEL_DEPLOYMENT_CONFIG.builtinPreset;
+  const protocolCandidate = String(env.FLYREQ_DEFAULT_IMAGE_MODEL_PROTOCOL || '').trim();
+  const protocol = protocolCandidate === 'google' || protocolCandidate === 'openai'
+    ? protocolCandidate
+    : DEFAULT_IMAGE_MODEL_DEPLOYMENT_CONFIG.protocol;
+  const isXaiImagine = builtinPreset === 'grok-imagine-image' || builtinPreset === 'grok-imagine-image-quality';
+  const configuredModelId = String(env.FLYREQ_DEFAULT_IMAGE_MODEL_MODEL_ID || '').trim().slice(0, 200);
+  const usesPresetModelId = !configuredModelId;
+  const supportsAdvancedParams = protocol === 'openai' && builtinPreset === 'gpt-image-2'
+    ? parseBooleanEnv(env.FLYREQ_DEFAULT_IMAGE_MODEL_SUPPORTS_ADVANCED_PARAMS, DEFAULT_IMAGE_MODEL_DEPLOYMENT_CONFIG.supportsAdvancedParams)
+    : false;
+  const streamImages = protocol === 'openai' && builtinPreset === 'gpt-image-2'
+    ? parseBooleanEnv(env.FLYREQ_DEFAULT_IMAGE_MODEL_STREAM_IMAGES, DEFAULT_IMAGE_MODEL_DEPLOYMENT_CONFIG.streamImages)
+    : false;
+  return {
+    id: String(env.FLYREQ_DEFAULT_IMAGE_MODEL_KEY || '').trim().slice(0, 120) || DEFAULT_IMAGE_MODEL_DEPLOYMENT_CONFIG.id,
+    protocol: isXaiImagine ? 'openai' : protocol,
+    name: String(env.FLYREQ_DEFAULT_IMAGE_MODEL_NAME || '').trim().slice(0, 120) || DEFAULT_IMAGE_MODEL_DEPLOYMENT_CONFIG.name,
+    modelId: usesPresetModelId ? '' : configuredModelId,
+    usesPresetModelId,
+    baseUrl: String(env.FLYREQ_DEFAULT_IMAGE_MODEL_BASE_URL || '').trim().slice(0, 500) || DEFAULT_IMAGE_MODEL_DEPLOYMENT_CONFIG.baseUrl,
+    builtinPreset,
+    maxRefImages: isXaiImagine
+      ? 1
+      : parseIntegerEnv(env.FLYREQ_DEFAULT_IMAGE_MODEL_MAX_REF_IMAGES, DEFAULT_IMAGE_MODEL_DEPLOYMENT_CONFIG.maxRefImages, { min: 1, max: 16 }),
+    maxOutputSize: isXaiImagine
+      ? (String(env.FLYREQ_DEFAULT_IMAGE_MODEL_MAX_OUTPUT_SIZE || '').trim() === '1K' ? '1K' : '2K')
+      : (['512', '1K', '2K', '4K'].includes(String(env.FLYREQ_DEFAULT_IMAGE_MODEL_MAX_OUTPUT_SIZE || '').trim())
+        ? String(env.FLYREQ_DEFAULT_IMAGE_MODEL_MAX_OUTPUT_SIZE).trim()
+        : DEFAULT_IMAGE_MODEL_DEPLOYMENT_CONFIG.maxOutputSize),
+    supportsAdvancedParams,
+    supportsTemperature: protocol === 'google'
+      ? parseBooleanEnv(env.FLYREQ_DEFAULT_IMAGE_MODEL_SUPPORTS_TEMPERATURE, false)
+      : false,
+    streamImages,
+  };
 }
 
 function delay(ms) {
@@ -2291,6 +2365,7 @@ async function handleApi(req, res, pathname) {
           promptGalleryPasswordEnabled: String(env.PROMPT_GALLERY_PASSWORD || '').trim().length > 0,
           imageModelKeyGuide: resolveImageModelKeyGuide(env),
           imagePresetModelIds: resolveImagePresetModelIds(env),
+          defaultImageModel: resolveDefaultImageModelConfig(env),
           branding: resolvePlatformBranding(env),
         },
         {
