@@ -80,7 +80,7 @@ const WaitingJobCard = memo(function WaitingJobCard({
             {t('history.elapsed', { seconds: elapsedSeconds, model: getModelDisplayName(job.model) })}
           </p>
           {requestedAtLabel && (
-            <p className="mt-0.5 text-xs text-muted-foreground">请求 {requestedAtLabel}</p>
+            <p className="mt-0.5 text-xs text-muted-foreground">{t('task.requestedAt', { time: requestedAtLabel })}</p>
           )}
         </div>
         {job.serverTaskId && (
@@ -339,9 +339,9 @@ export function HistoryJobList({
               <p className="text-xs text-muted-foreground">{getModelDisplayName(job.model)}</p>
               {(requestedAtLabel || durationLabel) && (
                 <p className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-xs text-muted-foreground">
-                  {requestedAtLabel && <span>请求 {requestedAtLabel}</span>}
+                  {requestedAtLabel && <span>{t('task.requestedAt', { time: requestedAtLabel })}</span>}
                   {requestedAtLabel && durationLabel && <span>·</span>}
-                  {durationLabel && <span>耗时 {durationLabel}</span>}
+                  {durationLabel && <span>{t('task.duration', { time: durationLabel })}</span>}
                 </p>
               )}
             </div>

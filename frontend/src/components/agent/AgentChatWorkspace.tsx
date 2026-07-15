@@ -73,6 +73,7 @@ import { AgentImageGallery } from '@/components/agent/AgentImageGallery';
 import { AgentGenerationProgress } from '@/components/agent/AgentGenerationResult';
 import { CustomSizeDialog } from '@/components/CustomSizeDialog';
 import { usePromptOptimizeSetting } from '@/hooks/usePromptOptimizeSetting';
+import { useI18n } from '@/components/LanguageProvider';
 
 import { MAX_UPLOAD_SIZE_BYTES } from '@/lib/constants';
 import { loadJsonFromStorage, saveJsonToStorage } from '@/lib/settings-storage';
@@ -99,18 +100,25 @@ interface AgentChatWorkspaceProps {
   onConfigureApiKey?: () => void;
 }
 
-function phaseLabel(phase: AgentPhase): string | null {
+/**
+ * 将 Agent 内部阶段转换为当前界面语言的状态提示。
+ * @param phase Agent 当前执行阶段。
+ * @param t 当前语言的翻译函数。
+ * @returns 可展示的状态文本；空闲或确认阶段返回 null。
+ */
+function phaseLabel(phase: AgentPhase, t: (key: import('@/lib/i18n').I18nKey) => string): string | null {
   switch (phase) {
-    case 'loading': return '正在加载图片...';
-    case 'describing': return '正在识别图片...';
-    case 'streaming': return '正在思考...';
-    case 'generating': return '正在生成图片...';
+    case 'loading': return t('agentWorkspace.phaseLoading');
+    case 'describing': return t('agentWorkspace.phaseDescribing');
+    case 'streaming': return t('agentWorkspace.phaseStreaming');
+    case 'generating': return t('agentWorkspace.phaseGenerating');
     default: return null;
   }
 }
 
 export function AgentChatWorkspace({ wideMode = false, disabled = false, onConfigureApiKey }: AgentChatWorkspaceProps) {
   const agent = useAgentChat();
+  const { t } = useI18n();
   const { enabled: promptOptimizeEnabled } = usePromptOptimizeSetting();
   const [uploads, setUploads] = useState<PendingUpload[]>([]);
   const [uploading, setUploading] = useState(false);
@@ -197,7 +205,7 @@ export function AgentChatWorkspace({ wideMode = false, disabled = false, onConfi
     || userAspectRatioOptions.find(option => option.value === userAspectRatio)?.resolution
     || '';
   const getUserResolutionForSize = (size: OutputSize) => {
-    if (size === 'auto') return '自动';
+    if (size === 'auto') return t('agentWorkspace.auto');
     return getAspectRatioOptions(userModel, size).find(option => option.value === userAspectRatio)?.resolution || '';
   };
 
@@ -272,24 +280,24 @@ export function AgentChatWorkspace({ wideMode = false, disabled = false, onConfi
     const result = await agent.checkNow();
     switch (result) {
       case 'completed':
-        showToast('生成完成，正在取回图片…', 'success');
+        showToast(t('agentWorkspace.completedRetrieving'), 'success');
         break;
       case 'processing':
-        showToast('任务正在生成中，请稍候…', 'info');
+        showToast(t('agentWorkspace.stillGenerating'), 'info');
         break;
       case 'queued':
-        showToast('任务排队中，请耐心等待…', 'info');
+        showToast(t('agentWorkspace.queued'), 'info');
         break;
       case 'failed':
-        showToast('任务失败，请重试', 'error');
+        showToast(t('agentWorkspace.taskFailed'), 'error');
         break;
       case 'error':
-        showToast('查询失败，请稍后重试', 'error');
+        showToast(t('agentWorkspace.checkFailed'), 'error');
         break;
       default:
         break;
     }
-  }, [agent, onCooldown, showToast]);
+  }, [agent, onCooldown, showToast, t]);
 
   const handleImportAssets = useCallback(async (selectedAssets: ImageAsset[]) => {
     if (!agent.hasApiKey) {
@@ -338,11 +346,11 @@ export function AgentChatWorkspace({ wideMode = false, disabled = false, onConfi
         sourceKind: 'agent',
         sourceLabel: 'Agent',
       });
-      showToast('提示词素材已保存', 'success');
+      showToast(t('agentProposal.promptAssetSaved'), 'success');
     } catch (error) {
-      showToast(error instanceof Error ? error.message : '保存提示词素材失败', 'error');
+      showToast(error instanceof Error ? error.message : t('agentProposal.promptAssetSaveFailed'), 'error');
     }
-  }, [showToast]);
+  }, [showToast, t]);
 
   const handleFiles = useCallback(async (fileList: FileList | null) => {
     if (!fileList || fileList.length === 0) return;
@@ -557,7 +565,7 @@ export function AgentChatWorkspace({ wideMode = false, disabled = false, onConfi
     setOptimizeError(null);
   }, [optimizedText]);
 
-  const phaseHint = phaseLabel(agent.phase);
+  const phaseHint = phaseLabel(agent.phase, t);
 
   // 生成计时器
   const [elapsedNow, setElapsedNow] = useState(() => Date.now());
@@ -605,10 +613,10 @@ export function AgentChatWorkspace({ wideMode = false, disabled = false, onConfi
             className="gap-1 text-muted-foreground"
             onClick={() => agent.clearContext()}
             disabled={!canClearContext}
-            title="保留聊天记录，但让助手忘掉上文，开始一段干净对话"
+            title={t('agentWorkspace.clearContextTitle')}
           >
             <Eraser className="h-3.5 w-3.5" />
-            清理上下文
+            {t('agentWorkspace.clearContext')}
           </Button>
           <AgentImageGallery images={agent.images} onRedescribe={agent.redescribeImage} />
           <Button
@@ -619,7 +627,7 @@ export function AgentChatWorkspace({ wideMode = false, disabled = false, onConfi
             disabled={agent.messages.length === 0 && agent.images.length === 0}
           >
             <RotateCcw className="h-3.5 w-3.5" />
-            清空重开
+            {t('agentWorkspace.clearSession')}
           </Button>
         </div>
       </div>
@@ -631,8 +639,8 @@ export function AgentChatWorkspace({ wideMode = false, disabled = false, onConfi
         {agent.messages.length === 0 && !agent.streamingText && (
           <div className="flex h-full flex-col items-center justify-center gap-2 text-center text-muted-foreground">
             <Sparkles className="h-8 w-8 opacity-40" />
-            <p className="text-sm">和我聊聊你想画什么，或上传图片让我帮你修改。</p>
-            <p className="text-xs opacity-70">我会判断你的意图，并在生成前请你确认。</p>
+            <p className="text-sm">{t('agentWorkspace.emptyTitle')}</p>
+            <p className="text-xs opacity-70">{t('agentWorkspace.emptyDescription')}</p>
           </div>
         )}
 
@@ -645,7 +653,7 @@ export function AgentChatWorkspace({ wideMode = false, disabled = false, onConfi
             onReedit={agent.reeditProposal}
             onCopy={() => {
               navigator.clipboard.writeText(message.text).catch(() => {});
-              showToast('已复制到剪贴板', 'success');
+              showToast(t('agentWorkspace.copiedToClipboard'), 'success');
             }}
             onDelete={() => setDeleteConfirmMsgId(message.id)}
             onRollback={() => setRollbackConfirmMsgId(message.id)}
@@ -663,7 +671,7 @@ export function AgentChatWorkspace({ wideMode = false, disabled = false, onConfi
                 <div className="rounded-xl border border-border/60 bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
                   <div className="mb-1 flex items-center gap-1.5 font-medium">
                     <Brain className="h-3.5 w-3.5" />
-                    思考中
+                    {t('agentWorkspace.thinking')}
                   </div>
                   <div className="leading-relaxed opacity-90">
                     <div dangerouslySetInnerHTML={{ __html: renderReasoning(agent.streamingReasoning) }} />
@@ -730,7 +738,6 @@ export function AgentChatWorkspace({ wideMode = false, disabled = false, onConfi
                 taskId={agent.generationDraft.taskId || agent.generatingTaskId || undefined}
                 isSyncing={agent.isSyncing}
                 checkNowDisabled={agent.isSyncing || onCooldown}
-                checkNowLabel={onCooldown ? '稍候…' : '主动查询'}
                 onCheckNow={() => void handleCheckNow()}
                 onSkipDescribing={() => agent.skipDescribing()}
               />
@@ -748,14 +755,14 @@ export function AgentChatWorkspace({ wideMode = false, disabled = false, onConfi
                 size="sm"
                 onClick={() => setSkipConfirmOpen(true)}
                 className="h-6 gap-1 px-2 text-xs"
-                title="跳过图片识别，直接显示图片"
+                title={t('agentGeneration.skipDescription')}
               >
                 <X className="h-3 w-3" />
-                跳过识别
+                {t('agentGeneration.skipDescription')}
               </Button>
             )}
             {agent.phase === 'generating' && (
-              <span className="tabular-nums">已用 {elapsedSeconds}s</span>
+              <span className="tabular-nums">{t('agentWorkspace.elapsed', { seconds: elapsedSeconds })}</span>
             )}
             {agent.phase === 'generating' && agent.generatingTaskId && (
               <Button
@@ -764,12 +771,12 @@ export function AgentChatWorkspace({ wideMode = false, disabled = false, onConfi
                 onClick={() => void handleCheckNow()}
                 disabled={agent.isSyncing || onCooldown}
                 className="h-6 gap-1 px-2 text-xs"
-                title={onCooldown ? '请稍候再查询' : '立即查询任务状态'}
+                title={onCooldown ? t('agentGeneration.waitBeforeCheck') : t('agentWorkspace.checkNowTitle')}
               >
                 {agent.isSyncing
                   ? <Loader2 className="h-3 w-3 animate-spin" />
                   : <RefreshCw className="h-3 w-3" />}
-                {onCooldown ? '稍候…' : '主动查询'}
+                {onCooldown ? t('agentWorkspace.wait') : t('agentGeneration.checkNow')}
               </Button>
             )}
           </div>
@@ -792,7 +799,7 @@ export function AgentChatWorkspace({ wideMode = false, disabled = false, onConfi
               files={uploads}
               onRemove={id => setUploads(prev => prev.filter(u => u.id !== id))}
               sourceKind="agent"
-              sourceLabel="Agent 上传图片"
+              sourceLabel={t('agentWorkspace.uploadedImageSource')}
             />
           </div>
         )}
@@ -812,7 +819,7 @@ export function AgentChatWorkspace({ wideMode = false, disabled = false, onConfi
             ref={editorRef}
             images={agent.images}
             disabled={disabled}
-            placeholder={disabled ? '请先配置 API 密钥' : '描述你想要的画面，或上传图片...'}
+            placeholder={disabled ? t('agentWorkspace.inputDisabled') : t('agentWorkspace.inputPlaceholder')}
             onSubmit={handleEditorSubmit}
             onInputChange={(hasContent) => setHasEditorContent(hasContent)}
           />
@@ -822,7 +829,7 @@ export function AgentChatWorkspace({ wideMode = false, disabled = false, onConfi
               size="icon-sm"
               className="shrink-0"
               onClick={() => setStopConfirmOpen(true)}
-              title="停止"
+              title={t('agentWorkspace.stop')}
             >
               <Square className="h-3.5 w-3.5" />
             </Button>
@@ -835,7 +842,7 @@ export function AgentChatWorkspace({ wideMode = false, disabled = false, onConfi
                   className="shrink-0"
                   onClick={handleOptimize}
                   disabled={!hasEditorContent || disabled || busy}
-                  title="优化提示词"
+                  title={t('agentProposal.optimizePrompt')}
                 >
                   <Sparkles className="h-4 w-4" />
                 </Button>
@@ -846,7 +853,7 @@ export function AgentChatWorkspace({ wideMode = false, disabled = false, onConfi
                 className="shrink-0"
                 onClick={handleClearDraft}
                 disabled={!hasEditorContent && uploads.length === 0}
-                title="清空输入"
+              title={t('agentWorkspace.clearInput')}
               >
                 <X className="h-4 w-4" />
               </Button>
@@ -855,7 +862,7 @@ export function AgentChatWorkspace({ wideMode = false, disabled = false, onConfi
                 className="shrink-0"
                 onClick={handleSend}
                 disabled={!canSend || disabled}
-                title="发送"
+              title={t('agentWorkspace.send')}
               >
                 <ArrowUp className="h-4 w-4" />
               </Button>
@@ -872,10 +879,10 @@ export function AgentChatWorkspace({ wideMode = false, disabled = false, onConfi
             className="shrink-0 gap-1.5 text-muted-foreground"
             onClick={() => fileInputRef.current?.click()}
             disabled={busy || uploading || disabled}
-            title="上传图片"
+            title={t('agentWorkspace.uploadImage')}
           >
             {uploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <CloudUpload className="h-4 w-4" />}
-            <span className="text-xs">上传图片</span>
+            <span className="text-xs">{t('agentWorkspace.uploadImage')}</span>
           </Button>
           <Button
             variant="ghost"
@@ -889,10 +896,10 @@ export function AgentChatWorkspace({ wideMode = false, disabled = false, onConfi
               setAssetPickerOpen(true);
             }}
             disabled={busy || uploading || disabled}
-            title="从素材库导入图片"
+            title={t('agentWorkspace.importImageAsset')}
           >
             <ImagePlus className="h-4 w-4" />
-            <span className="text-xs">图片素材</span>
+            <span className="text-xs">{t('agentWorkspace.imageAssets')}</span>
           </Button>
           <Button
             variant="ghost"
@@ -900,10 +907,10 @@ export function AgentChatWorkspace({ wideMode = false, disabled = false, onConfi
             className="shrink-0 gap-1.5 text-muted-foreground"
             onClick={() => setTextAssetPickerOpen(true)}
             disabled={busy || disabled}
-            title="导入提示词素材"
+            title={t('agentProposal.importPromptAsset')}
           >
             <FileText className="h-4 w-4" />
-            <span className="text-xs">提示词素材</span>
+            <span className="text-xs">{t('agentWorkspace.promptAssets')}</span>
           </Button>
           <Button
             variant="ghost"
@@ -911,10 +918,10 @@ export function AgentChatWorkspace({ wideMode = false, disabled = false, onConfi
             className="shrink-0 gap-1.5 text-muted-foreground"
             onClick={() => void handleSavePromptAsset()}
             disabled={!hasEditorContent || busy || disabled}
-            title="存为提示词素材"
+            title={t('agentProposal.savePromptAsset')}
           >
             <Save className="h-4 w-4" />
-            <span className="text-xs">存提示词</span>
+            <span className="text-xs">{t('agentWorkspace.savePrompt')}</span>
           </Button>
 
           {/* 联网检索 */}
@@ -929,10 +936,10 @@ export function AgentChatWorkspace({ wideMode = false, disabled = false, onConfi
             )}
             onClick={() => agent.toggleWebSearch()}
             disabled={busy || disabled}
-            title={agent.webSearchEnabled ? '已开启联网搜索' : '联网搜索'}
+            title={agent.webSearchEnabled ? t('agentWorkspace.webSearchEnabled') : t('agentWorkspace.webSearch')}
           >
             <Globe className="h-4 w-4" />
-            <span className="text-xs">联网检索</span>
+            <span className="text-xs">{t('agentWorkspace.webSearch')}</span>
           </Button>
 
           {/* 意图识别开关 */}
@@ -946,10 +953,10 @@ export function AgentChatWorkspace({ wideMode = false, disabled = false, onConfi
                 : 'border-destructive/30 bg-destructive/5 text-destructive'
             )}
             onClick={() => agent.toggleIntentRecognition()}
-            title={intentRecognition ? '开启后由 Agent 自动分析意图并建议参数' : '关闭后使用下方手动参数，忽略 Agent 建议'}
+            title={intentRecognition ? t('agentWorkspace.intentRecognitionEnabled') : t('agentWorkspace.intentRecognitionDisabled')}
           >
             <Brain className="h-3 w-3" />
-            意图识别
+            {t('agentWorkspace.intentRecognition')}
             <span className={cn(
               'ml-0.5 rounded-full px-1 text-[10px] font-medium',
               intentRecognition ? 'bg-primary/10 text-primary' : 'bg-destructive/10 text-destructive'
@@ -997,7 +1004,7 @@ export function AgentChatWorkspace({ wideMode = false, disabled = false, onConfi
               <Popover open={sizePopoverOpen} onOpenChange={setSizePopoverOpen}>
                 <PopoverTrigger
                   className={cn(buttonVariants({ variant: 'outline', size: 'xs' }), 'gap-1')}
-                  title={`输出尺寸${userCurrentResolution ? `：${userCurrentResolution}` : ''}`}
+                  title={`${t('agentWorkspace.outputSize')}${userCurrentResolution ? `: ${userCurrentResolution}` : ''}`}
                 >
                   <Maximize className="h-3 w-3" />
                   <span className="text-[11px]">{userCustomSize || getOutputSizeLabel(userOutputSize)}</span>
@@ -1041,7 +1048,7 @@ export function AgentChatWorkspace({ wideMode = false, disabled = false, onConfi
                       )}
                     >
                       <Maximize className="h-3.5 w-3.5" />
-                      自定义{userCustomSize ? `（${userCustomSize}）` : ''}
+                      {t('agentWorkspace.customSize', { size: userCustomSize ? ` (${userCustomSize})` : '' })}
                     </button>
                   )}
                 </PopoverContent>
@@ -1089,7 +1096,7 @@ export function AgentChatWorkspace({ wideMode = false, disabled = false, onConfi
                 <PopoverContent className="w-56" align="start">
                   <div className="space-y-3">
                     <div className="flex items-center justify-between">
-                      <label className="text-sm font-medium">温度</label>
+                      <label className="text-sm font-medium">{t('agentWorkspace.temperature')}</label>
                       <span className="text-sm text-muted-foreground">{userTemperature.toFixed(2)}</span>
                     </div>
                     <Slider
@@ -1101,9 +1108,9 @@ export function AgentChatWorkspace({ wideMode = false, disabled = false, onConfi
                       className="w-full"
                     />
                     <div className="flex justify-between gap-2">
-                      <Button variant="outline" size="xs" onClick={() => setUserTemperature(0)} className="flex-1">精确 (0)</Button>
-                      <Button variant="outline" size="xs" onClick={() => setUserTemperature(1)} className="flex-1">均衡 (1)</Button>
-                      <Button variant="outline" size="xs" onClick={() => setUserTemperature(2)} className="flex-1">创意 (2)</Button>
+                      <Button variant="outline" size="xs" onClick={() => setUserTemperature(0)} className="flex-1">{t('agentWorkspace.precise')}</Button>
+                      <Button variant="outline" size="xs" onClick={() => setUserTemperature(1)} className="flex-1">{t('agentWorkspace.balanced')}</Button>
+                      <Button variant="outline" size="xs" onClick={() => setUserTemperature(2)} className="flex-1">{t('agentWorkspace.creative')}</Button>
                     </div>
                   </div>
                 </PopoverContent>
@@ -1170,9 +1177,9 @@ export function AgentChatWorkspace({ wideMode = false, disabled = false, onConfi
 
       {pendingTextAsset && createPortal(
         <ConfirmDialog
-          title="覆盖当前输入"
-          message="将用素材内容覆盖当前输入框，是否继续？"
-          confirmText="覆盖"
+          title={t('agentWorkspace.clearPromptTitle')}
+          message={t('agentWorkspace.clearPromptMessage')}
+          confirmText={t('agentWorkspace.clearPromptAction')}
           variant="default"
           onConfirm={() => applyTextAsset(pendingTextAsset)}
           onCancel={() => setPendingTextAsset(null)}
@@ -1182,9 +1189,9 @@ export function AgentChatWorkspace({ wideMode = false, disabled = false, onConfi
 
       {clearDialogOpen && createPortal(
         <ConfirmDialog
-          title="清空对话"
-          message="确定要清空当前 agent 会话吗？所有对话和图片记录将被删除，此操作无法撤销。"
-          confirmText="清空"
+          title={t('agentWorkspace.clearSessionTitle')}
+          message={t('agentWorkspace.clearSessionMessage')}
+          confirmText={t('agentWorkspace.clearSessionAction')}
           onConfirm={() => {
             setClearDialogOpen(false);
             void agent.clearSession();
@@ -1196,11 +1203,11 @@ export function AgentChatWorkspace({ wideMode = false, disabled = false, onConfi
 
       {stopConfirmOpen && createPortal(
         <ConfirmDialog
-          title="停止当前任务"
+          title={t('agentWorkspace.stopTaskTitle')}
           message={agent.phase === 'generating'
-            ? '确定要停止吗？正在生成的图片任务会被中断，已消耗的额度不会退回。'
-            : '确定要停止吗？当前的思考会被中断。'}
-          confirmText="停止"
+            ? t('agentWorkspace.stopTaskGenerating')
+            : t('agentWorkspace.stopTaskThinking')}
+          confirmText={t('agentWorkspace.stop')}
           onConfirm={() => {
             setStopConfirmOpen(false);
             agent.stopStreaming();
@@ -1212,9 +1219,9 @@ export function AgentChatWorkspace({ wideMode = false, disabled = false, onConfi
 
       {skipConfirmOpen && createPortal(
         <ConfirmDialog
-          title="跳过图片识别"
-          message="跳过后图片将直接显示，但不会生成文字描述。确定要跳过吗？"
-          confirmText="跳过"
+          title={t('agentWorkspace.skipTitle')}
+          message={t('agentGeneration.skipConfirm')}
+          confirmText={t('agentGeneration.skipDescription')}
           onConfirm={() => {
             setSkipConfirmOpen(false);
             agent.skipDescribing();
@@ -1226,9 +1233,9 @@ export function AgentChatWorkspace({ wideMode = false, disabled = false, onConfi
 
       {deleteConfirmMsgId && createPortal(
         <ConfirmDialog
-          title="删除消息"
-          message="确定要删除本条消息吗？其中引用的图片资源（含已上传和已生成的图片）若未被其他消息使用也将被一并删除，此操作无法撤销。"
-          confirmText="删除"
+          title={t('agentWorkspace.deleteMessageTitle')}
+          message={t('agentWorkspace.deleteMessage')}
+          confirmText={t('common.delete')}
           onConfirm={() => {
             agent.deleteMessage(deleteConfirmMsgId);
             setDeleteConfirmMsgId(null);
@@ -1240,9 +1247,9 @@ export function AgentChatWorkspace({ wideMode = false, disabled = false, onConfi
 
       {rollbackConfirmMsgId && createPortal(
         <ConfirmDialog
-          title="撤回消息"
-          message="确定要撤回从此条开始（含本条）之后的所有消息吗？其中引用的图片资源（含已上传和已生成的图片）若未被其他消息使用也将被一并删除，此操作无法撤销。"
-          confirmText="撤回"
+          title={t('agentWorkspace.rollbackMessageTitle')}
+          message={t('agentWorkspace.rollbackMessage')}
+          confirmText={t('agentMessage.withdraw')}
           onConfirm={() => {
             agent.rollbackMessages(rollbackConfirmMsgId);
             setRollbackConfirmMsgId(null);

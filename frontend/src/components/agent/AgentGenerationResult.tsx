@@ -6,6 +6,8 @@ import { cn } from '@/lib/utils';
 import { renderReasoning } from '@/lib/render-reasoning';
 import { MAX_PARALLEL_COUNT } from '@/lib/model-capabilities';
 import type { AgentPhase } from '@/hooks/useAgentChat';
+import { useI18n } from '@/components/LanguageProvider';
+import type { I18nKey } from '@/lib/i18n';
 
 interface AgentGenerationResultProps {
   text: string;
@@ -22,7 +24,6 @@ interface AgentGenerationProgressProps {
   taskId?: string;
   isSyncing?: boolean;
   checkNowDisabled?: boolean;
-  checkNowLabel?: string;
   onCheckNow?: () => void;
   onSkipDescribing?: () => void;
 }
@@ -38,38 +39,42 @@ interface GenerationSectionCardProps {
   section: ParsedSection;
   copiedText: string | null;
   onCopy: (content: string, label: string) => void;
+  t: (key: I18nKey, values?: Record<string, string | number>) => string;
 }
 
-function parseGenerationText(text: string): ParsedSection[] {
+/**
+ * 解析新旧语言写入的生成结果文本，并以当前界面语言显示区块标题。
+ * @param text 已持久化的生成结果文本，兼容中文与英文标题。
+ * @param t 当前语言的翻译函数。
+ * @returns 用于渲染的生成结果区块列表。
+ */
+function parseGenerationText(text: string, t: (key: I18nKey) => string): ParsedSection[] {
   const sections: ParsedSection[] = [];
-  
-  // 解析分析部分
-  const analysisMatch = text.match(/分析：([\s\S]*?)(?=优化提示词：|$)/);
+
+  const analysisMatch = text.match(/(?:^|\n)(?:分析|Analysis)\s*[:：]\s*([\s\S]*?)(?=\n(?:优化提示词|Optimized prompt)\s*[:：]|$)/i);
   if (analysisMatch) {
     sections.push({
-      label: '分析',
+      label: t('agentGeneration.analysis'),
       content: analysisMatch[1].trim(),
       icon: <Brain className="h-3.5 w-3.5" />,
       color: 'text-blue-500',
     });
   }
   
-  // 解析优化提示词部分
-  const promptMatch = text.match(/优化提示词：([\s\S]*?)(?=结果：|$)/);
+  const promptMatch = text.match(/(?:^|\n)(?:优化提示词|Optimized prompt)\s*[:：]\s*([\s\S]*?)(?=\n(?:结果|Result)\s*[:：]|$)/i);
   if (promptMatch) {
     sections.push({
-      label: '优化提示词',
+      label: t('agentGeneration.optimizedPrompt'),
       content: promptMatch[1].trim(),
       icon: <Sparkles className="h-3.5 w-3.5" />,
       color: 'text-purple-500',
     });
   }
   
-  // 解析结果部分
-  const resultMatch = text.match(/结果：([\s\S]*?)$/);
+  const resultMatch = text.match(/(?:^|\n)(?:结果|Result)\s*[:：]\s*([\s\S]*?)$/i);
   if (resultMatch) {
     sections.push({
-      label: '结果',
+      label: t('agentGeneration.result'),
       content: resultMatch[1].trim(),
       icon: <ImageIcon className="h-3.5 w-3.5" />,
       color: 'text-green-500',
@@ -79,7 +84,7 @@ function parseGenerationText(text: string): ParsedSection[] {
   // 如果没有匹配到任何部分，返回原始文本作为分析
   if (sections.length === 0) {
     sections.push({
-      label: '分析',
+      label: t('agentGeneration.analysis'),
       content: text,
       icon: <Brain className="h-3.5 w-3.5" />,
       color: 'text-blue-500',
@@ -89,20 +94,20 @@ function parseGenerationText(text: string): ParsedSection[] {
   return sections;
 }
 
-function getProgressLabel(phase: AgentPhase, hasTaskId: boolean): string {
+function getProgressLabel(phase: AgentPhase, hasTaskId: boolean, t: (key: I18nKey) => string): string {
   switch (phase) {
     case 'generating':
-      return hasTaskId ? '正在生成图片' : '正在提交任务';
+      return hasTaskId ? t('agentGeneration.generating') : t('agentGeneration.submitting');
     case 'loading':
-      return '正在取回图片';
+      return t('agentGeneration.retrieving');
     case 'describing':
-      return '正在识别图片描述';
+      return t('agentGeneration.describing');
     default:
-      return '正在准备生成';
+      return t('agentGeneration.preparing');
   }
 }
 
-function GenerationSectionCard({ section, copiedText, onCopy }: GenerationSectionCardProps) {
+function GenerationSectionCard({ section, copiedText, onCopy, t }: GenerationSectionCardProps) {
   return (
     <div className="rounded-xl border border-border/60 bg-card/80 p-3 transition-colors hover:bg-card">
       <div className="mb-2 flex items-center justify-between">
@@ -114,14 +119,14 @@ function GenerationSectionCard({ section, copiedText, onCopy }: GenerationSectio
           type="button"
           onClick={() => onCopy(section.content, section.label)}
           className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
-          title={`复制${section.label}`}
+          title={`${t('common.copy')} ${section.label}`}
         >
           {copiedText === section.label ? (
             <Check className="h-3 w-3" />
           ) : (
             <Copy className="h-3 w-3" />
           )}
-          {copiedText === section.label ? '已复制' : '复制'}
+          {copiedText === section.label ? t('common.copied') : t('common.copy')}
         </button>
       </div>
       <div className="whitespace-pre-wrap text-sm leading-relaxed text-foreground">
@@ -132,8 +137,9 @@ function GenerationSectionCard({ section, copiedText, onCopy }: GenerationSectio
 }
 
 export function AgentGenerationResult({ text, reasoning }: AgentGenerationResultProps) {
+  const { t } = useI18n();
   const [copiedText, setCopiedText] = useState<string | null>(null);
-  const sections = parseGenerationText(text);
+  const sections = parseGenerationText(text, t);
   
   const handleCopy = useCallback(async (content: string, label: string) => {
     try {
@@ -152,7 +158,7 @@ export function AgentGenerationResult({ text, reasoning }: AgentGenerationResult
         <details className="group">
           <summary className="flex cursor-pointer items-center gap-2 text-xs font-medium text-muted-foreground hover:text-foreground">
             <MessageSquare className="h-3.5 w-3.5" />
-            思考过程
+            {t('agentGeneration.reasoning')}
             <span className="text-[10px] opacity-60 group-open:rotate-90 transition-transform">▶</span>
           </summary>
           <div className="mt-2 rounded-lg bg-muted/50 p-3 text-xs leading-relaxed text-muted-foreground">
@@ -168,6 +174,7 @@ export function AgentGenerationResult({ text, reasoning }: AgentGenerationResult
           section={section}
           copiedText={copiedText}
           onCopy={handleCopy}
+          t={t}
         />
       ))}
     </div>
@@ -184,22 +191,22 @@ export function AgentGenerationProgress({
   taskId,
   isSyncing = false,
   checkNowDisabled = false,
-  checkNowLabel = '主动查询',
   onCheckNow,
   onSkipDescribing,
 }: AgentGenerationProgressProps) {
+  const { t } = useI18n();
   const [copiedText, setCopiedText] = useState<string | null>(null);
-  const progressLabel = getProgressLabel(phase, Boolean(taskId));
+  const progressLabel = getProgressLabel(phase, Boolean(taskId), t);
   const placeholderCount = Math.max(1, Math.min(MAX_PARALLEL_COUNT, Math.trunc(parallelCount) || 1));
   const sections: ParsedSection[] = [
     {
-      label: '分析',
-      content: analysis || '根据你的描述，正在生成图片。',
+      label: t('agentGeneration.analysis'),
+      content: analysis || t('agentGeneration.defaultAnalysis'),
       icon: <Brain className="h-3.5 w-3.5" />,
       color: 'text-blue-500',
     },
     {
-      label: '优化提示词',
+      label: t('agentGeneration.optimizedPrompt'),
       content: prompt,
       icon: <Sparkles className="h-3.5 w-3.5" />,
       color: 'text-purple-500',
@@ -222,7 +229,7 @@ export function AgentGenerationProgress({
         <details className="group">
           <summary className="flex cursor-pointer items-center gap-2 text-xs font-medium text-muted-foreground hover:text-foreground">
             <MessageSquare className="h-3.5 w-3.5" />
-            思考过程
+            {t('agentGeneration.reasoning')}
             <span className="text-[10px] opacity-60 transition-transform group-open:rotate-90">▶</span>
           </summary>
           <div className="mt-2 rounded-lg bg-muted/50 p-3 text-xs leading-relaxed text-muted-foreground">
@@ -237,6 +244,7 @@ export function AgentGenerationProgress({
           section={section}
           copiedText={copiedText}
           onCopy={handleCopy}
+          t={t}
         />
       ))}
 
@@ -257,15 +265,15 @@ export function AgentGenerationProgress({
             <button
               type="button"
               onClick={() => {
-                if (confirm('跳过后图片将直接显示，但不会生成文字描述。确定要跳过吗？')) {
+                if (confirm(t('agentGeneration.skipConfirm'))) {
                   onSkipDescribing();
                 }
               }}
               className="ml-auto inline-flex h-6 items-center gap-1 rounded-md px-2 text-xs text-muted-foreground transition-colors hover:bg-background hover:text-foreground"
-              title="跳过图片识别，直接显示图片"
+              title={t('agentGeneration.skipDescription')}
             >
               <X className="h-3 w-3" />
-              跳过识别
+              {t('agentGeneration.skipDescription')}
             </button>
           )}
           {phase === 'generating' && taskId && onCheckNow && (
@@ -274,14 +282,14 @@ export function AgentGenerationProgress({
               onClick={onCheckNow}
               disabled={checkNowDisabled}
               className="ml-auto inline-flex h-6 items-center gap-1 rounded-md px-2 text-xs text-muted-foreground transition-colors hover:bg-background hover:text-foreground disabled:cursor-not-allowed disabled:opacity-60"
-              title={checkNowDisabled ? '请稍候再查询' : '立即查询任务状态'}
+              title={checkNowDisabled ? t('agentGeneration.waitBeforeCheck') : t('agentGeneration.checkNow')}
             >
               {isSyncing ? (
                 <Loader2 className="h-3 w-3 animate-spin" />
               ) : (
                 <RefreshCw className="h-3 w-3" />
               )}
-              {checkNowLabel}
+              {t('agentGeneration.checkNow')}
             </button>
           )}
         </div>
@@ -292,13 +300,13 @@ export function AgentGenerationProgress({
           <div
             key={index}
             className="relative h-24 w-24 overflow-hidden rounded-lg border border-border bg-muted"
-            aria-label={`第 ${index + 1} 张图片正在生成`}
+            aria-label={t('agentGeneration.imageGenerating', { index: index + 1 })}
           >
             <div className="absolute inset-0 animate-pulse bg-gradient-to-r from-muted via-background/70 to-muted" />
             <div className="absolute inset-y-0 -left-full w-1/2 animate-shimmer bg-gradient-to-r from-transparent via-white/30 to-transparent dark:via-white/10" />
             <div className="absolute inset-0 flex flex-col items-center justify-center gap-1 text-[10px] text-muted-foreground">
               <ImageIcon className="h-4 w-4" />
-              <span>生成中</span>
+              <span>{t('agentGeneration.generatingShort')}</span>
               <span className="tabular-nums">#{index + 1}</span>
             </div>
           </div>

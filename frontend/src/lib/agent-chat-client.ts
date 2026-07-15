@@ -4,13 +4,14 @@
 
 import {
   AGENT_TEXT_MODEL_FALLBACK,
-  AGENT_SYSTEM_INSTRUCTIONS,
-  AGENT_IMAGE_DESCRIBE_PROMPT,
+  getAgentImageDescribePrompt,
+  getAgentSystemInstructions,
   PROPOSE_IMAGE_ACTION_TOOL,
   type AgentMessage,
   type AgentProposal,
   type AgentActionType,
 } from '@/lib/agent-chat-config';
+import { DEFAULT_LOCALE, type Locale } from '@/lib/i18n';
 import {
   normalizeGptImageBackground,
   normalizeGptImageQuality,
@@ -50,6 +51,8 @@ export interface StreamAgentInput {
   modelCatalog: AgentModelCatalogEntry[];
   /** 是否启用联网搜索工具 */
   webSearch?: boolean;
+  /** 当前界面语言，用于约束 Agent 与图片描述的输出语言。 */
+  locale?: Locale;
 }
 
 export interface StreamAgentCallbacks {
@@ -68,25 +71,42 @@ export interface StreamAgentHandle {
   promise: Promise<void>;
 }
 
-function buildInstructions(catalog: AgentCatalogEntry[], modelCatalog: AgentModelCatalogEntry[]): string {
-  let instructions = AGENT_SYSTEM_INSTRUCTIONS;
+/**
+ * 拼装包含模型与图片目录的 Agent 系统指令。
+ * @param catalog 当前可用图片目录。
+ * @param modelCatalog 当前可用图像模型目录。
+ * @param locale 当前界面语言。
+ * @returns 可直接发送给上游文本模型的系统指令。
+ */
+function buildInstructions(catalog: AgentCatalogEntry[], modelCatalog: AgentModelCatalogEntry[], locale: Locale): string {
+  let instructions = getAgentSystemInstructions(locale);
 
   // 模型目录
   if (modelCatalog.length > 0) {
     const modelLines = modelCatalog
-      .map(m => `- id: ${m.id}, 名称: "${m.name}", 最大分辨率: ${m.maxOutputSize}`)
+      .map(m => locale === 'zh'
+        ? `- id: ${m.id}, 名称: "${m.name}", 最大分辨率: ${m.maxOutputSize}`
+        : `- id: ${m.id}, name: "${m.name}", maximum resolution: ${m.maxOutputSize}`)
       .join('\n');
-    instructions += `\n\n当前可用图像模型：\n${modelLines}`;
+    instructions += locale === 'zh'
+      ? `\n\n当前可用图像模型：\n${modelLines}`
+      : `\n\nCurrently available image models:\n${modelLines}`;
   } else {
-    instructions += '\n\n当前可用图像模型：（空，请在设置中配置）';
+    instructions += locale === 'zh'
+      ? '\n\n当前可用图像模型：（空，请在设置中配置）'
+      : '\n\nCurrently available image models: (empty; configure models in Settings)';
   }
 
   // 图片目录
   if (catalog.length === 0) {
-    instructions += '\n\n当前可用图片目录：（空，还没有任何图片）';
+    instructions += locale === 'zh'
+      ? '\n\n当前可用图片目录：（空，还没有任何图片）'
+      : '\n\nCurrent image catalog: (empty; no images are available yet)';
   } else {
     const lines = catalog.map(entry => `[${entry.imgId}] ${entry.description}`).join('\n');
-    instructions += `\n\n当前可用图片目录：\n${lines}`;
+    instructions += locale === 'zh'
+      ? `\n\n当前可用图片目录：\n${lines}`
+      : `\n\nCurrent image catalog:\n${lines}`;
   }
 
   return instructions;
@@ -268,7 +288,7 @@ async function runAgentStream(
     model: input.model || AGENT_TEXT_MODEL_FALLBACK,
     stream: true,
     reasoning: { effort: 'medium' as const, summary: 'detailed' as const },
-    instructions: buildInstructions(input.catalog, input.modelCatalog),
+    instructions: buildInstructions(input.catalog, input.modelCatalog, input.locale || DEFAULT_LOCALE),
     tools: input.webSearch
       ? [PROPOSE_IMAGE_ACTION_TOOL, { type: 'web_search' as const }]
       : [PROPOSE_IMAGE_ACTION_TOOL],
@@ -455,7 +475,7 @@ function buildGeminiAgentTools(webSearch: boolean) {
  */
 function buildGeminiAgentRequest(input: StreamAgentInput) {
   return {
-    systemInstruction: { parts: [{ text: buildInstructions(input.catalog, input.modelCatalog) }] },
+    systemInstruction: { parts: [{ text: buildInstructions(input.catalog, input.modelCatalog, input.locale || DEFAULT_LOCALE) }] },
     contents: buildGeminiAgentContents(input.history),
     tools: buildGeminiAgentTools(Boolean(input.webSearch)),
     toolConfig: { functionCallingConfig: { mode: 'AUTO' } },
@@ -560,6 +580,7 @@ async function runGeminiAgentStream(
  * @param signal 可选的取消信号。
  * @param baseUrl 文本模型服务的基础地址。
  * @param protocol 文本模型的上游协议。
+ * @param locale 当前界面语言，用于约束描述输出语言。
  * @returns 图片描述文本；模型无文本输出时返回空字符串。
  */
 export async function describeImage(
@@ -569,9 +590,10 @@ export async function describeImage(
   signal?: AbortSignal,
   baseUrl: string = '',
   protocol: ProviderProtocol = 'openai',
+  locale: Locale = DEFAULT_LOCALE,
 ): Promise<string> {
   return runAgentRequestWithRetry(
-    attemptSignal => requestImageDescription(baseUrl, apiKey, model, imageDataUrl, protocol, attemptSignal),
+    attemptSignal => requestImageDescription(baseUrl, apiKey, model, imageDataUrl, protocol, locale, attemptSignal),
     signal,
     AGENT_IMAGE_DESCRIBE_ATTEMPT_TIMEOUT_MS,
   );
@@ -584,6 +606,7 @@ export async function describeImage(
  * @param model 文本模型标识。
  * @param imageDataUrl 待描述图片的 Data URL。
  * @param protocol 文本模型的上游协议。
+ * @param locale 当前界面语言，用于选择图片描述提示词。
  * @param signal 当前请求的取消与超时信号。
  * @returns 图片描述文本；模型无文本输出时返回空字符串。
  */
@@ -593,10 +616,11 @@ async function requestImageDescription(
   model: string,
   imageDataUrl: string,
   protocol: ProviderProtocol,
+  locale: Locale,
   signal: AbortSignal,
 ): Promise<string> {
   if (protocol === 'google') {
-    return requestGeminiImageDescription(baseUrl, apiKey, model, imageDataUrl, signal);
+    return requestGeminiImageDescription(baseUrl, apiKey, model, imageDataUrl, locale, signal);
   }
   const body = {
     model: model || AGENT_TEXT_MODEL_FALLBACK,
@@ -606,7 +630,7 @@ async function requestImageDescription(
       {
         role: 'user',
         content: [
-          { type: 'input_text', text: AGENT_IMAGE_DESCRIBE_PROMPT },
+          { type: 'input_text', text: getAgentImageDescribePrompt(locale) },
           { type: 'input_image', image_url: imageDataUrl },
         ],
       },
@@ -671,6 +695,7 @@ function toGeminiInlineImage(imageDataUrl: string): { mimeType: string; data: st
  * @param apiKey 上游 API 密钥。
  * @param model Gemini 模型标识。
  * @param imageDataUrl 待描述图片的 Data URL。
+ * @param locale 当前界面语言，用于选择图片描述提示词。
  * @param signal 当前请求的取消与超时信号。
  * @returns 去除空白后的图片描述；模型未输出文本时返回空字符串。
  */
@@ -679,6 +704,7 @@ async function requestGeminiImageDescription(
   apiKey: string,
   model: string,
   imageDataUrl: string,
+  locale: Locale,
   signal: AbortSignal,
 ): Promise<string> {
   const response = await fetch('/api/flyreq/proxy/text', {
@@ -694,7 +720,7 @@ async function requestGeminiImageDescription(
         contents: [{
           role: 'user',
           parts: [
-            { text: AGENT_IMAGE_DESCRIBE_PROMPT },
+            { text: getAgentImageDescribePrompt(locale) },
             { inlineData: toGeminiInlineImage(imageDataUrl) },
           ],
         }],
