@@ -15,6 +15,7 @@ const SERVER_RESTART_MARKERS = [
 
 const API_FAILURE_PATTERNS = [
   /^API 请求失败:\s*\d{3}/,
+  /^上游服务错误/,
   /^所有图片生成失败/,
   /响应中无图片数据/,
 ];

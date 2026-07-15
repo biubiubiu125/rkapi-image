@@ -46,6 +46,13 @@ describe('classifyTaskFailure', () => {
     expect(result.reason).toBe('api');
   });
 
+  it('上游服务错误 → terminal=true', () => {
+    const task = makeTask({ error: '上游服务错误（HTTP 400）：{"error":{"message":"Unknown parameter"}}' });
+    const result = classifyTaskFailure(task);
+    expect(result.terminal).toBe(true);
+    expect(result.reason).toBe('api');
+  });
+
   it('所有图片生成失败汇总 → terminal=true', () => {
     const task = makeTask({ error: '所有图片生成失败: API 请求失败: 401 ...' });
     const result = classifyTaskFailure(task);

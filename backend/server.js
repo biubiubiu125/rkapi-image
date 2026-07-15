@@ -1047,8 +1047,16 @@ function readJsonBody(req) {
   });
 }
 
+/**
+ * 规范化任务执行异常，保留已标识的上游原始响应并限制内部错误详情长度。
+ * @param error 任务执行期间捕获的异常对象或错误文本。
+ * @returns 可安全写入任务状态并展示给用户的错误文本。
+ */
 function normalizeError(error) {
   const message = error instanceof Error ? error.message : String(error);
+  if (message.startsWith('上游服务错误')) {
+    return message;
+  }
   if (/failed to fetch|fetch failed|networkerror|network request failed|load failed|network connection was lost|econnreset|socket hang up|terminated/i.test(message)) {
     return '网络连接失败。请检查服务器网络连接或稍后重试。';
   }
@@ -1449,15 +1457,6 @@ function isLikelyHtmlResponse(text) {
   return trimmed.startsWith('<!doctype html') || trimmed.startsWith('<html') || trimmed.startsWith('<head') || trimmed.startsWith('<body');
 }
 
-function summarizeUnexpectedResponse(text) {
-  const trimmed = String(text || '').trim();
-  if (!trimmed) return '';
-  if (isLikelyHtmlResponse(trimmed)) {
-    return '上游返回了 HTML 页面而不是 JSON。通常是 baseUrl 配置错误、请求被站点网关拦截，或该地址并非兼容的图片 API。';
-  }
-  return trimmed.length > 200 ? `${trimmed.slice(0, 200)}…` : trimmed;
-}
-
 function getMessageFromPayload(payload) {
   if (!payload || typeof payload !== 'object') return '';
   if (typeof payload.message === 'string' && payload.message.trim()) return payload.message.trim();
@@ -1480,17 +1479,6 @@ function getErrorMessageFromPayload(payload) {
   if (type === 'error' || type === 'upstream_error') return getMessageFromPayload(payload);
 
   return '';
-}
-
-function getUpstreamErrorText(text) {
-  const trimmed = String(text || '').trim();
-  if (isLikelyHtmlResponse(trimmed)) {
-    return '上游网关返回 HTML 错误页面，通常是 Cloudflare/Nginx 等网关在图片生成完成前截断了长连接。可尝试开启模型的流式图片请求，或改用内网/灰云地址。';
-  }
-  const data = parseJsonSafely(trimmed);
-  const message = getErrorMessageFromPayload(data) || getMessageFromPayload(data);
-  if (message) return message;
-  return trimmed.length > 500 ? `${trimmed.slice(0, 500)}…` : trimmed;
 }
 
 function normalizeImagePayloadValue(imageData) {
@@ -1607,26 +1595,28 @@ async function parseGptImageResponse(response) {
   const responseText = await response.text();
 
   if (!response.ok) {
-    const errorText = getUpstreamErrorText(responseText);
-    throw new Error(`API 请求失败: ${response.status}${errorText ? ` ${errorText}` : ''}`);
+    throw new Error(`上游服务错误（HTTP ${response.status}）：${responseText}`);
   }
 
   if (isEventStream) {
-    return extractImagePayloadFromEventStream(responseText);
+    try {
+      return extractImagePayloadFromEventStream(responseText);
+    } catch {
+      throw new Error(`上游服务错误：${responseText}`);
+    }
   }
 
   if (isLikelyHtmlResponse(responseText)) {
-    throw new Error('上游返回了 HTML 页面而不是 JSON。通常是 baseUrl 配置错误、请求被站点网关拦截，或该地址并非兼容的图片 API。');
+    throw new Error(`上游服务错误：${responseText}`);
   }
 
   const data = parseJsonSafely(responseText);
   if (!data) {
-    const summary = summarizeUnexpectedResponse(responseText);
-    throw new Error(summary ? `响应 JSON 格式无效: ${summary}` : '响应 JSON 格式无效');
+    throw new Error(`上游服务错误：${responseText}`);
   }
 
   const errorMessage = getErrorMessageFromPayload(data);
-  if (errorMessage) throw new Error(errorMessage);
+  if (errorMessage) throw new Error(`上游服务错误：${responseText}`);
 
   return extractImagePayload(data);
 }
@@ -1774,18 +1764,21 @@ async function generateFlyreqGeminiImage(apiKey, request, options = {}) {
   });
 
   if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`API 请求失败: ${response.status} ${errorText}`);
+    const responseText = await response.text();
+    throw new Error(`上游服务错误（HTTP ${response.status}）：${responseText}`);
   }
 
   const responseText = await response.text();
   if (isLikelyHtmlResponse(responseText)) {
-    throw new Error('上游返回了 HTML 页面而不是 JSON。通常是 baseUrl 配置错误、请求被站点网关拦截，或该地址并非兼容的图片 API。');
+    throw new Error(`上游服务错误：${responseText}`);
   }
   const data = parseJsonSafely(responseText);
   if (!data) {
-    const summary = summarizeUnexpectedResponse(responseText);
-    throw new Error(summary ? `响应 JSON 格式无效: ${summary}` : '响应 JSON 格式无效');
+    throw new Error(`上游服务错误：${responseText}`);
+  }
+  const errorMessage = getErrorMessageFromPayload(data);
+  if (errorMessage) {
+    throw new Error(`上游服务错误：${responseText}`);
   }
   return extractGeminiImagePayload(data);
 }
