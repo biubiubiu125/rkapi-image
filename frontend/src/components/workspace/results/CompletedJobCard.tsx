@@ -257,10 +257,23 @@ export const CompletedJobCard = memo(function CompletedJobCard({ job, onClear, o
     setReferenceMenuOpen(false);
   };
 
-  const copyPrompt = () => {
-    navigator.clipboard.writeText(effectivePrompt);
-    setPromptCopied(true);
-    setTimeout(() => setPromptCopied(false), 2000);
+  /**
+   * 将本张任务实际发送给上游的完整提示词复制到系统剪贴板。
+   * @returns 复制成功时显示成功状态；浏览器不支持或权限被拒绝时显示失败提示。
+   */
+  const copyPrompt = async (): Promise<void> => {
+    try {
+      if (!navigator.clipboard?.writeText) {
+        throw new Error('当前浏览器不支持复制提示词');
+      }
+      await navigator.clipboard.writeText(effectivePrompt);
+      setPromptCopied(true);
+      setTimeout(() => setPromptCopied(false), 2000);
+      dispatchImageActionToast('提示词已复制', 'success');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '提示词复制失败';
+      dispatchImageActionToast(message, 'error');
+    }
   };
 
   const openPreview = async () => {
@@ -352,13 +365,15 @@ export const CompletedJobCard = memo(function CompletedJobCard({ job, onClear, o
                 )}
               </div>
               <JobSseBadge job={job} />
-              <button
-                onClick={copyPrompt}
-                className="flex-shrink-0 text-muted-foreground transition-colors hover:text-foreground"
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                onClick={() => void copyPrompt()}
                 title="复制本张实际提示词"
+                aria-label="复制本张实际提示词"
               >
-                {promptCopied ? <Check className="w-3.5 h-3.5 text-success" /> : <Copy className="w-3.5 h-3.5" />}
-              </button>
+                {promptCopied ? <Check className="w-4 h-4 text-success" /> : <Copy className="w-4 h-4" />}
+              </Button>
             </div>
 
             {job.warning && (
