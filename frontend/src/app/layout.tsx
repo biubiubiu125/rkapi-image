@@ -17,7 +17,7 @@ export const metadata: Metadata = {
     shortcut: '/favicon.png',
     apple: '/icon-192.png',
   },
-  manifest: '/manifest.json',
+  manifest: '/api/flyreq/manifest.webmanifest',
   other: {
     'theme-color': '#1a1a2e',
   },

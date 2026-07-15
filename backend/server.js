@@ -43,6 +43,29 @@ const DEFAULT_IMAGE_MODEL_KEY_GUIDE = {
   ctaLabel: '前往 flyreq.com',
   url: 'https://flyreq.com',
 };
+const DEFAULT_PLATFORM_BRANDING = {
+  platformName: 'FlyReq Image',
+  logoUrl: '/favicon.png',
+  iconUrl: '/favicon.png',
+};
+const DEFAULT_IMAGE_MODEL_DEPLOYMENT_CONFIG = {
+  id: 'flyreq-gpt-image-2',
+  protocol: 'openai',
+  name: 'FlyReq',
+  modelId: '',
+  usesPresetModelId: true,
+  baseUrl: 'https://flyreq.com',
+  builtinPreset: 'gpt-image-2',
+  maxRefImages: 16,
+  maxOutputSize: '4K',
+  supportsAdvancedParams: true,
+  supportsTemperature: false,
+  streamImages: true,
+};
+const BUILTIN_IMAGE_PRESET_IDS = new Set([
+  'gemini-2.5-flash-image', 'gemini-3-pro-image-preview', 'gemini-3.1-flash-image-preview',
+  'gemini-3.1-flash-lite-image', 'gpt-image-2', 'grok-imagine-image', 'grok-imagine-image-quality',
+]);
 const DEFAULT_OUTBOUND_USER_AGENT = 'FlyReq-Image-Studio/3.1.1';
 
 function parseEnvFile(filePath) {
@@ -100,6 +123,27 @@ function loadEnvFile() {
 }
 
 loadEnvFile();
+
+/**
+ * 生成带时区标识的 ISO 8601 日志时间戳，便于按时间检索线上日志。
+ * @returns 当前 UTC 时间的 ISO 8601 字符串。
+ */
+function getLogTimestamp() {
+  return new Date().toISOString();
+}
+
+/**
+ * 为后端标准日志统一添加时间戳，同时保留原始 console 的对象和错误输出格式。
+ * @returns 无返回值。
+ */
+function installTimestampedConsole() {
+  for (const method of ['log', 'info', 'warn', 'error']) {
+    const write = console[method].bind(console);
+    console[method] = (...args) => write(`[${getLogTimestamp()}]`, ...args);
+  }
+}
+
+installTimestampedConsole();
 
 function normalizeBaseUrl(url) {
   return String(url || '').trim().replace(/\/+$/, '');
@@ -443,18 +487,74 @@ function resolveImagePresetModelIds(env = getRuntimeEnv()) {
   try {
     const parsed = JSON.parse(raw);
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
-    const validIds = new Set([
-      'gemini-2.5-flash-image', 'gemini-3-pro-image-preview', 'gemini-3.1-flash-image-preview',
-      'gemini-3.1-flash-lite-image', 'gpt-image-2', 'grok-imagine-image', 'grok-imagine-image-quality',
-    ]);
     const result = {};
     for (const [presetId, value] of Object.entries(parsed)) {
-      if (validIds.has(presetId) && typeof value === 'string' && value.trim()) result[presetId] = value.trim();
+      if (BUILTIN_IMAGE_PRESET_IDS.has(presetId) && typeof value === 'string' && value.trim()) result[presetId] = value.trim();
     }
     return result;
   } catch {
     return {};
   }
+}
+
+/**
+ * 解析布尔型环境变量，仅接受常用的真值和假值字符串。
+ * @param value 环境变量原始值。
+ * @param fallback 变量缺失或无效时采用的默认值。
+ * @returns 归一化后的布尔值。
+ */
+function parseBooleanEnv(value, fallback) {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (['1', 'true', 'yes', 'on'].includes(normalized)) return true;
+  if (['0', 'false', 'no', 'off'].includes(normalized)) return false;
+  return fallback;
+}
+
+/**
+ * 读取部署级首次图片模型配置，不包含 API Key，避免将密钥下发给浏览器。
+ * @param env 合并后的运行时环境变量对象。
+ * @returns 可安全传递到前端并用于首次初始化的图片模型配置。
+ */
+function resolveDefaultImageModelConfig(env = getRuntimeEnv()) {
+  const presetCandidate = String(env.FLYREQ_DEFAULT_IMAGE_MODEL_PRESET || '').trim();
+  const builtinPreset = BUILTIN_IMAGE_PRESET_IDS.has(presetCandidate)
+    ? presetCandidate
+    : DEFAULT_IMAGE_MODEL_DEPLOYMENT_CONFIG.builtinPreset;
+  const protocolCandidate = String(env.FLYREQ_DEFAULT_IMAGE_MODEL_PROTOCOL || '').trim();
+  const protocol = protocolCandidate === 'google' || protocolCandidate === 'openai'
+    ? protocolCandidate
+    : DEFAULT_IMAGE_MODEL_DEPLOYMENT_CONFIG.protocol;
+  const isXaiImagine = builtinPreset === 'grok-imagine-image' || builtinPreset === 'grok-imagine-image-quality';
+  const configuredModelId = String(env.FLYREQ_DEFAULT_IMAGE_MODEL_MODEL_ID || '').trim().slice(0, 200);
+  const usesPresetModelId = !configuredModelId;
+  const supportsAdvancedParams = protocol === 'openai' && builtinPreset === 'gpt-image-2'
+    ? parseBooleanEnv(env.FLYREQ_DEFAULT_IMAGE_MODEL_SUPPORTS_ADVANCED_PARAMS, DEFAULT_IMAGE_MODEL_DEPLOYMENT_CONFIG.supportsAdvancedParams)
+    : false;
+  const streamImages = protocol === 'openai' && builtinPreset === 'gpt-image-2'
+    ? parseBooleanEnv(env.FLYREQ_DEFAULT_IMAGE_MODEL_STREAM_IMAGES, DEFAULT_IMAGE_MODEL_DEPLOYMENT_CONFIG.streamImages)
+    : false;
+  return {
+    id: String(env.FLYREQ_DEFAULT_IMAGE_MODEL_KEY || '').trim().slice(0, 120) || DEFAULT_IMAGE_MODEL_DEPLOYMENT_CONFIG.id,
+    protocol: isXaiImagine ? 'openai' : protocol,
+    name: String(env.FLYREQ_DEFAULT_IMAGE_MODEL_NAME || '').trim().slice(0, 120) || DEFAULT_IMAGE_MODEL_DEPLOYMENT_CONFIG.name,
+    modelId: usesPresetModelId ? '' : configuredModelId,
+    usesPresetModelId,
+    baseUrl: String(env.FLYREQ_DEFAULT_IMAGE_MODEL_BASE_URL || '').trim().slice(0, 500) || DEFAULT_IMAGE_MODEL_DEPLOYMENT_CONFIG.baseUrl,
+    builtinPreset,
+    maxRefImages: isXaiImagine
+      ? 1
+      : parseIntegerEnv(env.FLYREQ_DEFAULT_IMAGE_MODEL_MAX_REF_IMAGES, DEFAULT_IMAGE_MODEL_DEPLOYMENT_CONFIG.maxRefImages, { min: 1, max: 16 }),
+    maxOutputSize: isXaiImagine
+      ? (String(env.FLYREQ_DEFAULT_IMAGE_MODEL_MAX_OUTPUT_SIZE || '').trim() === '1K' ? '1K' : '2K')
+      : (['512', '1K', '2K', '4K'].includes(String(env.FLYREQ_DEFAULT_IMAGE_MODEL_MAX_OUTPUT_SIZE || '').trim())
+        ? String(env.FLYREQ_DEFAULT_IMAGE_MODEL_MAX_OUTPUT_SIZE).trim()
+        : DEFAULT_IMAGE_MODEL_DEPLOYMENT_CONFIG.maxOutputSize),
+    supportsAdvancedParams,
+    supportsTemperature: protocol === 'google'
+      ? parseBooleanEnv(env.FLYREQ_DEFAULT_IMAGE_MODEL_SUPPORTS_TEMPERATURE, false)
+      : false,
+    streamImages,
+  };
 }
 
 function delay(ms) {
@@ -747,6 +847,61 @@ function getCenteredAspectCrop(width, height, aspectRatio) {
 }
 
 /**
+ * 校验品牌图片地址，只允许站内绝对路径或 HTTP(S) 资源地址。
+ * @param value 环境变量中读取到的品牌图片地址。
+ * @param fallback 配置缺失或地址无效时使用的默认地址。
+ * @returns 可安全下发给浏览器加载的图片地址。
+ */
+function normalizeBrandAssetUrl(value, fallback) {
+  const normalized = String(value || '').trim();
+  if (!normalized) return fallback;
+  if (normalized.startsWith('/') && !normalized.startsWith('//')) return normalized;
+  try {
+    const parsed = new URL(normalized);
+    return parsed.protocol === 'https:' || parsed.protocol === 'http:' ? normalized : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+/**
+ * 读取平台名称、Logo 与站点图标的运行时品牌配置。
+ * @param env 合并后的运行时环境变量对象。
+ * @returns 可直接下发至前端和 PWA Manifest 的品牌配置。
+ */
+function resolvePlatformBranding(env = getRuntimeEnv()) {
+  const configuredName = String(env.FLYREQ_PLATFORM_NAME || '').trim().slice(0, 120);
+  return {
+    platformName: configuredName || DEFAULT_PLATFORM_BRANDING.platformName,
+    logoUrl: normalizeBrandAssetUrl(env.FLYREQ_PLATFORM_LOGO_URL, DEFAULT_PLATFORM_BRANDING.logoUrl),
+    iconUrl: normalizeBrandAssetUrl(env.FLYREQ_PLATFORM_ICON_URL, DEFAULT_PLATFORM_BRANDING.iconUrl),
+  };
+}
+
+/**
+ * 根据当前品牌配置生成 PWA Manifest，确保安装后的名称和图标与页面一致。
+ * @param branding 已校验的平台品牌配置。
+ * @returns 可作为 Web App Manifest 返回的 JSON 对象。
+ */
+function buildPlatformManifest(branding) {
+  return {
+    id: '/',
+    name: branding.platformName,
+    short_name: branding.platformName,
+    description: branding.platformName,
+    start_url: '/',
+    display: 'standalone',
+    background_color: '#f5f5fa',
+    theme_color: '#1a1a2e',
+    orientation: 'any',
+    icons: [
+      { src: branding.iconUrl, sizes: '192x192', type: 'image/png', purpose: 'any' },
+      { src: branding.iconUrl, sizes: '512x512', type: 'image/png', purpose: 'any maskable' },
+    ],
+  };
+}
+
+/**
  * Providers are asked for the requested layout first. This is a final guard for
  * OpenAI-compatible gateways that return an image with a different layout.
  */
@@ -1026,8 +1181,16 @@ function readJsonBody(req) {
   });
 }
 
+/**
+ * 规范化任务执行异常，保留已标识的上游原始响应并限制内部错误详情长度。
+ * @param error 任务执行期间捕获的异常对象或错误文本。
+ * @returns 可安全写入任务状态并展示给用户的错误文本。
+ */
 function normalizeError(error) {
   const message = error instanceof Error ? error.message : String(error);
+  if (message.startsWith('上游服务错误')) {
+    return message;
+  }
   if (/failed to fetch|fetch failed|networkerror|network request failed|load failed|network connection was lost|econnreset|socket hang up|terminated/i.test(message)) {
     return '网络连接失败。请检查服务器网络连接或稍后重试。';
   }
@@ -1036,6 +1199,17 @@ function normalizeError(error) {
   }
   // 截断非预定义错误消息，避免泄露内部信息（文件路径、堆栈等）
   return message.length > 200 ? message.slice(0, 200) + '…' : message;
+}
+
+/**
+ * 构建上游 HTTP 失败的展示前缀，并为网关超时提供重试指引。
+ * @param status 上游响应的 HTTP 状态码。
+ * @returns 不包含上游响应体的错误前缀。
+ */
+function getUpstreamHttpErrorPrefix(status) {
+  return status === 504
+    ? '上游服务错误（HTTP 504，请再次重试）'
+    : `上游服务错误（HTTP ${status}）`;
 }
 
 function validateEnumValue(value, validValues, fieldName) {
@@ -1070,12 +1244,20 @@ function validateCreatePayload(body) {
   if (typeof body.model !== 'string' || body.model.trim().length === 0) throw new Error('模型名称不能为空');
   if (!Number.isInteger(body.parallelCount) || body.parallelCount < 1 || body.parallelCount > MAX_PARALLEL_COUNT) throw new Error('并发数量无效');
   if (body.imageApiFlavor !== undefined && !IMAGE_API_FLAVORS.has(body.imageApiFlavor)) throw new Error('图片 API 类型无效');
+  if (body.temperature !== undefined && (!Number.isFinite(body.temperature) || body.temperature < 0 || body.temperature > 2)) throw new Error('温度参数无效');
 
   if (!Array.isArray(body.images)) body.images = [];
   if (!Array.isArray(body.promptVariants)) {
     body.promptVariants = [];
   } else {
     body.promptVariants = body.promptVariants
+      .slice(0, body.parallelCount)
+      .map(item => typeof item === 'string' ? item.trim() : '');
+  }
+  if (!Array.isArray(body.effectivePrompts)) {
+    body.effectivePrompts = [];
+  } else {
+    body.effectivePrompts = body.effectivePrompts
       .slice(0, body.parallelCount)
       .map(item => typeof item === 'string' ? item.trim() : '');
   }
@@ -1199,9 +1381,13 @@ function createTaskBatch(body, req) {
   const now = new Date().toISOString();
   const tasks = Array.from({ length: body.parallelCount }, (_, index) => {
     const promptVariant = body.promptVariants[index];
+    const effectivePrompt = body.effectivePrompts[index];
+    const requestBody = effectivePrompt
+      ? { ...body, prompt: effectivePrompt, promptVariants: [] }
+      : body;
     return {
       taskId: randomUUID(),
-      requestForDb: buildTaskRequestForDb(body, 1, promptVariant ? [promptVariant] : []),
+      requestForDb: buildTaskRequestForDb(requestBody, 1, effectivePrompt ? [] : (promptVariant ? [promptVariant] : [])),
     };
   });
   const tx = db.transaction(() => {
@@ -1416,15 +1602,6 @@ function isLikelyHtmlResponse(text) {
   return trimmed.startsWith('<!doctype html') || trimmed.startsWith('<html') || trimmed.startsWith('<head') || trimmed.startsWith('<body');
 }
 
-function summarizeUnexpectedResponse(text) {
-  const trimmed = String(text || '').trim();
-  if (!trimmed) return '';
-  if (isLikelyHtmlResponse(trimmed)) {
-    return '上游返回了 HTML 页面而不是 JSON。通常是 baseUrl 配置错误、请求被站点网关拦截，或该地址并非兼容的图片 API。';
-  }
-  return trimmed.length > 200 ? `${trimmed.slice(0, 200)}…` : trimmed;
-}
-
 function getMessageFromPayload(payload) {
   if (!payload || typeof payload !== 'object') return '';
   if (typeof payload.message === 'string' && payload.message.trim()) return payload.message.trim();
@@ -1447,17 +1624,6 @@ function getErrorMessageFromPayload(payload) {
   if (type === 'error' || type === 'upstream_error') return getMessageFromPayload(payload);
 
   return '';
-}
-
-function getUpstreamErrorText(text) {
-  const trimmed = String(text || '').trim();
-  if (isLikelyHtmlResponse(trimmed)) {
-    return '上游网关返回 HTML 错误页面，通常是 Cloudflare/Nginx 等网关在图片生成完成前截断了长连接。可尝试开启模型的流式图片请求，或改用内网/灰云地址。';
-  }
-  const data = parseJsonSafely(trimmed);
-  const message = getErrorMessageFromPayload(data) || getMessageFromPayload(data);
-  if (message) return message;
-  return trimmed.length > 500 ? `${trimmed.slice(0, 500)}…` : trimmed;
 }
 
 function normalizeImagePayloadValue(imageData) {
@@ -1574,26 +1740,28 @@ async function parseGptImageResponse(response) {
   const responseText = await response.text();
 
   if (!response.ok) {
-    const errorText = getUpstreamErrorText(responseText);
-    throw new Error(`API 请求失败: ${response.status}${errorText ? ` ${errorText}` : ''}`);
+    throw new Error(`${getUpstreamHttpErrorPrefix(response.status)}：${responseText}`);
   }
 
   if (isEventStream) {
-    return extractImagePayloadFromEventStream(responseText);
+    try {
+      return extractImagePayloadFromEventStream(responseText);
+    } catch {
+      throw new Error(`上游服务错误：${responseText}`);
+    }
   }
 
   if (isLikelyHtmlResponse(responseText)) {
-    throw new Error('上游返回了 HTML 页面而不是 JSON。通常是 baseUrl 配置错误、请求被站点网关拦截，或该地址并非兼容的图片 API。');
+    throw new Error(`上游服务错误：${responseText}`);
   }
 
   const data = parseJsonSafely(responseText);
   if (!data) {
-    const summary = summarizeUnexpectedResponse(responseText);
-    throw new Error(summary ? `响应 JSON 格式无效: ${summary}` : '响应 JSON 格式无效');
+    throw new Error(`上游服务错误：${responseText}`);
   }
 
   const errorMessage = getErrorMessageFromPayload(data);
-  if (errorMessage) throw new Error(errorMessage);
+  if (errorMessage) throw new Error(`上游服务错误：${responseText}`);
 
   return extractImagePayload(data);
 }
@@ -1733,7 +1901,7 @@ async function generateFlyreqGeminiImage(apiKey, request, options = {}) {
     body: JSON.stringify({
       contents: [{ role: 'user', parts }],
       generationConfig: {
-        temperature: request.temperature,
+        ...(typeof request.temperature === 'number' ? { temperature: request.temperature } : {}),
         responseModalities: ['IMAGE'],
         imageConfig: { imageSize: request.outputSize, aspectRatio: request.aspectRatio },
       },
@@ -1741,18 +1909,21 @@ async function generateFlyreqGeminiImage(apiKey, request, options = {}) {
   });
 
   if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`API 请求失败: ${response.status} ${errorText}`);
+    const responseText = await response.text();
+    throw new Error(`${getUpstreamHttpErrorPrefix(response.status)}：${responseText}`);
   }
 
   const responseText = await response.text();
   if (isLikelyHtmlResponse(responseText)) {
-    throw new Error('上游返回了 HTML 页面而不是 JSON。通常是 baseUrl 配置错误、请求被站点网关拦截，或该地址并非兼容的图片 API。');
+    throw new Error(`上游服务错误：${responseText}`);
   }
   const data = parseJsonSafely(responseText);
   if (!data) {
-    const summary = summarizeUnexpectedResponse(responseText);
-    throw new Error(summary ? `响应 JSON 格式无效: ${summary}` : '响应 JSON 格式无效');
+    throw new Error(`上游服务错误：${responseText}`);
+  }
+  const errorMessage = getErrorMessageFromPayload(data);
+  if (errorMessage) {
+    throw new Error(`上游服务错误：${responseText}`);
   }
   return extractGeminiImagePayload(data);
 }
@@ -2174,6 +2345,14 @@ async function handleApi(req, res, pathname) {
       return true;
     }
 
+    if (req.method === 'GET' && apiPathname === '/api/flyreq/manifest.webmanifest') {
+      sendJson(res, 200, buildPlatformManifest(resolvePlatformBranding(getRuntimeEnv())), {
+        'Content-Type': 'application/manifest+json; charset=utf-8',
+        'Cache-Control': 'no-store, no-cache, must-revalidate',
+      });
+      return true;
+    }
+
     if (req.method === 'GET' && apiPathname === '/api/flyreq/config') {
       const env = getRuntimeEnv();
       const rawMode = String(env.PROMPT_GALLERY_MODE || '2').trim();
@@ -2186,6 +2365,8 @@ async function handleApi(req, res, pathname) {
           promptGalleryPasswordEnabled: String(env.PROMPT_GALLERY_PASSWORD || '').trim().length > 0,
           imageModelKeyGuide: resolveImageModelKeyGuide(env),
           imagePresetModelIds: resolveImagePresetModelIds(env),
+          defaultImageModel: resolveDefaultImageModelConfig(env),
+          branding: resolvePlatformBranding(env),
         },
         {
           'Cache-Control': 'no-store, no-cache, must-revalidate',
@@ -2272,7 +2453,13 @@ async function handleApi(req, res, pathname) {
         const authHeaders = { 'Content-Type': 'application/json' };
 
         if (protocol === 'google') {
-          targetUrl = appendProtocolApiPath('google', normalizedBaseUrl, `/v1beta/models/${encodeURIComponent(model || '')}:streamGenerateContent?alt=sse`);
+          targetUrl = appendProtocolApiPath(
+            'google',
+            normalizedBaseUrl,
+            stream
+              ? `/v1beta/models/${encodeURIComponent(model || '')}:streamGenerateContent?alt=sse`
+              : `/v1beta/models/${encodeURIComponent(model || '')}:generateContent`,
+          );
           authHeaders['x-goog-api-key'] = apiKey;
           authHeaders['Authorization'] = `Bearer ${apiKey}`;
         } else {

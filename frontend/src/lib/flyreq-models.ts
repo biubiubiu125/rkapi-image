@@ -20,6 +20,8 @@ export interface ImageModelConfig {
   maxRefImages: number;
   maxOutputSize: ImageOutputSize;
   supportsAdvancedParams: boolean;
+  /** 是否允许向上游发送温度参数。未配置时按内置模板迁移。 */
+  supportsTemperature?: boolean;
   streamImages?: boolean;
 }
 
@@ -99,9 +101,15 @@ export const DEFAULT_IMAGE_MODELS: ImageModelConfig[] = [
     maxRefImages: 16,
     maxOutputSize: '4K',
     supportsAdvancedParams: true,
-    streamImages: false,
+    supportsTemperature: false,
+    streamImages: true,
   },
 ];
+
+/** 部署级下发的首次图片模型配置不携带 API Key。 */
+export type DeploymentDefaultImageModelConfig = Omit<ImageModelConfig, 'apiKey'>;
+
+let deploymentDefaultImageModel: ImageModelConfig = { ...DEFAULT_IMAGE_MODELS[0] };
 
 export function isXaiImaginePresetId(presetId: string): boolean {
   return presetId === 'grok-imagine-image' || presetId === 'grok-imagine-image-quality';
@@ -188,10 +196,35 @@ function normalizeImageModelConfig(raw: Partial<ImageModelConfig>): ImageModelCo
     supportsAdvancedParams: protocol === 'openai' && preset.supportsAdvancedParams
       ? (typeof raw.supportsAdvancedParams === 'boolean' ? raw.supportsAdvancedParams : preset.supportsAdvancedParams)
       : false,
+    supportsTemperature: protocol === 'google'
+      ? (typeof raw.supportsTemperature === 'boolean' ? raw.supportsTemperature : Boolean(usesPresetModelId && preset.supportsTemperature))
+      : false,
     streamImages: protocol === 'openai' && preset.id === 'gpt-image-2'
       ? Boolean(raw.streamImages ?? preset.streamImages)
       : false,
   };
+}
+
+/**
+ * 应用部署级首次图片模型配置，仅影响没有本地模型注册表的新浏览器。
+ * @param config 后端配置接口下发的默认图片模型；缺失时恢复内置默认值。
+ * @returns 无返回值，后续首次读取模型注册表会使用最新配置。
+ */
+export function applyDeploymentDefaultImageModel(config?: Partial<DeploymentDefaultImageModelConfig>): void {
+  if (!config) {
+    deploymentDefaultImageModel = { ...DEFAULT_IMAGE_MODELS[0] };
+    return;
+  }
+  const normalized = normalizeImageModelConfig({ ...DEFAULT_IMAGE_MODELS[0], ...config, apiKey: '' });
+  deploymentDefaultImageModel = normalized || { ...DEFAULT_IMAGE_MODELS[0] };
+}
+
+/**
+ * 创建当前部署生效的首次图片模型副本，避免调用方修改全局默认对象。
+ * @returns 仅包含一个首次默认图片模型的数组。
+ */
+function getDeploymentDefaultImageModels(): ImageModelConfig[] {
+  return [{ ...deploymentDefaultImageModel }];
 }
 
 function normalizeTextModelConfig(raw: Partial<TextModelConfig>): TextModelConfig | null {
@@ -235,12 +268,12 @@ function isCompleteTextModel(model: Partial<TextModelConfig>): model is TextMode
 }
 
 function ensureImageModels(raw?: unknown): ImageModelConfig[] {
-  if (!Array.isArray(raw) || raw.length === 0) return DEFAULT_IMAGE_MODELS;
+  if (!Array.isArray(raw) || raw.length === 0) return getDeploymentDefaultImageModels();
   const models = raw
     .map((item) => normalizeImageModelConfig((item || {}) as Partial<ImageModelConfig>))
     .filter((item): item is ImageModelConfig => Boolean(item))
     .filter((item, index, list) => list.findIndex((candidate) => candidate.id === item.id) === index);
-  return models.length > 0 ? models : DEFAULT_IMAGE_MODELS;
+  return models.length > 0 ? models : getDeploymentDefaultImageModels();
 }
 
 function ensureTextModels(raw?: unknown): TextModelConfig[] {
@@ -270,7 +303,7 @@ function ensureDefaults(raw: Partial<DefaultModels> | undefined, imageModels: Im
 
 function getInitialRegistry(): FlyreqModelRegistry {
   return {
-    imageModels: DEFAULT_IMAGE_MODELS,
+    imageModels: getDeploymentDefaultImageModels(),
     textModels: [],
     defaults: DEFAULT_DEFAULTS,
   };

@@ -119,6 +119,7 @@ URL 只需要一个 `provider` 参数，内容是 JSON 字符串。支持裸 JSO
   "apiKey": "YOUR_API_KEY",
   "maxRefImages": 16,
   "maxOutputSize": "4K",
+  "supportsTemperature": false,
   "streamImages": true
 }
 ```
@@ -151,6 +152,7 @@ JSON 字段：
 | `apiKey` | API Key |
 | `maxRefImages` | 最大参考图数量 |
 | `maxOutputSize` | 最大分辨率：`512`、`1K`、`2K`、`4K` |
+| `supportsTemperature` | 可选，仅 Google 图片协议有效；为 `true` 时显示并发送 `temperature` 参数 |
 | `streamImages` | 可选，仅 OpenAI Images 协议有效；为 `true` 时发送流式图片请求 |
 
 匹配规则：优先按 `modelKey` 更新已有模型；没有 `modelKey` 时，按 `name + modelId + baseUrl` 匹配；仍未匹配则新增模型。配置完整时会同时设为文生图和图生图默认模型。注意：`apiKey` 会短暂出现在浏览器地址栏中，FlyReq Image 会在读取后立即清理 URL。
@@ -517,10 +519,24 @@ docker push ghcr.io/doudou770/flyreq-image-studio:latest
 | `FLYREQ_IMAGE_DIR` | 否 | `backend/flyreq-images/` | 任务产物落盘目录 |
 | `FLYREQ_BASE_URL_REWRITE_MAP` | 否 | 空 | Base URL 出站改写表；例如 `{"https://flyreq.com":"http://new-api:3000"}` |
 | `FLYREQ_OUTBOUND_USER_AGENT` | 否 | `FlyReq-Image-Studio/3.1.1` | 上游请求携带的稳定服务标识；请配置为部署方可追溯的产品名称，不要伪造浏览器或第三方服务身份 |
+| `FLYREQ_PLATFORM_NAME` | 否 | `FlyReq Image` | 平台名称；用于页面标题、Header、设置页和 PWA 名称 |
+| `FLYREQ_PLATFORM_LOGO_URL` | 否 | `/favicon.png` | Header Logo 地址；仅允许站内绝对路径或 HTTP(S) URL |
+| `FLYREQ_PLATFORM_ICON_URL` | 否 | `/favicon.png` | 浏览器 favicon 与 PWA 图标地址；仅允许站内绝对路径或 HTTP(S) URL |
 | `FLYREQ_IMAGE_MODEL_KEY_GUIDE_TITLE` | 否 | `还没有图片模型 API Key？` | 设置页图片模型 Key 指引标题 |
 | `FLYREQ_IMAGE_MODEL_KEY_GUIDE_DESCRIPTION` | 否 | FlyReq 默认说明 | 设置页图片模型 Key 指引描述 |
 | `FLYREQ_IMAGE_MODEL_KEY_GUIDE_CTA_LABEL` | 否 | `前往 flyreq.com` | 设置页图片模型 Key 指引按钮文字 |
 | `FLYREQ_IMAGE_MODEL_KEY_GUIDE_URL` | 否 | `https://flyreq.com` | 设置页图片模型 Key 指引跳转地址 |
+| `FLYREQ_DEFAULT_IMAGE_MODEL_KEY` | 否 | `flyreq-gpt-image-2` | 首次默认图片模型的稳定内部 Key |
+| `FLYREQ_DEFAULT_IMAGE_MODEL_NAME` | 否 | `FlyReq` | 首次默认图片模型的显示名称 |
+| `FLYREQ_DEFAULT_IMAGE_MODEL_PROTOCOL` | 否 | `openai` | 首次默认图片模型协议：`openai` 或 `google` |
+| `FLYREQ_DEFAULT_IMAGE_MODEL_BASE_URL` | 否 | `https://flyreq.com` | 首次默认图片模型的 Base URL |
+| `FLYREQ_DEFAULT_IMAGE_MODEL_MODEL_ID` | 否 | 空 | 实际模型 ID；留空时使用预设模型 ID 映射 |
+| `FLYREQ_DEFAULT_IMAGE_MODEL_PRESET` | 否 | `gpt-image-2` | 内置图片预设 ID，决定模型能力边界 |
+| `FLYREQ_DEFAULT_IMAGE_MODEL_MAX_REF_IMAGES` | 否 | `16` | 最大参考图数量，范围 `1-16` |
+| `FLYREQ_DEFAULT_IMAGE_MODEL_MAX_OUTPUT_SIZE` | 否 | `4K` | 最大输出规格：`512`、`1K`、`2K`、`4K` |
+| `FLYREQ_DEFAULT_IMAGE_MODEL_SUPPORTS_ADVANCED_PARAMS` | 否 | `true` | 是否默认启用 GPT Image 2 额外参数 |
+| `FLYREQ_DEFAULT_IMAGE_MODEL_SUPPORTS_TEMPERATURE` | 否 | `false` | Google 图片模型是否默认支持 temperature |
+| `FLYREQ_DEFAULT_IMAGE_MODEL_STREAM_IMAGES` | 否 | `true` | 是否默认开启 OpenAI GPT Image 2 流式图片请求 |
 | `PROMPT_GALLERY_MODE` | 否 | `2` | `1` 常驻 / `2` 私密密码（点七下标题） / `3` 关闭 |
 | `PROMPT_GALLERY_PASSWORD` | 否 | 空 | 提示词广场私密模式密码；为空时私密模式可直接开启 |
 

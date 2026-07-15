@@ -90,15 +90,20 @@ export function WorkspaceShell() {
 
   useEffect(() => {
     if (externalConfigParsedRef.current) return;
-    externalConfigParsedRef.current = true;
 
     const url = new URL(window.location.href);
     const config = parseExternalModelConfig(url);
     if (!config) return;
 
-    setExternalModelConfig(config);
-    setSettingsOpen(true);
-    window.history.replaceState(null, '', getCleanUrlAfterExternalModelConfig(url));
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (cancelled) return;
+      externalConfigParsedRef.current = true;
+      setExternalModelConfig(config);
+      setSettingsOpen(true);
+      window.history.replaceState(null, '', getCleanUrlAfterExternalModelConfig(url));
+    });
+    return () => { cancelled = true; };
   }, []);
 
   useEffect(() => subscribeUseAsImageReference(detail => {
@@ -237,6 +242,10 @@ export function WorkspaceShell() {
       void workspace.clearJobsByMode(scope);
     }
   }, [generationClearScope, workspace]);
+
+  if (!galleryConfig.ready) {
+    return <div className="flex min-h-screen items-center justify-center bg-background"><div className="h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent" /></div>;
+  }
 
   return (
     <div
