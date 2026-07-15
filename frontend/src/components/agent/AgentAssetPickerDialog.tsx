@@ -15,6 +15,7 @@ import {
   type TextAsset,
 } from '@/lib/asset-store';
 import { cn } from '@/lib/utils';
+import { useI18n } from '@/components/LanguageProvider';
 
 interface AgentAssetPickerDialogProps {
   open: boolean;
@@ -90,6 +91,7 @@ export function AgentTextAssetPickerDialog({
   onOpenChange,
   onConfirm,
 }: AgentTextAssetPickerDialogProps) {
+  const { t } = useI18n();
   const [assets, setAssets] = useState<TextAsset[]>([]);
   const [loading, setLoading] = useState(false);
   const [query, setQuery] = useState('');
@@ -141,7 +143,7 @@ export function AgentTextAssetPickerDialog({
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <FileText className="h-4 w-4" />
-            导入提示词素材
+            {t('assetPicker.importPromptTitle')}
           </DialogTitle>
         </DialogHeader>
 
@@ -152,7 +154,7 @@ export function AgentTextAssetPickerDialog({
               type="text"
               value={query}
               onChange={event => setQuery(event.target.value)}
-              placeholder="搜索提示词内容、来源"
+              placeholder={t('assetPicker.searchPrompts')}
               className="h-8 w-full rounded-md border border-input bg-background pl-8 pr-8 text-sm outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/30"
             />
             {query && (
@@ -160,17 +162,17 @@ export function AgentTextAssetPickerDialog({
                 type="button"
                 onClick={() => setQuery('')}
                 className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                title="清空搜索"
+                title={t('common.clearSearch')}
               >
                 <X className="h-3.5 w-3.5" />
               </button>
             )}
           </div>
           <Button variant="outline" size="sm" onClick={() => onOpenChange(false)}>
-            取消
+            {t('common.cancel')}
           </Button>
           <Button size="sm" onClick={handleConfirm} disabled={!selectedAsset}>
-            导入选中
+            {t('common.import')}
           </Button>
         </div>
 
@@ -181,7 +183,7 @@ export function AgentTextAssetPickerDialog({
         ) : filteredAssets.length === 0 ? (
           <div className="flex min-h-48 flex-col items-center justify-center gap-2 text-muted-foreground">
             <FileText className="h-8 w-8 opacity-50" />
-            <p className="text-sm">{assets.length === 0 ? '素材库暂无提示词' : '没有匹配的提示词'}</p>
+            <p className="text-sm">{assets.length === 0 ? t('assetPicker.noPromptAssets') : t('assetPicker.noMatchingPrompts')}</p>
           </div>
         ) : (
           <div className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">
@@ -238,6 +240,7 @@ export function AgentAssetPickerDialog({
   onOpenChange,
   onConfirm,
 }: AgentAssetPickerDialogProps) {
+  const { t } = useI18n();
   const [assets, setAssets] = useState<ImageAsset[]>([]);
   const [loading, setLoading] = useState(false);
   const [query, setQuery] = useState('');
@@ -355,9 +358,9 @@ export function AgentAssetPickerDialog({
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Grid3X3 className="h-4 w-4" />
-            从素材库导入
+            {t('assetPicker.importImageTitle')}
             <span className="text-xs font-normal text-muted-foreground">
-              已选 {selectedIds.size} / {maxSelected}
+              {t('assetPicker.selectedCount', { selected: selectedIds.size, max: maxSelected })}
             </span>
           </DialogTitle>
         </DialogHeader>
@@ -369,7 +372,7 @@ export function AgentAssetPickerDialog({
               type="text"
               value={query}
               onChange={event => setQuery(event.target.value)}
-              placeholder="搜索名称、标签、备注、来源"
+              placeholder={t('assetPicker.searchImages')}
               className="h-8 w-full rounded-md border border-input bg-background pl-8 pr-8 text-sm outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/30"
             />
             {query && (
@@ -377,17 +380,17 @@ export function AgentAssetPickerDialog({
                 type="button"
                 onClick={() => setQuery('')}
                 className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                title="清空搜索"
+                title={t('common.clearSearch')}
               >
                 <X className="h-3.5 w-3.5" />
               </button>
             )}
           </div>
           <Button variant="outline" size="sm" onClick={() => onOpenChange(false)}>
-            取消
+            {t('common.cancel')}
           </Button>
           <Button size="sm" onClick={handleConfirm} disabled={selectedIds.size === 0}>
-            导入选中
+            {t('common.import')}
           </Button>
         </div>
 
@@ -427,7 +430,7 @@ export function AgentAssetPickerDialog({
               onClick={() => setSelectedTag('')}
               className={cn('inline-flex min-h-7 shrink-0 items-center whitespace-nowrap rounded-full border px-2.5 text-xs leading-tight transition-colors', !selectedTag ? 'border-primary bg-primary text-primary-foreground' : 'border-border hover:bg-muted')}
             >
-              全部
+              {t('assetPicker.allTags')}
             </button>
             {allTags.map(tag => (
               <button
@@ -449,7 +452,7 @@ export function AgentAssetPickerDialog({
         ) : filteredAssets.length === 0 ? (
           <div className="flex min-h-48 flex-col items-center justify-center gap-2 text-muted-foreground">
             <ImageIcon className="h-8 w-8 opacity-50" />
-            <p className="text-sm">{assets.length === 0 ? '素材库暂无图片' : '没有匹配的素材'}</p>
+            <p className="text-sm">{assets.length === 0 ? t('assetPicker.noImageAssets') : t('assetPicker.noMatchingImages')}</p>
           </div>
         ) : (
           <div
@@ -506,10 +509,10 @@ export function AgentAssetPickerDialog({
                               <div className="flex min-h-5 flex-wrap gap-1 overflow-hidden">
                                 {asset.tags.length > 0
                                   ? asset.tags.slice(0, 3).map(tag => <Badge key={tag} variant="outline" className="h-auto min-h-5 max-w-full px-1.5 py-0.5 text-[10px] leading-tight">{tag}</Badge>)
-                                  : <span className="text-[11px] text-muted-foreground">无标签</span>}
+                                  : <span className="text-[11px] text-muted-foreground">{t('assetPicker.noTags')}</span>}
                               </div>
                               <p className="line-clamp-2 min-w-0 text-xs leading-relaxed text-muted-foreground">
-                                {asset.note || asset.prompt || '暂无备注'}
+                                {asset.note || asset.prompt || t('assetPicker.noNotes')}
                               </p>
                             </div>
                           </button>

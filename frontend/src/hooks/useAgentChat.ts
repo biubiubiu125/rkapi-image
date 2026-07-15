@@ -44,6 +44,7 @@ import {
   type PendingGenerationData,
 } from '@/lib/agent-context-store';
 import { getDefaultConfiguredTextModel } from '@/lib/model-endpoints';
+import { useI18n } from '@/components/LanguageProvider';
 
 export type AgentPhase = 'idle' | 'loading' | 'describing' | 'streaming' | 'proposal' | 'generating';
 
@@ -184,6 +185,7 @@ async function resultImageToBlob(ref: string): Promise<Blob> {
 }
 
 export function useAgentChat() {
+  const { locale, t } = useI18n();
   const [ready, setReady] = useState(false);
   const [hasApiKey] = useState(() => hasConfiguredTextModel());
   const [phase, setPhase] = useState<AgentPhase>('idle');
@@ -301,7 +303,7 @@ export function useAgentChat() {
         setGeneratingTaskId(generation.taskId);
         setGeneratingStartedAt(generation.startedAt);
         setGenerationDraft({
-          analysis: generation.pendingAnalysis || generation.proposal.reason || '根据你的描述，正在生成图片。',
+          analysis: generation.pendingAnalysis || generation.proposal.reason || '',
           reasoning: generation.pendingReasoning || undefined,
           prompt: generation.proposal.prompt,
           parallelCount: generation.parallelCount,
@@ -362,16 +364,17 @@ export function useAgentChat() {
         describeSignal,
         configured.baseUrl,
         configured.protocol,
+        locale,
       );
     } catch {
-      description = '(图片描述生成失败)';
+      description = '';
     }
 
     const record: AgentImageRecord = {
       imgId,
       source,
       thumbnail: previewDataUrl,
-      description: description || '(无描述)',
+      description,
       mimeType,
       contentHash,
       sourceTaskId,
@@ -381,7 +384,7 @@ export function useAgentChat() {
     };
     registerImage(record);
     return record;
-  }, [getAgentTextModelConfig, nextImgId, registerImage]);
+  }, [getAgentTextModelConfig, locale, nextImgId, registerImage]);
 
   /** 重新生成已有图片的描述 */
   const redescribeImage = useCallback(async (imgId: string): Promise<string> => {
@@ -395,13 +398,14 @@ export function useAgentChat() {
       undefined,
       configured.baseUrl,
       configured.protocol,
+      locale,
     );
-    const description = newDescription || '(无描述)';
+    const description = newDescription;
     const updated: AgentImageRecord = { ...record, description };
     setImages(prev => prev.map(img => img.imgId === imgId ? updated : img));
     void putImageRecord(updated);
     return description;
-  }, [getAgentTextModelConfig, images]);
+  }, [getAgentTextModelConfig, images, locale]);
 
   const runChat = useCallback((history: AgentMessage[], catalog: AgentImageRecord[]) => {
     const configured = getAgentTextModelConfig();
@@ -420,6 +424,7 @@ export function useAgentChat() {
         model: configured.modelId,
         history,
         webSearch: webSearchEnabled,
+        locale,
         catalog: catalog.map(img => ({ imgId: img.imgId, description: img.description })),
         modelCatalog,
       },
@@ -494,7 +499,7 @@ export function useAgentChat() {
       configured.baseUrl,
     );
     streamHandleRef.current = handle;
-  }, [appendMessage, appendStreamingToken, flushAndCancelRaf, getAgentTextModelConfig, webSearchEnabled]);
+  }, [appendMessage, appendStreamingToken, flushAndCancelRaf, getAgentTextModelConfig, locale, webSearchEnabled]);
 
   const sendMessage = useCallback(async (text: string, uploads: PendingUpload[], imageReferences?: string[]) => {
     if (phase !== 'idle') return;
@@ -684,17 +689,17 @@ export function useAgentChat() {
     }
 
     const imgIds = records.map(r => r.imgId);
-    const imgList = imgIds.join('、');
+    const imgList = imgIds.join(', ');
     const analysis = pendingAnalysisRef.current || ctx.analysisFallbackReason || '';
     const reasoning = pendingReasoningRef.current;
     pendingAnalysisRef.current = '';
     pendingReasoningRef.current = '';
     let generatedText = '';
-    generatedText += `分析：${analysis || '根据你的描述，已为你生成图片。'}\n`;
-    generatedText += `优化提示词：${ctx.prompt}\n`;
-    generatedText += `结果：已生成图片 ${imgList}。需要继续调整就告诉我。`;
+    generatedText += `${t('agentGeneration.analysis')}: ${analysis || t('agentGeneration.completedAnalysis')}\n`;
+    generatedText += `${t('agentGeneration.optimizedPrompt')}: ${ctx.prompt}\n`;
+    generatedText += `${t('agentGeneration.result')}: ${t('agentGeneration.completedResult', { images: imgList })}`;
     if (errors.length > 0) {
-      generatedText += `\n（部分图片处理失败：${errors.join('；')}）`;
+      generatedText += `\n${t('agentGeneration.partialFailure', { errors: errors.join('; ') })}`;
     }
 
     appendMessage({
@@ -713,7 +718,7 @@ export function useAgentChat() {
     setGenerationDraft(null);
     setIsSyncing(false);
     setPhase('idle');
-  }, [appendMessage, ingestImage]);
+  }, [appendMessage, ingestImage, t]);
 
   /** 页面刷新后恢复生图轮询：使用持久化的 generation 数据继续轮询并处理结果 */
   const resumeGeneration = useCallback(async (data: PendingGenerationData) => {
@@ -828,7 +833,7 @@ export function useAgentChat() {
     setPhase('generating');
     setGeneratingStartedAt(startedAt);
     setGenerationDraft({
-      analysis: pendingAnalysisRef.current || approvedProposal.reason || '根据你的描述，正在生成图片。',
+      analysis: pendingAnalysisRef.current || approvedProposal.reason || '',
       reasoning: pendingReasoningRef.current || undefined,
       prompt,
       parallelCount: params.parallelCount,

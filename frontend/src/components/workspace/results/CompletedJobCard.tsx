@@ -15,6 +15,7 @@ import { getEffectiveImagePrompt } from '@/lib/prompt-variants';
 import { HistoryImagePreview } from '@/components/workspace/results/HistoryImagePreview';
 import { JobSseBadge } from '@/components/workspace/results/JobSseBadge';
 import { ConfirmDialog } from '@/components/workspace/dialogs/ConfirmDialog';
+import { useI18n } from '@/components/LanguageProvider';
 import {
   copyImagePayload,
   dispatchImageActionToast,
@@ -31,8 +32,10 @@ interface CompletedJobCardProps {
 
 interface DownloadProgressSummary {
   active: boolean;
+  completed: number;
   failed: number;
-  message: string;
+  knownTotalBytes: number;
+  loadedBytes: number;
   percent: number;
 }
 
@@ -65,21 +68,18 @@ function getDownloadProgressSummary(progress: StoredJob['imageDownloadProgress']
     Math.round(((progress.completed + progress.failed) / progress.total) * 100)
   );
   const percent = bytePercent ?? completionPercent;
-  const message = active
-    ? knownTotalBytes > 0
-      ? `正在取回 ${formatBytes(loadedBytes)} / ${formatBytes(knownTotalBytes)}，${percent}%`
-      : `正在取回 ${formatBytes(loadedBytes)}`
-    : `取回失败 ${failed} 张，已缓存 ${progress.completed} 张`;
-
   return {
     active,
+    completed: progress.completed,
     failed,
-    message,
+    knownTotalBytes,
+    loadedBytes,
     percent,
   };
 }
 
 export const CompletedJobCard = memo(function CompletedJobCard({ job, onClear, onRetry, onRetryDownload }: CompletedJobCardProps) {
+  const { t } = useI18n();
   const [imgCopied, setImgCopied] = useState(false);
   const [promptCopied, setPromptCopied] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
@@ -100,10 +100,10 @@ export const CompletedJobCard = memo(function CompletedJobCard({ job, onClear, o
     name: `flyreq-image-${job.id.slice(0, 8)}${sourceImages.length > 1 ? `-${index + 1}` : ''}`,
     storedRef: { jobId: job.id, imageRef, imageIndex: index },
     sourceKind: job.mode === 'image-to-image' ? 'image-to-image' : 'text-to-image',
-    sourceLabel: job.mode === 'image-to-image' ? '图生图历史结果' : '文生图历史结果',
+    sourceLabel: job.mode === 'image-to-image' ? t('task.imageToImageHistory') : t('task.textToImageHistory'),
     sourceRef: `${job.id}:${index}`,
     prompt: job.prompt,
-  })), [job.id, job.mode, job.prompt, sourceImages]);
+  })), [job.id, job.mode, job.prompt, sourceImages, t]);
 
   /** 是否存在仍以远程 URL 形式呈现的图片（即首次本地缓存失败、需要"重新下载"补齐）。 */
   const needsRedownload = useMemo(
@@ -115,6 +115,24 @@ export const CompletedJobCard = memo(function CompletedJobCard({ job, onClear, o
     [job.imageDownloadProgress]
   );
   const isDownloadingImages = !!downloadProgressSummary?.active;
+  const downloadProgressMessage = useMemo(() => {
+    if (!downloadProgressSummary) return '';
+    if (downloadProgressSummary.active) {
+      const loaded = formatBytes(downloadProgressSummary.loadedBytes);
+      if (downloadProgressSummary.knownTotalBytes > 0) {
+        return t('task.retrievingProgress', {
+          loaded,
+          total: formatBytes(downloadProgressSummary.knownTotalBytes),
+          percent: downloadProgressSummary.percent,
+        });
+      }
+      return t('task.retrievingProgressUnknown', { loaded });
+    }
+    return t('task.retrievingFailed', {
+      failed: downloadProgressSummary.failed,
+      completed: downloadProgressSummary.completed,
+    });
+  }, [downloadProgressSummary, t]);
 
   const handleRetryDownload = useCallback(async () => {
     if (!onRetryDownload || retryingDownload || isDownloadingImages) return;
@@ -237,11 +255,11 @@ export const CompletedJobCard = memo(function CompletedJobCard({ job, onClear, o
       setImgCopied(true);
       setTimeout(() => setImgCopied(false), 2000);
       setCopyMenuOpen(false);
-      dispatchImageActionToast('图片已复制', 'success');
+      dispatchImageActionToast(t('task.imageCopied'), 'success');
     } catch (error) {
       setCopyMenuOpen(false);
-      const message = error instanceof Error ? error.message : '图片复制失败';
-      dispatchImageActionToast(message.includes('Failed to fetch') ? '该图片源不允许本地保存或复制，请直接右键/长摁复制' : message, 'error');
+      const message = error instanceof Error ? error.message : t('task.copyImageFailed');
+      dispatchImageActionToast(message.includes('Failed to fetch') ? t('task.copyImageUnsupported') : message, 'error');
     }
   };
 
@@ -257,10 +275,23 @@ export const CompletedJobCard = memo(function CompletedJobCard({ job, onClear, o
     setReferenceMenuOpen(false);
   };
 
-  const copyPrompt = () => {
-    navigator.clipboard.writeText(effectivePrompt);
-    setPromptCopied(true);
-    setTimeout(() => setPromptCopied(false), 2000);
+  /**
+   * 将本张任务实际发送给上游的完整提示词复制到系统剪贴板。
+   * @returns 复制成功时显示成功状态；浏览器不支持或权限被拒绝时显示失败提示。
+   */
+  const copyPrompt = async (): Promise<void> => {
+    try {
+      if (!navigator.clipboard?.writeText) {
+        throw new Error(t('task.copyPromptUnsupported'));
+      }
+      await navigator.clipboard.writeText(effectivePrompt);
+      setPromptCopied(true);
+      setTimeout(() => setPromptCopied(false), 2000);
+      dispatchImageActionToast(t('task.promptCopied'), 'success');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : t('task.copyPromptFailed');
+      dispatchImageActionToast(message, 'error');
+    }
   };
 
   const openPreview = async () => {
@@ -290,7 +321,7 @@ export const CompletedJobCard = memo(function CompletedJobCard({ job, onClear, o
               type="button"
               onClick={() => void openPreview()}
               className="absolute inset-0 h-full w-full border-0 p-0"
-              title="看大图"
+              title={t('task.preview')}
             >
               {isMultiple ? (
                 <div className="relative h-full w-full">
@@ -298,7 +329,7 @@ export const CompletedJobCard = memo(function CompletedJobCard({ job, onClear, o
                   <img
                     key={`${job.id}-${index}`}
                     src={lazyLoad.isVisible ? (getImageSrc(image) || undefined) : undefined}
-                    alt={`生成的图像 ${index + 1}`}
+                    alt={t('task.generatedImage', { index: index + 1 })}
                     className={`absolute h-full w-full object-cover transition-all duration-300 ${
                       loadedImageIndices.has(index) ? 'opacity-100' : 'opacity-0'
                     }`}
@@ -320,7 +351,7 @@ export const CompletedJobCard = memo(function CompletedJobCard({ job, onClear, o
                 <>
                 <img
                   src={lazyLoad.isVisible ? (getImageSrc(images[0]) || undefined) : undefined}
-                  alt="生成的图像"
+                  alt={t('task.generatedImage', { index: 1 })}
                   className={`h-full w-full object-cover transition-opacity duration-300 ${lazyLoad.isLoaded ? 'opacity-100' : 'opacity-0'}`}
                   onLoad={(event) => handleImageLoad(0, images[0], event)}
                 />
@@ -342,23 +373,25 @@ export const CompletedJobCard = memo(function CompletedJobCard({ job, onClear, o
                 {hasPromptVariant && (
                   <Popover>
                     <PopoverTrigger className="shrink-0 rounded border border-primary/30 px-1.5 py-0.5 text-[10px] text-primary hover:bg-primary/5">
-                      本张附加指令
+                      {t('task.effectiveInstruction')}
                     </PopoverTrigger>
                     <PopoverContent align="start" className="w-80 space-y-2">
-                      <p className="text-sm font-medium">本张实际提示词</p>
+                      <p className="text-sm font-medium">{t('task.effectivePrompt')}</p>
                       <p className="max-h-48 overflow-y-auto whitespace-pre-wrap break-words text-xs text-muted-foreground">{effectivePrompt}</p>
                     </PopoverContent>
                   </Popover>
                 )}
               </div>
               <JobSseBadge job={job} />
-              <button
-                onClick={copyPrompt}
-                className="flex-shrink-0 text-muted-foreground transition-colors hover:text-foreground"
-                title="复制本张实际提示词"
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                onClick={() => void copyPrompt()}
+                title={t('task.copyPrompt')}
+                aria-label={t('task.copyPrompt')}
               >
-                {promptCopied ? <Check className="w-3.5 h-3.5 text-success" /> : <Copy className="w-3.5 h-3.5" />}
-              </button>
+                {promptCopied ? <Check className="w-4 h-4 text-success" /> : <Copy className="w-4 h-4" />}
+              </Button>
             </div>
 
             {job.warning && (
@@ -371,8 +404,8 @@ export const CompletedJobCard = memo(function CompletedJobCard({ job, onClear, o
             {downloadProgressSummary && (
               <div
                 className="mt-2 flex max-w-56 items-center gap-2"
-                title={downloadProgressSummary.message}
-                aria-label={downloadProgressSummary.message}
+                title={downloadProgressMessage}
+                aria-label={downloadProgressMessage}
               >
                 <div className="h-1.5 min-w-20 flex-1 overflow-hidden rounded-full bg-secondary">
                   <div
@@ -391,15 +424,15 @@ export const CompletedJobCard = memo(function CompletedJobCard({ job, onClear, o
               <span>·</span>
               {outputSizeLabel}
               {job.aspect_ratio !== 'auto' && <><span>·</span><span>{job.aspect_ratio}</span></>}
-              {displayedPrimaryImageResolution && <><span>·</span><span title="图片真实分辨率">{displayedPrimaryImageResolution.width}×{displayedPrimaryImageResolution.height}</span></>}
+              {displayedPrimaryImageResolution && <><span>·</span><span title={t('task.actualResolution')}>{displayedPrimaryImageResolution.width}×{displayedPrimaryImageResolution.height}</span></>}
               {supportsTemperature && <><span>·</span><Thermometer className="w-3 h-3" /><span>{job.temperature?.toFixed(2) ?? 1}</span></>}
               {isMultiple && <><span>·</span><span className="font-medium text-primary">x{sourceImages.length}{job.parallelCount && job.parallelCount > sourceImages.length ? `/${job.parallelCount}` : ''}</span></>}
             </p>
             {(requestedAtLabel || durationLabel) && (
               <p className="mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-xs text-muted-foreground">
-                {requestedAtLabel && <span>请求 {requestedAtLabel}</span>}
+                {requestedAtLabel && <span>{t('task.requestedAt', { time: requestedAtLabel })}</span>}
                 {requestedAtLabel && durationLabel && <span>·</span>}
-                {durationLabel && <span>耗时 {durationLabel}</span>}
+                {durationLabel && <span>{t('task.duration', { time: durationLabel })}</span>}
               </p>
             )}
           </div>
@@ -411,7 +444,7 @@ export const CompletedJobCard = memo(function CompletedJobCard({ job, onClear, o
                 size="icon-sm"
                 onClick={() => void handleRetryDownload()}
                 disabled={retryingDownload || isDownloadingImages}
-                title={isDownloadingImages ? '正在取回图片' : '重新下载到本地缓存'}
+                title={isDownloadingImages ? t('task.retrievingImages') : t('task.redownloadToCache')}
                 className="text-warning hover:text-warning/80"
               >
                 <RefreshCw className={`w-4 h-4 ${retryingDownload || isDownloadingImages ? 'animate-spin' : ''}`} />
@@ -420,7 +453,7 @@ export const CompletedJobCard = memo(function CompletedJobCard({ job, onClear, o
 
             {isMultiple ? (
               <DropdownMenu open={assetMenuOpen} onOpenChange={setAssetMenuOpen}>
-                <DropdownMenuTrigger className={buttonVariants({ variant: 'ghost', size: 'icon-sm' })} title="添加到素材库">
+                <DropdownMenuTrigger className={buttonVariants({ variant: 'ghost', size: 'icon-sm' })} title={t('task.saveToAssets')}>
                   <ImagePlus className="w-4 h-4" />
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end">
@@ -429,12 +462,12 @@ export const CompletedJobCard = memo(function CompletedJobCard({ job, onClear, o
                       addImageToAssets(index);
                       setAssetMenuOpen(false);
                     }}>
-                      保存图片 {index + 1}
+                      {t('task.saveImage', { index: index + 1 })}
                     </DropdownMenuItem>
                   ))}
                   <DropdownMenuItem onClick={addAllToAssets} className="font-medium text-primary">
                     <ImagePlus className="mr-1.5 w-3.5 h-3.5" />
-                    保存全部
+                    {t('task.saveAll')}
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
@@ -443,7 +476,7 @@ export const CompletedJobCard = memo(function CompletedJobCard({ job, onClear, o
                 variant="ghost"
                 size="icon-sm"
                 onClick={() => addImageToAssets(0)}
-                title="添加到素材库"
+                title={t('task.saveToAssets')}
               >
                 <ImagePlus className="w-4 h-4" />
               </Button>
@@ -451,7 +484,7 @@ export const CompletedJobCard = memo(function CompletedJobCard({ job, onClear, o
 
             {isMultiple ? (
               <DropdownMenu open={downloadMenuOpen} onOpenChange={setDownloadMenuOpen}>
-                <DropdownMenuTrigger className={buttonVariants({ variant: 'ghost', size: 'icon-sm' })} title="下载">
+                <DropdownMenuTrigger className={buttonVariants({ variant: 'ghost', size: 'icon-sm' })} title={t('task.download')}>
                   <Download className="w-4 h-4" />
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end">
@@ -460,55 +493,55 @@ export const CompletedJobCard = memo(function CompletedJobCard({ job, onClear, o
                       downloadImage(index);
                       setDownloadMenuOpen(false);
                     }}>
-                      下载图片 {index + 1}
+                      {t('task.downloadImage', { index: index + 1 })}
                     </DropdownMenuItem>
                   ))}
                   <DropdownMenuItem onClick={downloadAll} className="font-medium text-primary">
                     <Download className="mr-1.5 w-3.5 h-3.5" />
-                    下载全部
+                    {t('task.downloadAll')}
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
             ) : (
-              <Button variant="ghost" size="icon-sm" onClick={() => downloadImage(0)} title="下载">
+              <Button variant="ghost" size="icon-sm" onClick={() => downloadImage(0)} title={t('task.download')}>
                 <Download className="w-4 h-4" />
               </Button>
             )}
 
             {isMultiple ? (
               <DropdownMenu open={copyMenuOpen} onOpenChange={setCopyMenuOpen}>
-                <DropdownMenuTrigger className={buttonVariants({ variant: 'ghost', size: 'icon-sm' })} title="复制图片">
+                <DropdownMenuTrigger className={buttonVariants({ variant: 'ghost', size: 'icon-sm' })} title={t('task.copyImage')}>
                   {imgCopied ? <Check className="w-4 h-4 text-success" /> : <Copy className="w-4 h-4" />}
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end">
                   {sourceImages.map((_, index) => (
                     <DropdownMenuItem key={index} onClick={() => copyImage(index)}>
-                      复制图片 {index + 1}
+                      {t('task.copyImage')} {index + 1}
                     </DropdownMenuItem>
                   ))}
                 </DropdownMenuContent>
               </DropdownMenu>
             ) : (
-              <Button variant="ghost" size="icon-sm" onClick={() => copyImage(0)} title="复制图片">
+              <Button variant="ghost" size="icon-sm" onClick={() => copyImage(0)} title={t('task.copyImage')}>
                 {imgCopied ? <Check className="w-4 h-4 text-success" /> : <Copy className="w-4 h-4" />}
               </Button>
             )}
 
             {isMultiple ? (
               <DropdownMenu open={referenceMenuOpen} onOpenChange={setReferenceMenuOpen}>
-                <DropdownMenuTrigger className={buttonVariants({ variant: 'ghost', size: 'icon-sm' })} title="作为图生图参考">
+                <DropdownMenuTrigger className={buttonVariants({ variant: 'ghost', size: 'icon-sm' })} title={t('task.useAsReference')}>
                   <Wand2 className="w-4 h-4" />
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end">
                   {sourceImages.map((_, index) => (
                     <DropdownMenuItem key={index} onClick={() => handleUseAsReference(index)}>
-                      作为参考图 {index + 1}
+                      {t('task.useReferenceImage', { index: index + 1 })}
                     </DropdownMenuItem>
                   ))}
                 </DropdownMenuContent>
               </DropdownMenu>
             ) : (
-                <Button variant="ghost" size="icon-sm" onClick={() => handleUseAsReference(0)} title="作为图生图参考">
+                <Button variant="ghost" size="icon-sm" onClick={() => handleUseAsReference(0)} title={t('task.useAsReference')}>
                 <Wand2 className="w-4 h-4" />
               </Button>
             )}
@@ -517,13 +550,13 @@ export const CompletedJobCard = memo(function CompletedJobCard({ job, onClear, o
               variant="ghost"
               size="icon-sm"
               onClick={() => onRetry(job)}
-              title="以本张实际提示词重试"
+              title={t('task.retryWithPrompt')}
               className="text-muted-foreground hover:text-primary"
             >
               <RotateCcw className="w-4 h-4" />
             </Button>
 
-            <Button variant="ghost" size="icon-sm" onClick={() => setDeleteDialogOpen(true)} title="移除">
+            <Button variant="ghost" size="icon-sm" onClick={() => setDeleteDialogOpen(true)} title={t('task.remove')}>
               <X className="w-4 h-4" />
             </Button>
           </div>
@@ -542,14 +575,14 @@ export const CompletedJobCard = memo(function CompletedJobCard({ job, onClear, o
 
       {deleteDialogOpen && createPortal(
         <ConfirmDialog
-          title="删除记录"
+          title={t('task.deleteRecord')}
           message={
             <>
-              确定要删除这条记录吗？此操作无法撤销。
-              {isMultiple && <span className="mt-1 block text-warning">这将删除 {sourceImages.length} 张图片。</span>}
+              {t('task.deleteConfirm')}
+              {isMultiple && <span className="mt-1 block text-warning">{t('task.deleteImages', { count: sourceImages.length })}</span>}
             </>
           }
-          confirmText="删除"
+          confirmText={t('common.delete')}
           onConfirm={onClear}
           onCancel={() => setDeleteDialogOpen(false)}
         />,

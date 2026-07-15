@@ -1,12 +1,17 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
-import { Check, ImagePlus, Layers, Maximize, Pencil, RectangleHorizontal, Thermometer, Wand2, X } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Check, FileText, ImagePlus, Layers, Maximize, Pencil, RectangleHorizontal, Save, Sparkles, Thermometer, Wand2, X, Zap } from 'lucide-react';
+import { createPortal } from 'react-dom';
 import { Button, buttonVariants } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Slider } from '@/components/ui/slider';
 import { CustomSizeDialog } from '@/components/CustomSizeDialog';
 import { GptImageAdvancedParamsControl } from '@/components/GptImageAdvancedParamsControl';
+import { QuickPromptDialog } from '@/components/QuickPromptDialog';
+import { PromptOptimizeDialog } from '@/components/PromptOptimizeDialog';
+import { AgentTextAssetPickerDialog } from '@/components/agent/AgentAssetPickerDialog';
+import { ConfirmDialog } from '@/components/workspace/dialogs/ConfirmDialog';
 import {
   Popover,
   PopoverContent,
@@ -41,6 +46,12 @@ import {
   type ParallelCount,
 } from '@/lib/model-capabilities';
 import type { AgentImageRecord, AgentProposal } from '@/lib/agent-chat-config';
+import { addTextAsset, type TextAsset } from '@/lib/asset-store';
+import { dispatchImageActionToast } from '@/lib/image-actions';
+import { streamPromptOptimize, type StreamPromptOptimizeHandle } from '@/lib/prompt-optimize-client';
+import { requireDefaultConfiguredTextModel } from '@/lib/model-endpoints';
+import { usePromptOptimizeSetting } from '@/hooks/usePromptOptimizeSetting';
+import { useI18n } from '@/components/LanguageProvider';
 
 export interface AgentApproveParams {
   outputSize: OutputSize;
@@ -75,6 +86,7 @@ export function AgentProposalCard({
   onApprove,
   onCancel,
 }: AgentProposalCardProps) {
+  const { t } = useI18n();
   const maxRefs = (MODEL_IMAGE_LIMITS[imageModel]?.max) || 1;
   const [prompt, setPrompt] = useState(proposal.prompt);
   const [selectedIds, setSelectedIds] = useState<string[]>(() =>
@@ -86,6 +98,15 @@ export function AgentProposalCard({
   const [tempPopoverOpen, setTempPopoverOpen] = useState(false);
   const [parallelPopoverOpen, setParallelPopoverOpen] = useState(false);
   const [customSizeDialogOpen, setCustomSizeDialogOpen] = useState(false);
+  const [quickPromptOpen, setQuickPromptOpen] = useState(false);
+  const [textAssetPickerOpen, setTextAssetPickerOpen] = useState(false);
+  const [pendingTextAsset, setPendingTextAsset] = useState<TextAsset | null>(null);
+  const [optimizeOpen, setOptimizeOpen] = useState(false);
+  const [optimizedText, setOptimizedText] = useState('');
+  const [optimizing, setOptimizing] = useState(false);
+  const [optimizeError, setOptimizeError] = useState<string | null>(null);
+  const optimizeHandleRef = useRef<StreamPromptOptimizeHandle | null>(null);
+  const { enabled: promptOptimizeEnabled } = usePromptOptimizeSetting();
 
   const imageMap = useMemo(() => new Map(images.map(img => [img.imgId, img])), [images]);
 
@@ -171,9 +192,9 @@ export function AgentProposalCard({
   const customSizeMaxSide = getCustomSizeMaxSide(imageModel) || 2048;
   const displaySizeLabel = layout.customSize || getOutputSizeLabel(layout.outputSize);
   const currentAspectLabel = aspectRatioOptions.find(o => o.value === layout.aspectRatio)?.resolution
-    || (layout.aspectRatio === 'auto' ? '自动' : layout.aspectRatio);
+    || (layout.aspectRatio === 'auto' ? t('agentProposal.autoLayout') : layout.aspectRatio);
   const getResolutionForSize = (size: OutputSize) => {
-    if (size === 'auto') return '自动';
+    if (size === 'auto') return t('agentProposal.autoLayout');
     return getAspectRatioOptions(imageModel, size).find(option => option.value === layout.aspectRatio)?.resolution || '';
   };
   const advancedParams: GptImageAdvancedParams = {
@@ -276,6 +297,106 @@ export function AgentProposalCard({
     setTimeout(() => setParallelPopoverOpen(false), 0);
   };
 
+  /**
+   * 使用当前默认文本模型流式优化待确认的新图提示词。
+   * @returns 未配置优化文本模型时显示错误提示；成功时打开优化结果对话框。
+   */
+  const handleOptimize = () => {
+    if (!prompt.trim()) return;
+    let textModel;
+    try {
+      textModel = requireDefaultConfiguredTextModel('promptOptimize');
+    } catch (error) {
+      dispatchImageActionToast(error instanceof Error ? error.message : t('missingApiKey.title'), 'error');
+      return;
+    }
+
+    optimizeHandleRef.current?.abort();
+    setOptimizedText('');
+    setOptimizeError(null);
+    setOptimizing(true);
+    setOptimizeOpen(true);
+    optimizeHandleRef.current = streamPromptOptimize(
+      {
+        apiKey: textModel.apiKey,
+        protocol: textModel.protocol,
+        model: textModel.modelId,
+        mode: 'text-to-image',
+        prompt: prompt.trim(),
+      },
+      {
+        onDelta(token) { setOptimizedText(prev => prev + token); },
+        onDone() { setOptimizing(false); },
+        onError(error) { setOptimizeError(error.message); setOptimizing(false); },
+      },
+      textModel.baseUrl,
+    );
+  };
+
+  /**
+   * 取消正在执行的提示词优化并清理优化对话框状态。
+   * @returns 无返回值。
+   */
+  const handleOptimizeCancel = () => {
+    optimizeHandleRef.current?.abort();
+    optimizeHandleRef.current = null;
+    setOptimizing(false);
+    setOptimizedText('');
+    setOptimizeError(null);
+  };
+
+  /**
+   * 接受提示词优化结果并覆盖当前待确认的新图提示词。
+   * @returns 无返回值。
+   */
+  const handleOptimizeAccept = () => {
+    if (optimizedText) setPrompt(optimizedText);
+    optimizeHandleRef.current = null;
+    setOptimizedText('');
+    setOptimizeError(null);
+  };
+
+  /**
+   * 将指定提示词素材应用到当前待确认的新图提示词。
+   * @param asset 用户从素材库选择的提示词素材。
+   * @returns 无返回值。
+   */
+  const applyTextAsset = (asset: TextAsset) => {
+    setPrompt(asset.content);
+    setPendingTextAsset(null);
+  };
+
+  /**
+   * 在覆盖现有提示词前确认用户从素材库选择的提示词内容。
+   * @param asset 用户从素材库选择的提示词素材。
+   * @returns 当前提示词为空或相同时立即应用，否则打开覆盖确认对话框。
+   */
+  const handleTextAssetConfirm = (asset: TextAsset) => {
+    if (prompt.trim() && prompt.trim() !== asset.content.trim()) {
+      setPendingTextAsset(asset);
+      return;
+    }
+    applyTextAsset(asset);
+  };
+
+  /**
+   * 将当前待确认的新图提示词保存为可复用的素材。
+   * @returns 保存成功或失败时分别显示对应提示。
+   */
+  const handleSavePromptAsset = async (): Promise<void> => {
+    if (!prompt.trim()) return;
+    try {
+      await addTextAsset({
+        content: prompt,
+        sourceKind: 'agent',
+        sourceLabel: t('agentProposal.sourceLabel'),
+      });
+      dispatchImageActionToast(t('agentProposal.promptAssetSaved'), 'success');
+    } catch (error) {
+      dispatchImageActionToast(error instanceof Error ? error.message : t('agentProposal.promptAssetSaveFailed'), 'error');
+    }
+  };
+
   const handleApprove = () => {
     if (busy || overLimit) return;
     onApprove(prompt, selectedIds.slice(0, maxRefs), imageModel, layout);
@@ -290,9 +411,9 @@ export function AgentProposalCard({
             effectiveMode === 'edit' ? 'bg-amber-500/15 text-amber-600' : 'bg-primary/15 text-primary'
           )}>
             {effectiveMode === 'edit' ? <Pencil className="h-3 w-3" /> : <Wand2 className="h-3 w-3" />}
-            {effectiveMode === 'edit' ? '编辑图片' : '生成新图'}
+            {effectiveMode === 'edit' ? t('agentProposal.modeEdit') : t('agentProposal.modeGenerate')}
           </span>
-          <span className="text-xs text-muted-foreground">等待你确认</span>
+          <span className="text-xs text-muted-foreground">{t('agentProposal.waiting')}</span>
         </div>
       </div>
 
@@ -300,23 +421,66 @@ export function AgentProposalCard({
         <p className="mb-3 text-sm text-foreground/80">{proposal.reason}</p>
       )}
 
-      <label className="mb-1.5 block text-xs font-medium text-muted-foreground">提示词（可编辑）</label>
+      <label className="mb-1.5 block text-xs font-medium text-muted-foreground">{t('agentProposal.promptLabel')}</label>
       <Textarea
         value={prompt}
         onChange={e => setPrompt(e.target.value)}
         disabled={busy}
         className="mb-3 min-h-24 text-sm"
-        placeholder="描述你想要的画面..."
+        placeholder={t('agentProposal.promptPlaceholder')}
       />
+
+      {effectiveMode === 'generate' && (
+        <div className="mb-3 flex flex-wrap justify-end gap-1 border-b border-border/60 pb-3">
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            onClick={() => setQuickPromptOpen(true)}
+            disabled={busy}
+            title={t('agentProposal.fastPrompt')}
+          >
+            <Zap className="h-4 w-4" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            onClick={() => setTextAssetPickerOpen(true)}
+            disabled={busy}
+            title={t('agentProposal.importPromptAsset')}
+          >
+            <FileText className="h-4 w-4" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            onClick={() => void handleSavePromptAsset()}
+            disabled={busy || !prompt.trim()}
+            title={t('agentProposal.savePromptAsset')}
+          >
+            <Save className="h-4 w-4" />
+          </Button>
+          {promptOptimizeEnabled && (
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              onClick={handleOptimize}
+              disabled={busy || !prompt.trim()}
+              title={t('agentProposal.optimizePrompt')}
+            >
+              <Sparkles className="h-4 w-4" />
+            </Button>
+          )}
+        </div>
+      )}
 
       {orderedImages.length > 0 && (
         <div className="mb-3">
           <div className="mb-1.5 flex items-center justify-between">
             <label className="text-xs font-medium text-muted-foreground">
-              参考图片（点击勾选，可全部取消）
+              {t('agentProposal.references')}
             </label>
             <span className={cn('text-xs', overLimit ? 'text-destructive' : 'text-muted-foreground')}>
-              已选 {selectedIds.length} / 上限 {maxRefs}
+              {t('agentProposal.referencesSelected', { selected: selectedIds.length, max: maxRefs })}
             </span>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -355,7 +519,7 @@ export function AgentProposalCard({
           </div>
           {overLimit && (
             <p className="mt-1 text-xs text-destructive">
-              当前模型最多 {maxRefs} 张参考图，且没有可自动切换的兼容模型，请取消部分选择。
+              {t('agentProposal.referenceLimit', { max: maxRefs })}
             </p>
           )}
         </div>
@@ -401,7 +565,7 @@ export function AgentProposalCard({
               'gap-1',
               autoLayoutLocked && 'border-primary text-primary'
             )}
-            title="自动分辨率和比例"
+            title={t('agentProposal.autoLayoutTitle')}
           >
             <span className={cn(
               'flex h-3 w-3 items-center justify-center rounded-[3px] border',
@@ -409,7 +573,7 @@ export function AgentProposalCard({
             )}>
               {autoLayoutLocked && <Check className="h-2.5 w-2.5" />}
             </span>
-            <span className="text-[11px]">自动</span>
+              <span className="text-[11px]">{t('agentProposal.autoLayout')}</span>
           </button>
         )}
 
@@ -418,7 +582,7 @@ export function AgentProposalCard({
             <PopoverTrigger
               disabled={busy}
               className={cn(buttonVariants({ variant: 'outline', size: 'xs' }), 'gap-1')}
-              title={`输出尺寸${currentAspectLabel ? `：${currentAspectLabel}` : ''}`}
+              title={`${t('agentProposal.outputSize')}${currentAspectLabel ? `: ${currentAspectLabel}` : ''}`}
             >
               <Maximize className="h-3 w-3" />
               <span className="text-[11px]">{displaySizeLabel}</span>
@@ -453,7 +617,7 @@ export function AgentProposalCard({
                   )}
                 >
                   <Maximize className="h-3.5 w-3.5" />
-                  自定义{layout.customSize ? `（${layout.customSize}）` : ''}
+                  {t('agentProposal.customSize', { size: layout.customSize ? ` (${layout.customSize})` : '' })}
                 </button>
               )}
             </PopoverContent>
@@ -465,7 +629,7 @@ export function AgentProposalCard({
             <PopoverTrigger
               disabled={busy || !!layout.customSize}
               className={cn(buttonVariants({ variant: 'outline', size: 'xs' }), 'gap-1')}
-              title="纵横比"
+              title={t('agentProposal.aspectRatio')}
             >
               <RectangleHorizontal className="h-3 w-3" />
               <span className="text-[11px]">{layout.aspectRatio}</span>
@@ -496,7 +660,7 @@ export function AgentProposalCard({
             <PopoverTrigger
               disabled={busy}
               className={cn(buttonVariants({ variant: 'outline', size: 'xs' }), 'gap-1')}
-              title="温度"
+              title={t('agentProposal.temperature')}
             >
               <Thermometer className="h-3 w-3" />
               <span className="text-[11px]">{layout.temperature.toFixed(2)}</span>
@@ -504,7 +668,7 @@ export function AgentProposalCard({
             <PopoverContent className="w-56" align="start">
               <div className="space-y-3">
                 <div className="flex items-center justify-between">
-                  <label className="text-sm font-medium">温度</label>
+                  <label className="text-sm font-medium">{t('agentProposal.temperature')}</label>
                   <span className="text-sm text-muted-foreground">{layout.temperature.toFixed(2)}</span>
                 </div>
                 <Slider
@@ -516,9 +680,9 @@ export function AgentProposalCard({
                   className="w-full"
                 />
                 <div className="flex justify-between gap-2">
-                  <Button variant="outline" size="xs" onClick={() => setLayout(prev => ({ ...prev, temperature: 0 }))} className="flex-1">精确 (0)</Button>
-                  <Button variant="outline" size="xs" onClick={() => setLayout(prev => ({ ...prev, temperature: 1 }))} className="flex-1">均衡 (1)</Button>
-                  <Button variant="outline" size="xs" onClick={() => setLayout(prev => ({ ...prev, temperature: 2 }))} className="flex-1">创意 (2)</Button>
+                  <Button variant="outline" size="xs" onClick={() => setLayout(prev => ({ ...prev, temperature: 0 }))} className="flex-1">{t('agentProposal.precise')}</Button>
+                  <Button variant="outline" size="xs" onClick={() => setLayout(prev => ({ ...prev, temperature: 1 }))} className="flex-1">{t('agentProposal.balanced')}</Button>
+                  <Button variant="outline" size="xs" onClick={() => setLayout(prev => ({ ...prev, temperature: 2 }))} className="flex-1">{t('agentProposal.creative')}</Button>
                 </div>
               </div>
             </PopoverContent>
@@ -545,7 +709,7 @@ export function AgentProposalCard({
           <PopoverTrigger
             disabled={busy}
             className={cn(buttonVariants({ variant: 'outline', size: 'xs' }), 'gap-1')}
-            title="生成数量"
+            title={t('agentProposal.quantity')}
           >
             <Layers className="h-3 w-3" />
             <span className="text-[11px]">×{layout.parallelCount}</span>
@@ -573,17 +737,17 @@ export function AgentProposalCard({
 
       <div className="flex flex-wrap items-center justify-between gap-2">
         <span className="text-xs text-muted-foreground">
-          {autoLayoutLocked ? '自动布局' : `${displaySizeLabel} · ${currentAspectLabel}`}
-          <span className="ml-2">最多 {maxRefs} 张参考图</span>
+          {autoLayoutLocked ? t('agentProposal.autoLayout') : `${displaySizeLabel} · ${currentAspectLabel}`}
+          <span className="ml-2">{t('agentProposal.maxReferences', { count: maxRefs })}</span>
         </span>
         <div className="flex items-center gap-2">
           <Button variant="ghost" size="sm" onClick={onCancel} disabled={busy} className="gap-1">
             <X className="h-3.5 w-3.5" />
-            取消
+            {t('common.cancel')}
           </Button>
           <Button size="sm" onClick={handleApprove} disabled={busy || overLimit || prompt.trim().length === 0} className="gap-1">
             <Check className="h-3.5 w-3.5" />
-            {effectiveMode === 'edit' ? '允许并改图' : '允许并生成'}
+            {effectiveMode === 'edit' ? t('agentProposal.allowEdit') : t('agentProposal.allowGenerate')}
           </Button>
         </div>
       </div>
@@ -595,6 +759,43 @@ export function AgentProposalCard({
         onOpenChange={setCustomSizeDialogOpen}
         onApply={size => setLayout(prev => ({ ...prev, customSize: size }))}
       />
+
+      <QuickPromptDialog
+        open={quickPromptOpen}
+        onOpenChange={setQuickPromptOpen}
+        currentMode="text-to-image"
+        currentPrompt={prompt}
+        onSelect={setPrompt}
+      />
+
+      <PromptOptimizeDialog
+        open={optimizeOpen}
+        onOpenChange={open => { if (!open) handleOptimizeCancel(); setOptimizeOpen(open); }}
+        originalPrompt={prompt}
+        optimizedPrompt={optimizedText}
+        loading={optimizing}
+        error={optimizeError}
+        onAccept={handleOptimizeAccept}
+        onCancel={handleOptimizeCancel}
+      />
+
+      <AgentTextAssetPickerDialog
+        open={textAssetPickerOpen}
+        onOpenChange={setTextAssetPickerOpen}
+        onConfirm={handleTextAssetConfirm}
+      />
+
+      {pendingTextAsset && createPortal(
+        <ConfirmDialog
+          title={t('agentProposal.overwriteTitle')}
+          message={t('agentProposal.overwriteMessage')}
+          confirmText={t('agentProposal.overwriteAction')}
+          variant="default"
+          onConfirm={() => applyTextAsset(pendingTextAsset)}
+          onCancel={() => setPendingTextAsset(null)}
+        />,
+        document.body,
+      )}
 
     </div>
   );

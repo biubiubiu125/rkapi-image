@@ -26,6 +26,7 @@ import { handleMarkdownCodeCopyButtonClick } from '@/lib/markdown-code-copy';
 import { getAgentImageBytes } from '@/lib/agent-context-store';
 import type { AgentMessage, AgentImageRecord } from '@/lib/agent-chat-config';
 import type { ImageActionPayload } from '@/lib/image-actions';
+import { useI18n } from '@/components/LanguageProvider';
 
 export interface AgentMessageBubbleProps {
   message: AgentMessage;
@@ -51,12 +52,6 @@ function getUsableDescription(description: string): string {
   return trimmed;
 }
 
-function getAgentImageSourceLabel(source: AgentImageRecord['source']): string {
-  if (source === 'generated') return 'Agent 生成图片';
-  if (source === 'asset') return '素材库导入';
-  return 'Agent 上传图片';
-}
-
 export function AgentMessageBubble({
   message,
   imageMap,
@@ -67,6 +62,7 @@ export function AgentMessageBubble({
   onRollback,
   onRedescribe,
 }: AgentMessageBubbleProps) {
+  const { t } = useI18n();
   const [previewImages, setPreviewImages] = useState<string[] | null>(null);
   const [previewSourceImages, setPreviewSourceImages] = useState<AgentImageRecord[]>([]);
   const [previewIndex, setPreviewIndex] = useState(0);
@@ -94,9 +90,9 @@ export function AgentMessageBubble({
 
   const isGenerationResult = message.role === 'assistant' &&
     message.text &&
-    message.text.includes('分析：') &&
-    message.text.includes('优化提示词：') &&
-    message.text.includes('结果：') &&
+    /(?:^|\n)(?:分析|Analysis)\s*[:：]/i.test(message.text) &&
+    /(?:^|\n)(?:优化提示词|Optimized prompt)\s*[:：]/i.test(message.text) &&
+    /(?:^|\n)(?:结果|Result)\s*[:：]/i.test(message.text) &&
     message.imageIds &&
     message.imageIds.length > 0;
 
@@ -146,11 +142,15 @@ export function AgentMessageBubble({
     name: img.imgId,
     agentImageId: img.imgId,
     sourceKind: 'agent',
-    sourceLabel: getAgentImageSourceLabel(img.source),
+    sourceLabel: img.source === 'generated'
+      ? t('agentMessage.generatedImageSource')
+      : img.source === 'asset'
+        ? t('agentMessage.assetImageSource')
+        : t('agentMessage.uploadedImageSource'),
     sourceRef: img.imgId,
     prompt: getUsableDescription(img.description) || img.description,
     note: getUsableDescription(img.description),
-  }), []);
+  }), [t]);
 
   if (message.role === 'context-divider') {
     return (
@@ -172,10 +172,10 @@ export function AgentMessageBubble({
               type="button"
               onClick={() => onWithdraw(message.id)}
               className="inline-flex items-center gap-0.5 font-medium text-foreground/70 hover:text-foreground"
-              title="撤回上一条已发消息，避免干扰后续上下文"
+              title={t('agentMessage.withdrawTitle')}
             >
               <Undo2 className="h-3 w-3" />
-              撤回消息
+              {t('agentMessage.withdraw')}
             </button>
           )}
         </span>
@@ -205,7 +205,7 @@ export function AgentMessageBubble({
               className="flex w-full items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-muted-foreground hover:text-foreground"
             >
               <Brain className="h-3.5 w-3.5" />
-              思考过程
+              {t('agentGeneration.reasoning')}
               <ChevronDown className={cn('h-3.5 w-3.5 transition-transform', reasoningOpen && 'rotate-180')} />
             </button>
             {reasoningOpen && (
@@ -257,10 +257,10 @@ export function AgentMessageBubble({
                       onClick={event => {
                         event.preventDefault();
                         event.stopPropagation();
-                        setDescDialogImg({ imgId: img.imgId, description: img.description || 'AI 未生成描述' });
+                         setDescDialogImg({ imgId: img.imgId, description: img.description || t('agentMessage.noDescription') });
                       }}
                       className="flex h-5 w-5 items-center justify-center rounded-full bg-white/20 text-white shadow-sm backdrop-blur-sm transition-colors hover:bg-white/35 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/80"
-                      title="查看描述"
+                       title={t('agentMessage.viewDescription')}
                     >
                       <FileText className="h-3 w-3" />
                     </button>
@@ -275,10 +275,10 @@ export function AgentMessageBubble({
             type="button"
             onClick={() => onReedit?.(message.id)}
             className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors self-start"
-            title="重新编辑此轮生图请求"
+            title={t('agentMessage.reeditTitle')}
           >
             <Pencil className="h-3 w-3" />
-            重新编辑
+            {t('agentMessage.reedit')}
           </button>
         )}
 
@@ -295,20 +295,20 @@ export function AgentMessageBubble({
               setTimeout(() => setCopiedText(false), 2000);
             }}
             className="inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[10px] text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-colors"
-            title="复制文本"
+            title={t('agentMessage.copyText')}
           >
             {copiedText ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
-            {copiedText ? '已复制' : '复制'}
+            {copiedText ? t('common.copied') : t('common.copy')}
           </button>
           {onRollback && (
             <button
               type="button"
               onClick={onRollback}
               className="inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[10px] text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-colors"
-              title="删除此条及之后的所有消息"
+              title={t('agentMessage.rollbackTitle')}
             >
               <Undo2 className="h-3 w-3" />
-              撤回以下所有
+              {t('agentMessage.rollback')}
             </button>
           )}
           {onDelete && (
@@ -316,10 +316,10 @@ export function AgentMessageBubble({
               type="button"
               onClick={onDelete}
               className="inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[10px] text-destructive/70 hover:text-destructive hover:bg-destructive/10 transition-colors"
-              title="仅删除本条消息"
+              title={t('agentMessage.deleteTitle')}
             >
               <Trash2 className="h-3 w-3" />
-              仅删除本条
+              {t('agentMessage.delete')}
             </button>
           )}
         </div>
@@ -328,7 +328,7 @@ export function AgentMessageBubble({
       {previewImages && createPortal(
         <HistoryImagePreview
           images={previewImages}
-          alt="agent 图片"
+          alt={t('agentMessage.imageAlt')}
           initialIndex={previewIndex}
           onClose={closePreview}
           actionPayloads={previewSourceImages.map(makeActionPayload)}
@@ -340,13 +340,13 @@ export function AgentMessageBubble({
         <Dialog open={!!descDialogImg} onOpenChange={(open) => { if (!open) setDescDialogImg(null); }}>
           <DialogContent className="sm:max-w-md">
             <DialogHeader>
-              <DialogTitle>图片描述 — {descDialogImg.imgId}</DialogTitle>
+              <DialogTitle>{t('agentMessage.imageDescription')} - {descDialogImg.imgId}</DialogTitle>
             </DialogHeader>
             <div className="whitespace-pre-wrap text-sm leading-relaxed text-muted-foreground">
               {descDialogImg.description}
             </div>
             <div className="mt-2 flex items-center justify-end gap-2 border-t pt-3">
-              {(!descDialogImg.description || descDialogImg.description === 'AI 未生成描述' || descDialogImg.description === '(无描述)' || descDialogImg.description === '(图片描述生成失败)') && onRedescribe && (
+              {(!descDialogImg.description || descDialogImg.description === t('agentMessage.noDescription') || descDialogImg.description === 'AI 未生成描述' || descDialogImg.description === '(无描述)' || descDialogImg.description === '(图片描述生成失败)') && onRedescribe && (
                 <Button
                   variant="outline"
                   size="sm"
@@ -365,7 +365,7 @@ export function AgentMessageBubble({
                   }}
                 >
                   <RefreshCw className={`h-3.5 w-3.5 ${isRedescribing ? 'animate-spin' : ''}`} />
-                  {isRedescribing ? '生成中…' : '重新生成描述'}
+                  {isRedescribing ? t('agentMessage.generating') : t('agentMessage.regenerateDescription')}
                 </Button>
               )}
               <Button
@@ -379,7 +379,7 @@ export function AgentMessageBubble({
                 }}
               >
                 {descCopied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
-                {descCopied ? '已复制' : '复制描述'}
+                {descCopied ? t('common.copied') : t('agentMessage.copyDescription')}
               </Button>
             </div>
           </DialogContent>

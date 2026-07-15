@@ -43,6 +43,7 @@ describe('Agent 文本客户端', () => {
         catalog: [],
         modelCatalog: [],
         webSearch: false,
+        locale: 'en',
       },
       { onDelta: () => undefined, onReasoning: () => undefined, onDone, onError: (error) => { throw error; } },
       'https://generativelanguage.googleapis.com',
@@ -52,7 +53,7 @@ describe('Agent 文本客户端', () => {
 
     const request = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
     expect(request.protocol).toBe('google');
-    expect(request.requestBody.systemInstruction.parts[0].text).toContain('图像生成与编辑助手');
+    expect(request.requestBody.systemInstruction.parts[0].text).toContain('image generation and editing assistant');
     expect(request.requestBody.tools[0].functionDeclarations[0].name).toBe('propose_image_action');
     expect(onDone).toHaveBeenCalledWith('我为你准备好了提案。', expect.objectContaining({
       action: 'generate',
@@ -74,14 +75,42 @@ describe('Agent 文本客户端', () => {
       undefined,
       'https://generativelanguage.googleapis.com',
       'google',
+      'en',
     );
 
     const request = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
     expect(request.protocol).toBe('google');
     expect(request.stream).toBe(false);
     expect(request.requestBody.contents[0].parts).toEqual(expect.arrayContaining([
+      { text: expect.stringContaining('Describe this image') },
       { inlineData: { mimeType: 'image/png', data: 'aW1hZ2U=' } },
     ]));
     expect(description).toBe('蓝色调城市夜景，霓虹灯光。');
+  });
+
+  it('在中文模式下向 Gemini 发送中文系统指令', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(
+      `data: ${JSON.stringify({ candidates: [{ content: { parts: [{ text: '你好' }] } }] })}\n\n`,
+    ));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const handle = streamAgentChat(
+      {
+        apiKey: 'test-key',
+        protocol: 'google',
+        model: 'gemini-2.5-flash',
+        history: [],
+        catalog: [],
+        modelCatalog: [],
+        locale: 'zh',
+      },
+      { onDelta: () => undefined, onReasoning: () => undefined, onDone: () => undefined, onError: (error) => { throw error; } },
+      'https://generativelanguage.googleapis.com',
+    );
+
+    await handle.promise;
+
+    const request = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
+    expect(request.requestBody.systemInstruction.parts[0].text).toContain('图像生成与编辑助手');
   });
 });
