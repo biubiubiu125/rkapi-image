@@ -519,6 +519,9 @@ docker push ghcr.io/doudou770/flyreq-image-studio:latest
 | `FLYREQ_IMAGE_DIR` | 否 | `backend/flyreq-images/` | 任务产物落盘目录 |
 | `FLYREQ_BASE_URL_REWRITE_MAP` | 否 | 空 | Base URL 出站改写表；例如 `{"https://flyreq.com":"http://new-api:3000"}` |
 | `FLYREQ_OUTBOUND_USER_AGENT` | 否 | `FlyReq-Image-Studio/3.1.1` | 上游请求携带的稳定服务标识；请配置为部署方可追溯的产品名称，不要伪造浏览器或第三方服务身份 |
+| `FLYREQ_PLATFORM_NAME` | 否 | `FlyReq Image` | 平台名称；用于页面标题、Header、设置页和 PWA 名称 |
+| `FLYREQ_PLATFORM_LOGO_URL` | 否 | `/favicon.png` | Header Logo 地址；仅允许站内绝对路径或 HTTP(S) URL |
+| `FLYREQ_PLATFORM_ICON_URL` | 否 | `/favicon.png` | 浏览器 favicon 与 PWA 图标地址；仅允许站内绝对路径或 HTTP(S) URL |
 | `FLYREQ_IMAGE_MODEL_KEY_GUIDE_TITLE` | 否 | `还没有图片模型 API Key？` | 设置页图片模型 Key 指引标题 |
 | `FLYREQ_IMAGE_MODEL_KEY_GUIDE_DESCRIPTION` | 否 | FlyReq 默认说明 | 设置页图片模型 Key 指引描述 |
 | `FLYREQ_IMAGE_MODEL_KEY_GUIDE_CTA_LABEL` | 否 | `前往 flyreq.com` | 设置页图片模型 Key 指引按钮文字 |

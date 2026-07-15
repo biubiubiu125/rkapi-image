@@ -8,6 +8,7 @@ import { ThemeToggle } from '@/components/ThemeToggle';
 import { LanguageToggle } from '@/components/LanguageToggle';
 import { WideModeToggle } from '@/components/WideModeToggle';
 import { useI18n } from '@/components/LanguageProvider';
+import { useBranding } from '@/components/BrandProvider';
 import type { FlyreqQueueStatus } from '@/lib/flyreq-task-client';
 import {
   DropdownMenu,
@@ -59,6 +60,7 @@ export const WorkspaceHeader = forwardRef<WorkspaceHeaderRef, WorkspaceHeaderPro
   ref,
 ) {
   const { t } = useI18n();
+  const { platformName, logoUrl } = useBranding();
   const processingSlots = queueStatus?.processingSlots ?? queueStatus?.processingCount ?? 0;
   const queuedSlots = queueStatus?.queuedSlots ?? queueStatus?.queuedCount ?? 0;
   const pendingSlots = queueStatus?.pendingSlots ?? (
@@ -143,16 +145,16 @@ export const WorkspaceHeader = forwardRef<WorkspaceHeaderRef, WorkspaceHeaderPro
             type="button"
             onClick={onLogoClick}
             className="rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 sm:rounded-xl"
-            aria-label="FlyReq Image logo"
+            aria-label={`${platformName} logo`}
           >
             <img
-              src="/favicon.png"
-              alt="FlyReq Image logo"
+              src={logoUrl}
+              alt={`${platformName} logo`}
               className="h-8 w-8 flex-shrink-0 rounded-lg object-cover ring-1 ring-border/60 sm:h-11 sm:w-11 sm:rounded-xl"
             />
           </button>
           <div className="hidden min-w-0 space-y-1 sm:block">
-            <h1 className="truncate text-2xl font-semibold tracking-tight">FlyReq Image</h1>
+            <h1 className="truncate text-2xl font-semibold tracking-tight">{platformName}</h1>
             <p className="text-sm text-muted-foreground">{t('app.subtitle')}</p>
           </div>
         </div>

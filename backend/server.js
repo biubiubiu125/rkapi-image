@@ -43,6 +43,11 @@ const DEFAULT_IMAGE_MODEL_KEY_GUIDE = {
   ctaLabel: '前往 flyreq.com',
   url: 'https://flyreq.com',
 };
+const DEFAULT_PLATFORM_BRANDING = {
+  platformName: 'FlyReq Image',
+  logoUrl: '/favicon.png',
+  iconUrl: '/favicon.png',
+};
 const DEFAULT_OUTBOUND_USER_AGENT = 'FlyReq-Image-Studio/3.1.1';
 
 function parseEnvFile(filePath) {
@@ -764,6 +769,61 @@ function getCenteredAspectCrop(width, height, aspectRatio) {
     top: Math.floor((height - cropHeight) / 2),
     width: cropWidth,
     height: cropHeight,
+  };
+}
+
+/**
+ * 校验品牌图片地址，只允许站内绝对路径或 HTTP(S) 资源地址。
+ * @param value 环境变量中读取到的品牌图片地址。
+ * @param fallback 配置缺失或地址无效时使用的默认地址。
+ * @returns 可安全下发给浏览器加载的图片地址。
+ */
+function normalizeBrandAssetUrl(value, fallback) {
+  const normalized = String(value || '').trim();
+  if (!normalized) return fallback;
+  if (normalized.startsWith('/') && !normalized.startsWith('//')) return normalized;
+  try {
+    const parsed = new URL(normalized);
+    return parsed.protocol === 'https:' || parsed.protocol === 'http:' ? normalized : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+/**
+ * 读取平台名称、Logo 与站点图标的运行时品牌配置。
+ * @param env 合并后的运行时环境变量对象。
+ * @returns 可直接下发至前端和 PWA Manifest 的品牌配置。
+ */
+function resolvePlatformBranding(env = getRuntimeEnv()) {
+  const configuredName = String(env.FLYREQ_PLATFORM_NAME || '').trim().slice(0, 120);
+  return {
+    platformName: configuredName || DEFAULT_PLATFORM_BRANDING.platformName,
+    logoUrl: normalizeBrandAssetUrl(env.FLYREQ_PLATFORM_LOGO_URL, DEFAULT_PLATFORM_BRANDING.logoUrl),
+    iconUrl: normalizeBrandAssetUrl(env.FLYREQ_PLATFORM_ICON_URL, DEFAULT_PLATFORM_BRANDING.iconUrl),
+  };
+}
+
+/**
+ * 根据当前品牌配置生成 PWA Manifest，确保安装后的名称和图标与页面一致。
+ * @param branding 已校验的平台品牌配置。
+ * @returns 可作为 Web App Manifest 返回的 JSON 对象。
+ */
+function buildPlatformManifest(branding) {
+  return {
+    id: '/',
+    name: branding.platformName,
+    short_name: branding.platformName,
+    description: branding.platformName,
+    start_url: '/',
+    display: 'standalone',
+    background_color: '#f5f5fa',
+    theme_color: '#1a1a2e',
+    orientation: 'any',
+    icons: [
+      { src: branding.iconUrl, sizes: '192x192', type: 'image/png', purpose: 'any' },
+      { src: branding.iconUrl, sizes: '512x512', type: 'image/png', purpose: 'any maskable' },
+    ],
   };
 }
 
@@ -2211,6 +2271,14 @@ async function handleApi(req, res, pathname) {
       return true;
     }
 
+    if (req.method === 'GET' && apiPathname === '/api/flyreq/manifest.webmanifest') {
+      sendJson(res, 200, buildPlatformManifest(resolvePlatformBranding(getRuntimeEnv())), {
+        'Content-Type': 'application/manifest+json; charset=utf-8',
+        'Cache-Control': 'no-store, no-cache, must-revalidate',
+      });
+      return true;
+    }
+
     if (req.method === 'GET' && apiPathname === '/api/flyreq/config') {
       const env = getRuntimeEnv();
       const rawMode = String(env.PROMPT_GALLERY_MODE || '2').trim();
@@ -2223,6 +2291,7 @@ async function handleApi(req, res, pathname) {
           promptGalleryPasswordEnabled: String(env.PROMPT_GALLERY_PASSWORD || '').trim().length > 0,
           imageModelKeyGuide: resolveImageModelKeyGuide(env),
           imagePresetModelIds: resolveImagePresetModelIds(env),
+          branding: resolvePlatformBranding(env),
         },
         {
           'Cache-Control': 'no-store, no-cache, must-revalidate',
