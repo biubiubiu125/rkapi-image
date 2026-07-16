@@ -294,13 +294,12 @@ export function SettingsModal({ isOpen, onClose, onApiKeyChange, externalModelCo
           ? patchImageModelFromExternal(existing, externalModelConfig)
           : createExternalImageModelDraft(externalModelConfig);
         setSelectedImageModelId(nextModel.id);
-        if (isCompleteImageModel(nextModel)) {
-          setDefaults((current) => ({
-            ...current,
-            textToImage: nextModel.id,
-            imageToImage: nextModel.id,
-          }));
-        }
+        // 外链配置是首次引导的目标模型，即使用户稍后才填写 API Key，也必须预先成为两个生图工作流的默认模型。
+        setDefaults((current) => ({
+          ...current,
+          textToImage: nextModel.id,
+          imageToImage: nextModel.id,
+        }));
         return existing
           ? prev.map((model) => (model.id === existing.id ? nextModel : model))
           : [...prev, nextModel];
