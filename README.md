@@ -176,27 +176,237 @@ Use URL-encoded JSON in production links. Matching first uses `modelKey`, then `
 
 ## Deployment
 
-### Docker Compose
+<details>
+<summary><strong>Docker Compose deployment</strong></summary>
+
+### Requirements
+
+- Docker 20.10+
+- Docker Compose v2
+
+### Quick start
+
+The default installation directory is `/opt/fis`. The following commands download the four files required for deployment directly from [doudou770/flyreq-image-studio](https://github.com/doudou770/flyreq-image-studio):
+
+- `docker-compose.yml`: Docker Compose service definition
+- `.env`: backend runtime configuration
+- `prompts.json`: Prompt Gallery content
+- `blacklist.json`: sensitive-word configuration
+
+```bash
+# 1. Create and enter the deployment directory
+sudo mkdir -p /opt/fis
+cd /opt/fis
+
+# 2. Download the Docker Compose configuration
+sudo curl -fsSL \
+  https://raw.githubusercontent.com/doudou770/flyreq-image-studio/master/docker-compose.yml \
+  -o docker-compose.yml
+
+# 3. Download the environment template as .env
+sudo curl -fsSL \
+  https://raw.githubusercontent.com/doudou770/flyreq-image-studio/master/backend/.env.example \
+  -o .env
+
+# 4. Download prompt and blacklist configuration
+sudo curl -fsSL \
+  https://raw.githubusercontent.com/doudou770/flyreq-image-studio/master/backend/prompts.json \
+  -o prompts.json
+sudo curl -fsSL \
+  https://raw.githubusercontent.com/doudou770/flyreq-image-studio/master/backend/blacklist.json \
+  -o blacklist.json
+
+# 5. Create the persistent data directory
+sudo mkdir -p data
+
+# 6. Edit configuration when needed
+sudo nano .env
+
+# 7. Start the service
+sudo docker compose up -d
+```
+
+Open <http://localhost:3001> after startup. `docker-compose.yml` uses:
+
+```yaml
+image: ghcr.io/doudou770/flyreq-image-studio:latest
+```
+
+If the GitHub Container Registry package is private, authenticate first:
+
+```bash
+echo YOUR_GITHUB_TOKEN | docker login ghcr.io -u YOUR_GITHUB_USERNAME --password-stdin
+```
+
+### File layout and persistence
+
+```text
+/opt/fis/
+├── docker-compose.yml
+├── .env
+├── prompts.json
+├── blacklist.json
+└── data/
+```
+
+The Compose file persists the task database and generated images under `/opt/fis/data/` through:
+
+```yaml
+FLYREQ_TASK_DB: /app/backend/data/flyreq-tasks.sqlite
+FLYREQ_IMAGE_DIR: /app/backend/data/flyreq-images
+```
+
+The default Compose file joins the common 1Panel external network `1panel-network`, allowing Docker-internal access to services such as new-api. Change the `networks` name for another 1Panel network. Outside 1Panel, remove that network configuration or create it first:
+
+```bash
+sudo docker network create 1panel-network
+```
+
+### Runtime configuration and updates
+
+Configure the container through `/opt/fis/.env`; no image rebuild is required. Restart the container after changing startup settings such as `PORT`, `HOSTNAME`, or `NODE_ENV`:
+
+```bash
+cd /opt/fis
+sudo docker compose restart
+```
+
+Queue, rate-limit, and Prompt Gallery settings are refreshed by the backend and normally take effect after saving `.env` without a restart.
+
+Use `FLYREQ_BASE_URL_REWRITE_MAP` when users configure a public base URL but server-side requests should use a Docker-internal address:
+
+```env
+FLYREQ_BASE_URL_REWRITE_MAP={"https://flyreq.com":"http://new-api:3000"}
+```
+
+Multiple mappings are supported:
+
+```env
+FLYREQ_BASE_URL_REWRITE_MAP={"https://flyreq.com":"http://new-api:3000","https://api.example.com":"http://example-new-api:3000"}
+```
+
+Matching ignores a trailing `/v1` or `/v1beta`. The mapping changes only outbound server requests and never changes a user's saved model configuration.
+
+Upgrade with:
+
+```bash
+cd /opt/fis
+sudo docker compose pull
+sudo docker compose up -d --force-recreate
+```
+
+Back up the entire `/opt/fis` directory to retain `flyreq-images/`, `flyreq-tasks.sqlite`, and the SQLite WAL/SHM runtime files.
+
+</details>
+
+<details>
+<summary><strong>Local production deployment</strong></summary>
+
+### Requirements
+
+- Node.js 20 or 22
+- npm with workspace support
+- `better-sqlite3` is native: run `npm ci --omit=dev` on the production server. Do not copy a local `node_modules` directory.
+
+### Deployment steps
+
+Build on the build machine:
+
+```bash
+npm ci
+npm run build
+```
+
+Upload the following to the production server:
+
+```text
+frontend/out/
+backend/server.js
+backend/package.json
+backend/package-lock.json
+backend/prompts.json
+backend/blacklist.json
+backend/.env
+```
+
+Then install and run on the production server:
+
+```bash
+npm ci --omit=dev
+npm start
+```
+
+Set `NODE_ENV=production` in `.env`. Use PM2, systemd, or your platform process manager. The process needs read/write access to `FLYREQ_TASK_DB`, and the reverse proxy should route the domain to `http://127.0.0.1:3001`.
+
+Create a deployable archive with:
+
+```bash
+npm run go
+```
+
+It produces `out.zip` at the repository root.
+
+</details>
+
+<details>
+<summary><strong>Local development</strong></summary>
+
+### Requirements
+
+- Node.js 20 or 22
+- npm with workspace support
+
+### Install and run
 
 ```bash
 git clone https://github.com/doudou770/flyreq-image-studio.git
 cd flyreq-image-studio
-cp backend/.env.example .env
-docker compose up -d
-```
-
-Open `http://localhost:3001` after startup. The compose setup persists task data and generated images under `data/`.
-
-At first run, the configured deployment default image model is available as a draft, but API keys are never delivered through the deployment configuration. Add an image-model API key and at least one text model with its API key in **Settings**, then select defaults for the relevant workflows.
-
-### Development
-
-```bash
-npm run install:all
+npm install
+cp backend/.env.example backend/.env
+# Windows: Copy-Item backend/.env.example backend/.env
 npm run dev
 ```
 
-The application is available at `http://localhost:3001`.
+Open <http://localhost:3001>. At first startup, the image workspace uses the deployment default image model, or the FlyReq / GPT Image 2 preset if no deployment default is configured. API keys are not delivered through deployment settings. Add image and text model API keys in **Settings**, then confirm workflow defaults. Browser-side configuration can be exported through backup.
+
+### Common scripts
+
+```bash
+npm run dev:frontend   # Next.js dev server only (HMR; no static export)
+npm run dev:backend    # backend server.js only
+npm run build          # static frontend output in frontend/out/
+npm start              # backend server.js
+npm run lint           # frontend ESLint
+npm test               # Vitest watch mode
+npm run test:run       # Vitest once
+npm run go             # build and package root out.zip
+```
+
+</details>
+
+<details>
+<summary><strong>Build a Docker image</strong></summary>
+
+```bash
+docker build -t flyreq-image-studio:latest .
+docker tag flyreq-image-studio:latest ghcr.io/doudou770/flyreq-image-studio:latest
+docker push ghcr.io/doudou770/flyreq-image-studio:latest
+```
+
+</details>
+
+<details>
+<summary><strong>GitHub Actions release</strong></summary>
+
+Run `.github/workflows/release.yml` from **Actions -> Release -> Run workflow** on `master`, then choose `patch`, `minor`, or `major`. The workflow calculates the next `vX.Y.Z` tag, creates the GitHub Release, passes the version to the Docker image as `APP_VERSION`, and publishes these images:
+
+- `ghcr.io/doudou770/flyreq-image-studio:latest`
+- `ghcr.io/doudou770/flyreq-image-studio:X.Y.Z`
+- `ghcr.io/doudou770/flyreq-image-studio:vX.Y.Z`
+
+The built-in `GITHUB_TOKEN` requires Actions permission to write `contents` and `packages`.
+
+</details>
 
 ### Important Environment Variables
 
@@ -238,15 +448,6 @@ This mapping changes only outbound server requests. It never rewrites the user's
 | `GET` | `/api/flyreq/config` | Read browser runtime configuration. |
 | `GET` | `/api/flyreq/manifest.webmanifest` | Read the runtime PWA manifest. |
 | `WS` | `/api/flyreq/ws` | Subscribe to task and queue updates. |
-
-## Release
-
-The repository includes a manual release workflow at `.github/workflows/release.yml`. Run **Actions -> Release -> Run workflow** on `master`, select `patch`, `minor`, or `major`, and the workflow will:
-
-- Calculate the next semantic version from the latest `vX.Y.Z` tag.
-- Build and publish Docker images to GitHub Container Registry.
-- Pass the release version into the image as `APP_VERSION`, which is displayed in the UI and backup metadata.
-- Create and push the Git tag, then create a GitHub Release with generated notes.
 
 ## Troubleshooting
 
