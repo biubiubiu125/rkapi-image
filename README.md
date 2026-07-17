@@ -174,43 +174,310 @@ External sites can link to FlyReq Image with a `provider` query parameter contai
 
 Use URL-encoded JSON in production links. Matching first uses `modelKey`, then `name + modelId + baseUrl`; otherwise, a new model is drafted. The API key is removed from the address bar after parsing, but it is briefly present in the URL, so distribute these links carefully.
 
+Example links:
+
+Raw JSON:
+
+```text
+https://image.flyreq.com/en/?provider={"type":"image","preset":"gpt-image-2","provider":"openai","modelKey":"flyreq-gpt-image-2","name":"FlyReq","modelId":"gpt-image-2","baseUrl":"https://flyreq.com","apiKey":"YOUR_API_KEY","maxRefImages":16,"maxOutputSize":"4K"}
+```
+
+URL-encoded JSON:
+
+```text
+https://image.flyreq.com/en/?provider=%7B%22type%22%3A%22image%22%2C%22preset%22%3A%22gpt-image-2%22%2C%22provider%22%3A%22openai%22%2C%22modelKey%22%3A%22flyreq-gpt-image-2%22%2C%22name%22%3A%22FlyReq%22%2C%22modelId%22%3A%22gpt-image-2%22%2C%22baseUrl%22%3A%22https%3A%2F%2Fflyreq.com%22%2C%22apiKey%22%3A%22YOUR_API_KEY%22%2C%22maxRefImages%22%3A16%2C%22maxOutputSize%22%3A%224K%22%7D
+```
+
+| Field | Description |
+| --- | --- |
+| `type=image` | Image models are currently supported. |
+| `modelKey` | Optional stable model ID. Updates an existing model with the same ID. |
+| `preset` | Optional built-in preset, such as `gpt-image-2`. |
+| `provider` | Optional: `openai` or `google`. |
+| `name` | Display name. |
+| `modelId` | Upstream model ID. |
+| `baseUrl` | Upstream base URL. |
+| `apiKey` | API key. |
+| `maxRefImages` | Maximum number of reference images. |
+| `maxOutputSize` | Maximum output size: `512`, `1K`, `2K`, or `4K`. |
+| `supportsTemperature` | Optional. Applies only to Google image models; `true` shows and sends `temperature`. |
+| `streamImages` | Optional. Applies only to OpenAI Images-compatible models; `true` enables streaming image requests. |
+
+When the supplied model is complete, it becomes the default for text-to-image and image-to-image. The browser removes the API key from the address bar immediately after parsing, but distribute these links carefully because the key is briefly present in the URL.
+
 ## Deployment
 
-### Docker Compose
+<details>
+<summary><strong>Docker Compose deployment</strong></summary>
+
+### Requirements
+
+- Docker 20.10+
+- Docker Compose v2
+
+### Quick start
+
+The default installation directory is `/opt/fis`. The following commands download the four files required for deployment directly from [doudou770/flyreq-image-studio](https://github.com/doudou770/flyreq-image-studio):
+
+- `docker-compose.yml`: Docker Compose service definition
+- `.env`: backend runtime configuration
+- `prompts.json`: Prompt Gallery content
+- `blacklist.json`: sensitive-word configuration
+
+```bash
+# 1. Create and enter the deployment directory
+sudo mkdir -p /opt/fis
+cd /opt/fis
+
+# 2. Download the Docker Compose configuration
+sudo curl -fsSL \
+  https://raw.githubusercontent.com/doudou770/flyreq-image-studio/master/docker-compose.yml \
+  -o docker-compose.yml
+
+# 3. Download the environment template as .env
+sudo curl -fsSL \
+  https://raw.githubusercontent.com/doudou770/flyreq-image-studio/master/backend/.env.example \
+  -o .env
+
+# 4. Download prompt and blacklist configuration
+sudo curl -fsSL \
+  https://raw.githubusercontent.com/doudou770/flyreq-image-studio/master/backend/prompts.json \
+  -o prompts.json
+sudo curl -fsSL \
+  https://raw.githubusercontent.com/doudou770/flyreq-image-studio/master/backend/blacklist.json \
+  -o blacklist.json
+
+# 5. Create the persistent data directory
+sudo mkdir -p data
+
+# 6. Edit configuration when needed
+sudo nano .env
+
+# 7. Start the service
+sudo docker compose up -d
+```
+
+Open <http://localhost:3001> after startup. `docker-compose.yml` uses:
+
+```yaml
+image: ghcr.io/doudou770/flyreq-image-studio:latest
+```
+
+If the GitHub Container Registry package is private, authenticate first:
+
+```bash
+echo YOUR_GITHUB_TOKEN | docker login ghcr.io -u YOUR_GITHUB_USERNAME --password-stdin
+```
+
+### File layout and persistence
+
+```text
+/opt/fis/
+├── docker-compose.yml
+├── .env
+├── prompts.json
+├── blacklist.json
+└── data/
+```
+
+The Compose file persists the task database and generated images under `/opt/fis/data/` through:
+
+```yaml
+FLYREQ_TASK_DB: /app/backend/data/flyreq-tasks.sqlite
+FLYREQ_IMAGE_DIR: /app/backend/data/flyreq-images
+```
+
+The default Compose file joins the common 1Panel external network `1panel-network`, allowing Docker-internal access to services such as new-api. Change the `networks` name for another 1Panel network. Outside 1Panel, remove that network configuration or create it first:
+
+```bash
+sudo docker network create 1panel-network
+```
+
+### Runtime configuration and updates
+
+Configure the container through `/opt/fis/.env`; no image rebuild is required. Restart the container after changing startup settings such as `PORT`, `HOSTNAME`, or `NODE_ENV`:
+
+```bash
+cd /opt/fis
+sudo docker compose restart
+```
+
+Queue, rate-limit, and Prompt Gallery settings are refreshed by the backend and normally take effect after saving `.env` without a restart.
+
+Use `FLYREQ_BASE_URL_REWRITE_MAP` when users configure a public base URL but server-side requests should use a Docker-internal address:
+
+```env
+FLYREQ_BASE_URL_REWRITE_MAP={"https://flyreq.com":"http://new-api:3000"}
+```
+
+Multiple mappings are supported:
+
+```env
+FLYREQ_BASE_URL_REWRITE_MAP={"https://flyreq.com":"http://new-api:3000","https://api.example.com":"http://example-new-api:3000"}
+```
+
+Matching ignores a trailing `/v1` or `/v1beta`. The mapping changes only outbound server requests and never changes a user's saved model configuration.
+
+Upgrade with:
+
+```bash
+cd /opt/fis
+sudo docker compose pull
+sudo docker compose up -d --force-recreate
+```
+
+Back up the entire `/opt/fis` directory to retain `flyreq-images/`, `flyreq-tasks.sqlite`, and the SQLite WAL/SHM runtime files.
+
+</details>
+
+<details>
+<summary><strong>Local production deployment</strong></summary>
+
+### Requirements
+
+- Node.js 20 or 22
+- npm with workspace support
+- `better-sqlite3` is native: run `npm ci --omit=dev` on the production server. Do not copy a local `node_modules` directory.
+
+### Deployment steps
+
+Build on the build machine:
+
+```bash
+npm ci
+npm run build
+```
+
+Upload the following to the production server:
+
+```text
+frontend/out/
+backend/server.js
+backend/package.json
+backend/package-lock.json
+backend/prompts.json
+backend/blacklist.json
+backend/.env
+```
+
+Then install and run on the production server:
+
+```bash
+npm ci --omit=dev
+npm start
+```
+
+Set `NODE_ENV=production` in `.env`. Use PM2, systemd, or your platform process manager. The process needs read/write access to `FLYREQ_TASK_DB`, and the reverse proxy should route the domain to `http://127.0.0.1:3001`.
+
+Create a deployable archive with:
+
+```bash
+npm run go
+```
+
+It produces `out.zip` at the repository root.
+
+</details>
+
+<details>
+<summary><strong>Local development</strong></summary>
+
+### Requirements
+
+- Node.js 20 or 22
+- npm with workspace support
+
+### Install and run
 
 ```bash
 git clone https://github.com/doudou770/flyreq-image-studio.git
 cd flyreq-image-studio
-cp backend/.env.example .env
-docker compose up -d
-```
-
-Open `http://localhost:3001` after startup. The compose setup persists task data and generated images under `data/`.
-
-At first run, the configured deployment default image model is available as a draft, but API keys are never delivered through the deployment configuration. Add an image-model API key and at least one text model with its API key in **Settings**, then select defaults for the relevant workflows.
-
-### Development
-
-```bash
-npm run install:all
+npm install
+cp backend/.env.example backend/.env
+# Windows: Copy-Item backend/.env.example backend/.env
 npm run dev
 ```
 
-The application is available at `http://localhost:3001`.
+Open <http://localhost:3001>. At first startup, the image workspace uses the deployment default image model, or the FlyReq / GPT Image 2 preset if no deployment default is configured. API keys are not delivered through deployment settings. Add image and text model API keys in **Settings**, then confirm workflow defaults. Browser-side configuration can be exported through backup.
+
+### Common scripts
+
+```bash
+npm run dev:frontend   # Next.js dev server only (HMR; no static export)
+npm run dev:backend    # backend server.js only
+npm run build          # static frontend output in frontend/out/
+npm start              # backend server.js
+npm run lint           # frontend ESLint
+npm test               # Vitest watch mode
+npm run test:run       # Vitest once
+npm run go             # build and package root out.zip
+```
+
+</details>
+
+<details>
+<summary><strong>Build a Docker image</strong></summary>
+
+```bash
+docker build -t flyreq-image-studio:latest .
+docker tag flyreq-image-studio:latest ghcr.io/doudou770/flyreq-image-studio:latest
+docker push ghcr.io/doudou770/flyreq-image-studio:latest
+```
+
+</details>
+
+<details>
+<summary><strong>GitHub Actions release</strong></summary>
+
+Run `.github/workflows/release.yml` from **Actions -> Release -> Run workflow** on `master`, then choose `patch`, `minor`, or `major`. The workflow calculates the next `vX.Y.Z` tag, creates the GitHub Release, passes the version to the Docker image as `APP_VERSION`, and publishes these images:
+
+- `ghcr.io/doudou770/flyreq-image-studio:latest`
+- `ghcr.io/doudou770/flyreq-image-studio:X.Y.Z`
+- `ghcr.io/doudou770/flyreq-image-studio:vX.Y.Z`
+
+The built-in `GITHUB_TOKEN` requires Actions permission to write `contents` and `packages`.
+
+</details>
 
 ### Important Environment Variables
 
-| Variable | Purpose |
-| --- | --- |
-| `FLYREQ_PLATFORM_NAME` | Product name used in the title, header, Settings, and PWA manifest. |
-| `FLYREQ_PLATFORM_LOGO_URL` | Header logo URL. |
-| `FLYREQ_PLATFORM_ICON_URL` | Browser favicon and PWA icon URL. |
-| `FLYREQ_DEFAULT_IMAGE_MODEL_*` | Deployment-level first image model for users without a local model registry. |
-| `FLYREQ_DEFAULT_IMAGE_MODEL_STREAM_IMAGES` | Enables streaming by default for GPT Image 2 on OpenAI Images-compatible endpoints. |
-| `FLYREQ_BASE_URL_REWRITE_MAP` | JSON mapping that routes configured public base URLs to internal addresses. |
-| `FLYREQ_TASK_CONCURRENCY` | Maximum server-side concurrent jobs. |
-| `FLYREQ_RATE_LIMIT_*` | Per-client and global rate-limit controls. |
-| `PROMPT_GALLERY_MODE` | Shows, protects, or hides the Prompt Gallery. |
+| Variable | Required | Default | Description |
+| --- | --- | --- | --- |
+| `PORT` | No | `3001` | Listening port. |
+| `HOSTNAME` | No | `0.0.0.0` | Bind address. `localhost` and `127.0.0.1` are local-only. |
+| `NODE_ENV` | **Yes** | `production` | **Must be `production`**; otherwise the Next development server is used. |
+| `FLYREQ_TASK_DB` | No | `./flyreq-tasks.sqlite` | SQLite database path. Use a persistent directory. |
+| `FLYREQ_TASK_CONCURRENCY` | No | `50` | Maximum concurrent jobs; hard limit is 50. |
+| `FLYREQ_MAX_QUEUE_SIZE` | No | `200` | Maximum pending jobs globally. |
+| `FLYREQ_RATE_LIMIT_WINDOW_MS` | No | `60000` | Task-creation rate-limit window in milliseconds. |
+| `FLYREQ_RATE_LIMIT_MAX_REQUESTS_PER_IP` | No | `20` | Maximum task creations per IP in one window. |
+| `FLYREQ_RATE_LIMIT_MAX_REQUESTS_PER_API_KEY` | No | `20` | Maximum task creations per API key in one window. |
+| `FLYREQ_MAX_PENDING_TASKS_PER_IP` | No | `20` | Maximum pending jobs per IP. |
+| `FLYREQ_MAX_PENDING_TASKS_PER_API_KEY` | No | `20` | Maximum pending jobs per API key. |
+| `FLYREQ_RATE_LIMIT_RETRY_AFTER_SECONDS` | No | `30` | `Retry-After` seconds for a full queue or rate limit. |
+| `FLYREQ_IMAGE_DIR` | No | `backend/flyreq-images/` | Directory for generated image files. |
+| `FLYREQ_BASE_URL_REWRITE_MAP` | No | Empty | Outbound base-URL rewrite map, for example `{"https://flyreq.com":"http://new-api:3000"}`. |
+| `FLYREQ_OUTBOUND_USER_AGENT` | No | `FlyReq-Image-Studio/1.5.1` | Stable identifier sent upstream. Use a deployment-traceable product name; do not impersonate browsers or third-party services. |
+| `FLYREQ_PLATFORM_NAME` | No | `FlyReq Image` | Product name used in the page title, header, Settings, and PWA. |
+| `FLYREQ_PLATFORM_LOGO_URL` | No | `/favicon.png` | Header logo. Only an on-site absolute path or HTTP(S) URL is allowed. |
+| `FLYREQ_PLATFORM_ICON_URL` | No | `/favicon.png` | Browser favicon and PWA icon. Only an on-site absolute path or HTTP(S) URL is allowed. |
+| `FLYREQ_IMAGE_MODEL_KEY_GUIDE_TITLE` | No | `Need an image model API key?` | Image-model key guide title in Settings. |
+| `FLYREQ_IMAGE_MODEL_KEY_GUIDE_DESCRIPTION` | No | FlyReq default description | Image-model key guide description in Settings. |
+| `FLYREQ_IMAGE_MODEL_KEY_GUIDE_CTA_LABEL` | No | `Visit flyreq.com` | Image-model key guide button label. |
+| `FLYREQ_IMAGE_MODEL_KEY_GUIDE_URL` | No | `https://flyreq.com` | Image-model key guide destination. |
+| `FLYREQ_DEFAULT_IMAGE_MODEL_KEY` | No | `flyreq-gpt-image-2` | Stable internal key for the first default image model. |
+| `FLYREQ_DEFAULT_IMAGE_MODEL_NAME` | No | `FlyReq` | Display name of the first default image model. |
+| `FLYREQ_DEFAULT_IMAGE_MODEL_PROTOCOL` | No | `openai` | First default image-model protocol: `openai` or `google`. |
+| `FLYREQ_DEFAULT_IMAGE_MODEL_BASE_URL` | No | `https://flyreq.com` | Base URL of the first default image model. |
+| `FLYREQ_DEFAULT_IMAGE_MODEL_MODEL_ID` | No | Empty | Actual model ID. When blank, the preset model-ID mapping is used. |
+| `FLYREQ_DEFAULT_IMAGE_MODEL_PRESET` | No | `gpt-image-2` | Built-in image preset ID, which defines the capability boundary. |
+| `FLYREQ_DEFAULT_IMAGE_MODEL_MAX_REF_IMAGES` | No | `16` | Maximum reference images, from 1 to 16. |
+| `FLYREQ_DEFAULT_IMAGE_MODEL_MAX_OUTPUT_SIZE` | No | `4K` | Maximum output size: `512`, `1K`, `2K`, or `4K`. |
+| `FLYREQ_DEFAULT_IMAGE_MODEL_SUPPORTS_ADVANCED_PARAMS` | No | `true` | Enables GPT Image 2 advanced parameters by default. |
+| `FLYREQ_DEFAULT_IMAGE_MODEL_SUPPORTS_TEMPERATURE` | No | `false` | Whether the Google image model supports `temperature` by default. |
+| `FLYREQ_DEFAULT_IMAGE_MODEL_STREAM_IMAGES` | No | `true` | Enables streaming image requests for OpenAI GPT Image 2 by default. |
+| `PROMPT_GALLERY_MODE` | No | `2` | `1` always visible / `2` password-protected / `3` hidden. |
+| `PROMPT_GALLERY_PASSWORD` | No | Empty | Prompt Gallery password in private mode. Private mode opens directly when empty. |
 
 For example, keep a public URL in browser-side model settings while routing server-side requests to a Docker network service:
 
@@ -220,6 +487,8 @@ FLYREQ_BASE_URL_REWRITE_MAP={"https://flyreq.com":"http://new-api:3000"}
 
 This mapping changes only outbound server requests. It never rewrites the user's stored model configuration.
 
+Most runtime settings in `.env` take effect without a restart, including concurrency, rate limits, queue capacity, accepting-new-tasks, outbound base-URL rewrites, Prompt Gallery settings, and the image-model key guide. Restart after changing startup settings such as `PORT`, `HOSTNAME`, or `NODE_ENV`.
+
 ## Task System
 
 - Jobs enter a server-side queue with configurable concurrency and rate limits.
@@ -228,27 +497,101 @@ This mapping changes only outbound server requests. It never rewrites the user's
 - Jobs expire after 12 hours and are cleaned up automatically.
 - A restart marks incomplete jobs as failed and removes their partial output, preventing orphaned tasks.
 
+## Engineering and UX
+
+- Installable PWA through `next-pwa`.
+- Responsive desktop, tablet, and mobile layouts.
+- Light and dark themes plus wide and narrow workspace layouts.
+- Task history persisted with IndexedDB and localStorage.
+- One-click backup and restore through JSZip, including partial recovery when older settings are incompatible.
+- Virtualized lazy loading for historical images through `@tanstack/react-virtual`.
+- Random images, toast notifications, and confirmation dialogs.
+
+## Project Structure
+
+```text
+flyreq-image-studio/
+├── frontend/                 # Next.js frontend (React 19 + TypeScript)
+│   ├── src/
+│   │   ├── app/              # Root layout and pages
+│   │   ├── components/       # Feature components and shadcn/ui primitives
+│   │   │   ├── workspace/    # Workspace shell, tabs, header, and results
+│   │   │   ├── agent/        # Agent-mode components
+│   │   │   └── ui/           # UI primitives
+│   │   ├── hooks/            # Queue, Agent, GIF, and other hooks
+│   │   ├── lib/              # Client utilities, API clients, WebSocket, backup
+│   │   └── test/             # Vitest configuration and tests
+│   ├── public/               # PWA icons and static assets
+│   ├── next.config.ts        # Static export and next-pwa configuration
+│   ├── package.json
+│   └── vitest.config.ts
+├── backend/
+│   ├── server.js             # Node server: HTTP, WS, SQLite, and task queue
+│   ├── prompts.json          # Prompt Gallery content
+│   ├── blacklist.json        # Sensitive-word list
+│   ├── .env.example
+│   └── package.json
+├── scripts/
+│   ├── pack.js               # Build and package out.zip
+│   └── generate-icons.js     # Generate PWA icons
+├── package.json              # npm workspaces root
+├── LICENSE                   # AGPL-3.0 license
+└── README.md
+```
+
+Production builds are emitted to `frontend/out/` and served statically by `backend/server.js`.
+
 ## API
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| `POST` | `/api/flyreq/tasks` | Submit an image-generation task. |
+| `POST` | `/api/flyreq/tasks/batch` | Submit multiple independent image tasks; returns ordered `taskIds`. |
+| `POST` | `/api/flyreq/tasks` | Submit one image-generation task; returns `taskId` with HTTP 202. |
 | `GET` | `/api/flyreq/tasks/:taskId` | Read task status and results. |
-| `POST` | `/api/flyreq/tasks/:taskId/retry` | Retry a failed task. |
+| `POST` | `/api/flyreq/tasks/:taskId/ack` | Extend an existing task's retrieval TTL by two minutes. |
+| `GET` | `/api/flyreq/queue-status` | Read active, queued, and accepting status. |
+| `GET` | `/api/flyreq/prompts` | Read Prompt Gallery content. |
+| `GET` | `/api/flyreq/blacklist` | Read the sensitive-word list. |
 | `GET` | `/api/flyreq/config` | Read browser runtime configuration. |
 | `GET` | `/api/flyreq/manifest.webmanifest` | Read the runtime PWA manifest. |
+| `GET` | `/api/flyreq/images/:taskId/:index/:subIndex` | Read a generated image; omit `subIndex` for image 0. |
 | `WS` | `/api/flyreq/ws` | Subscribe to task and queue updates. |
 
-## Release
+### Task statuses
 
-The repository includes a manual release workflow at `.github/workflows/release.yml`. Run **Actions -> Release -> Run workflow** on `master`, select `patch`, `minor`, or `major`, and the workflow will:
-
-- Calculate the next semantic version from the latest `vX.Y.Z` tag.
-- Build and publish Docker images to GitHub Container Registry.
-- Pass the release version into the image as `APP_VERSION`, which is displayed in the UI and backup metadata.
-- Create and push the Git tag, then create a GitHub Release with generated notes.
+- `queued`: Waiting for scheduling.
+- `processing`: Calling the upstream API.
+- `completed`: Succeeded; `result.images` contains result URLs.
+- `failed`: Failed; see `error`.
+- `expired`: Exceeded the task TTL.
 
 ## Troubleshooting
+
+**Why not use `next start` in production?**
+
+The project uses `output: 'export'`, producing a static `frontend/out/` directory. `server.js` hosts both the static files and task API, so `next start` is not used.
+
+**Can I deploy only `frontend/out/`?**
+
+The UI opens, but task submission, Agent, and history synchronization require `/api/flyreq/*`; run `server.js` as well.
+
+**Does the database need a separate backup?**
+
+The service creates it automatically. To retain task data, back up `flyreq-tasks.sqlite` with its WAL/SHM files and `flyreq-images/`. A restart marks remaining active tasks as failed and cleans up their output.
+
+**How do I temporarily stop accepting new tasks without stopping the service?**
+
+Set the following in `.env`:
+
+```env
+FLYREQ_ACCEPT_NEW_TASKS=false
+```
+
+It takes effect after saving. Wait for in-flight tasks before restarting for an upgrade. Set it to `true` or leave it empty to accept tasks again.
+
+**When do tasks expire?**
+
+Tasks expire 12 hours after creation. When the frontend receives a result, it calls `/ack` to extend retrieval by two minutes. The server removes the database record and result images after expiry.
 
 **Why can an upstream console show success while FlyReq Image reports 504?**
 
