@@ -612,6 +612,7 @@ docker push ghcr.io/doudou770/flyreq-image-studio:latest
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
+| `POST` | `/api/flyreq/tasks/batch` | 批量创建独立任务，按图片序号返回 `taskIds`（202） |
 | `POST` | `/api/flyreq/tasks` | 创建任务，返回 `{ taskId }`（202） |
 | `GET` | `/api/flyreq/tasks/:id` | 查询任务状态与结果 |
 | `POST` | `/api/flyreq/tasks/:id/ack` | 续期：把 TTL 延长 2 分钟 |
@@ -619,6 +620,7 @@ docker push ghcr.io/doudou770/flyreq-image-studio:latest
 | `GET` | `/api/flyreq/prompts` | 提示词广场内容 |
 | `GET` | `/api/flyreq/blacklist` | 敏感词列表 |
 | `GET` | `/api/flyreq/config` | 前端配置（如 `promptGalleryMode`） |
+| `GET` | `/api/flyreq/manifest.webmanifest` | 运行时 PWA manifest |
 | `GET` | `/api/flyreq/images/:taskId/:index/:subIndex` | 任务产物图片；省略 `subIndex` 时读取第 0 张 |
 | `WS` | `/api/flyreq/ws` | 实时任务 / 队列订阅 |
 
