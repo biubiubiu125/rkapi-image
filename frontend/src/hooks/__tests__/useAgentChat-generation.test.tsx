@@ -232,6 +232,54 @@ describe('useAgentChat generated task persistence', () => {
     expect(result.current.generationDraft).toBeNull();
   });
 
+  it('deduplicates generated task finalization when check-now races with polling completion', async () => {
+    mockedGetFlyreqTask
+      .mockResolvedValueOnce({
+        id: 'task-1',
+        status: 'processing',
+      })
+      .mockResolvedValue({
+        id: 'task-1',
+        status: 'completed',
+        result: { images: ['data:image/png;base64,aW1hZ2U='] },
+      });
+    const assistantMessageResolvers: Array<() => void> = [];
+    mockedPutMessage.mockImplementation(async message => {
+      if (message.role === 'assistant' && message.taskId === 'task-1') {
+        await new Promise<void>(resolve => { assistantMessageResolvers.push(resolve); });
+      }
+    });
+    const { result } = renderHook(() => useAgentChat());
+    await enterProposal(result);
+
+    let approval: Promise<void> | undefined;
+    await act(async () => {
+      approval = result.current.approveProposal('draw a city', [], 'rkapi-4k-image', params);
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(mockedGetFlyreqTask).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(result.current.phase).toBe('generating'));
+
+    let checkNow: Promise<unknown> | undefined;
+    await act(async () => {
+      checkNow = result.current.checkNow();
+      await Promise.resolve();
+    });
+
+    await waitFor(() => expect(assistantMessageResolvers).toHaveLength(1));
+    await Promise.resolve();
+    expect(mockedStoreAgentImageBytes).toHaveBeenCalledTimes(1);
+    expect(mockedPutImageRecord).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      assistantMessageResolvers.forEach(resolve => resolve());
+      await Promise.all([approval, checkNow]);
+    });
+
+    expect(mockedAckFlyreqTask).toHaveBeenCalledTimes(1);
+    expect(mockedClearPendingGeneration).toHaveBeenCalledTimes(1);
+  });
+
   it('keeps the same task recoverable when check-now still cannot persist the completed result', async () => {
     mockedPutImageRecord.mockRejectedValue(new Error('浏览器本地持久存储不可用'));
     const { result } = renderHook(() => useAgentChat());

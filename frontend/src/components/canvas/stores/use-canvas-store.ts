@@ -3,6 +3,7 @@ import { persist, type PersistStorage, type StorageValue } from "zustand/middlew
 
 import { nanoid } from "nanoid";
 import { localForageStorage } from "../lib/localforage-storage";
+import { collectImageStorageKeys, deleteStoredImages } from "../lib/image-storage";
 import type { CanvasBackgroundMode } from "../lib/canvas-theme";
 import type { CanvasConnection, CanvasNodeData, ViewportTransform } from "../types";
 
@@ -40,6 +41,17 @@ let queuedPersistState: PersistedCanvasState | null = null;
 let queuedPersistName: string | null = null;
 let queuedPersistValue: StorageValue<CanvasStore> | null = null;
 let persistInFlight: Promise<void> | null = null;
+
+function cleanupDeletedProjectImages(removedProjects: CanvasProject[], remainingProjects: CanvasProject[]) {
+  const removedKeys = collectImageStorageKeys(removedProjects);
+  if (removedKeys.size === 0) return;
+  const remainingKeys = collectImageStorageKeys(remainingProjects);
+  const unusedKeys = Array.from(removedKeys).filter((key) => !remainingKeys.has(key));
+  if (!unusedKeys.length) return;
+  void deleteStoredImages(unusedKeys).catch(error => {
+    console.warn('[canvas-store] 画布图片清理失败', error);
+  });
+}
 
 function persistQueuedCanvasStore(): Promise<void> {
   if (saveTimer) {
@@ -136,7 +148,10 @@ export const useCanvasStore = create<CanvasStore>()(
         })),
       deleteProjects: (ids) =>
         set((state) => {
-          const projects = state.projects.filter((project) => !ids.includes(project.id));
+          const idSet = new Set(ids);
+          const removedProjects = state.projects.filter((project) => idSet.has(project.id));
+          const projects = state.projects.filter((project) => !idSet.has(project.id));
+          cleanupDeletedProjectImages(removedProjects, projects);
           return { projects };
         }),
       replaceProjects: (projects) => set({ projects }),

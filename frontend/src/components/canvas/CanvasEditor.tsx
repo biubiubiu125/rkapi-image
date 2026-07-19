@@ -31,7 +31,7 @@ import { buildNodeGenerationContext, buildNodeGenerationInputs, hydrateNodeGener
 import { buildNodeMentionReferences } from "./utils/canvas-resource-references";
 import { fitNodeSize } from "./utils/canvas-node-size";
 import { applyGeneratedImageToCanvasNodes } from "./utils/canvas-generated-node";
-import { getImageBlob, imageToDataUrl, resolveImageUrl, uploadImage, type UploadedImage } from "./lib/image-storage";
+import { collectImageStorageKeys, deleteStoredImages, getImageBlob, imageToDataUrl, resolveImageUrl, uploadImage, type UploadedImage } from "./lib/image-storage";
 import { imageReferenceLabel } from "./lib/image-reference-prompt";
 import { compressReferenceDataUrl, readFileAsDataUrl } from "./lib/image-utils";
 import { CanvasNodeType, type CanvasConnection, type CanvasGenerationConfig, type CanvasNodeData, type CanvasNodeMetadata, type ContextMenuState, type ConnectionHandle, type Position, type SelectionBox, type ViewportTransform } from "./types";
@@ -251,6 +251,7 @@ export function CanvasEditor({ projectId, onBack, onRequireApiKey, showToast, sh
   const [fullscreenImageUrl, setFullscreenImageUrl] = useState<{ src: string; title: string; actionPayload?: ImageActionPayload } | null>(null);
   const [nodeZIndexMap, setNodeZIndexMap] = useState<Record<string, number>>({});
   const topZIndexRef = useRef(1);
+  const [imageCleanupRevision, setImageCleanupRevision] = useState(0);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -265,6 +266,8 @@ export function CanvasEditor({ projectId, onBack, onRequireApiKey, showToast, sh
   const gestureActive = useRef(false);
   const clipboard = useRef<CanvasNodeData[]>([]);
   const activeGenerationsRef = useRef<Map<string, AbortController>>(new Map());
+  const activeGenerationSourcesRef = useRef<Map<string, string>>(new Map());
+  const pendingImageCleanupKeysRef = useRef<Set<string>>(new Set());
   const autoRecoveryAttemptedRef = useRef<Set<string>>(new Set());
   const retryCooldownRef = useRef<Map<string, number>>(new Map());
   const [undoStack, setUndoStack] = useState<HistorySnapshot[]>([]);
@@ -405,6 +408,31 @@ export function CanvasEditor({ projectId, onBack, onRequireApiKey, showToast, sh
     commitCanvasSnapshot({ ...snapshot, nodes: nextNodes });
   }, [commitCanvasSnapshot]);
 
+  const queueImageCleanup = useCallback((data: unknown) => {
+    const removedKeys = collectImageStorageKeys(data);
+    if (removedKeys.size === 0) return;
+    for (const key of removedKeys) pendingImageCleanupKeysRef.current.add(key);
+    setImageCleanupRevision((revision) => revision + 1);
+  }, []);
+
+  useEffect(() => {
+    const pendingKeys = pendingImageCleanupKeysRef.current;
+    if (pendingKeys.size === 0) return;
+    const protectedData = {
+      nodes: canvasSnapshotRef.current.nodes,
+      undoStack,
+      redoStack,
+      clipboard: clipboard.current,
+    };
+    const protectedKeys = collectImageStorageKeys(protectedData);
+    const unusedKeys = Array.from(pendingKeys).filter((key) => !protectedKeys.has(key));
+    if (!unusedKeys.length) return;
+    unusedKeys.forEach((key) => pendingKeys.delete(key));
+    void deleteStoredImages(unusedKeys).catch(error => {
+      console.warn('[canvas] 画布图片清理失败', error);
+    });
+  }, [imageCleanupRevision, nodes, redoStack, undoStack]);
+
   const persistGeneratedImageNode = useCallback(async (nodeId: string, image: CanvasGeneratedImage, extra?: Partial<CanvasNodeMetadata>) => {
     const snapshot = canvasSnapshotRef.current;
     const result = applyGeneratedImageToCanvasNodes(snapshot.nodes, nodeId, image, extra);
@@ -463,8 +491,10 @@ export function CanvasEditor({ projectId, onBack, onRequireApiKey, showToast, sh
       const snapshot = canvasSnapshotRef.current;
       for (const node of snapshot.nodes) {
         if (!idSet.has(node.id)) continue;
+        queueImageCleanup(node);
         activeGenerationsRef.current.get(node.id)?.abort();
         activeGenerationsRef.current.delete(node.id);
+        activeGenerationSourcesRef.current.delete(node.id);
         const taskId = node.metadata?.generationTaskId;
         if (taskId) {
           void cancelServerTaskWithRetry(taskId, node.metadata?.generationTaskReadToken);
@@ -477,7 +507,7 @@ export function CanvasEditor({ projectId, onBack, onRequireApiKey, showToast, sh
       });
       setSelectedIds((prev) => prev.filter((id) => !idSet.has(id)));
     },
-    [commitCanvasSnapshot, pushHistory],
+    [commitCanvasSnapshot, pushHistory, queueImageCleanup],
   );
 
   const duplicateNodes = useCallback(
@@ -520,9 +550,12 @@ export function CanvasEditor({ projectId, onBack, onRequireApiKey, showToast, sh
   const clearNodeImage = useCallback(
     (nodeId: string) => {
       pushHistory();
-      patchNode(nodeId, (node) => ({ ...node, metadata: { status: "idle", ...(node.metadata?.canvasRole === "target" ? { canvasRole: "target" as const } : {}) } }));
+      patchNode(nodeId, (node) => {
+        queueImageCleanup(node);
+        return { ...node, metadata: { status: "idle", ...(node.metadata?.canvasRole === "target" ? { canvasRole: "target" as const } : {}) } };
+      });
     },
-    [patchNode, pushHistory],
+    [patchNode, pushHistory, queueImageCleanup],
   );
 
   const ingestFiles = useCallback(
@@ -814,6 +847,7 @@ export function CanvasEditor({ projectId, onBack, onRequireApiKey, showToast, sh
       activeGenerationsRef.current.get(nodeId)?.abort();
       const controller = new AbortController();
       activeGenerationsRef.current.set(nodeId, controller);
+      activeGenerationSourcesRef.current.set(nodeId, sourceNodeId);
 
       // 立即标记节点为提交中状态，并同步更新快照，避免快速完成时结果写入找不到节点。
       patchNode(nodeId, (node) => ({ ...node, metadata: { ...node.metadata, status: "submitting", errorDetails: undefined, generationTaskId: undefined, generationTaskReadToken: undefined, recoverableGenerationTask: undefined, generationStartedAt: Date.now() } }));
@@ -886,13 +920,11 @@ export function CanvasEditor({ projectId, onBack, onRequireApiKey, showToast, sh
       } finally {
         if (activeGenerationsRef.current.get(nodeId) === controller) {
           activeGenerationsRef.current.delete(nodeId);
+          activeGenerationSourcesRef.current.delete(nodeId);
         }
-        // 检查该编排节点是否还有其他活跃子任务
         let hasActive = false;
-        for (const key of activeGenerationsRef.current.keys()) {
-          if (key === nodeId) continue;
-          const n = canvasSnapshotRef.current.nodes.find((item) => item.id === key);
-          if (n && n.metadata?.generationStartedAt) { hasActive = true; break; }
+        for (const activeSourceNodeId of activeGenerationSourcesRef.current.values()) {
+          if (activeSourceNodeId === sourceNodeId) { hasActive = true; break; }
         }
         if (!hasActive) setBusy(sourceNodeId, false);
       }
@@ -1057,6 +1089,7 @@ export function CanvasEditor({ projectId, onBack, onRequireApiKey, showToast, sh
       autoRecoveryAttemptedRef.current.add(recoveryKey);
       const controller = new AbortController();
       activeGenerationsRef.current.set(node.id, controller);
+      activeGenerationSourcesRef.current.set(node.id, node.id);
       const queueRecoveredServerTaskCancel = () => {
         void cancelServerTaskWithRetry(taskId, taskReadToken);
       };
@@ -1106,6 +1139,7 @@ export function CanvasEditor({ projectId, onBack, onRequireApiKey, showToast, sh
         } finally {
           if (activeGenerationsRef.current.get(node.id) === controller) {
             activeGenerationsRef.current.delete(node.id);
+            activeGenerationSourcesRef.current.delete(node.id);
           }
         }
       })();

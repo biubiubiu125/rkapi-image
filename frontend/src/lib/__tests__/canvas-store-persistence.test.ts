@@ -4,6 +4,21 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 
 const localForageSetItemMock = vi.hoisted(() => vi.fn<() => Promise<void>>());
+const deleteStoredImagesMock = vi.hoisted(() => vi.fn<() => Promise<void>>());
+const collectImageStorageKeysMock = vi.hoisted(() => (value: unknown, keys = new Set<string>()) => {
+  if (!value || typeof value !== 'object') return keys;
+  if ('storageKey' in value && typeof value.storageKey === 'string' && value.storageKey.startsWith('image:')) {
+    keys.add(value.storageKey);
+  }
+  Object.values(value).forEach(item => {
+    if (Array.isArray(item)) {
+      item.forEach(child => collectImageStorageKeysMock(child, keys));
+    } else {
+      collectImageStorageKeysMock(item, keys);
+    }
+  });
+  return keys;
+});
 
 vi.mock('@/components/canvas/lib/localforage-storage', () => ({
   localForageStorage: {
@@ -11,6 +26,11 @@ vi.mock('@/components/canvas/lib/localforage-storage', () => ({
     setItem: localForageSetItemMock,
     removeItem: vi.fn(async () => undefined),
   },
+}));
+
+vi.mock('@/components/canvas/lib/image-storage', () => ({
+  collectImageStorageKeys: collectImageStorageKeysMock,
+  deleteStoredImages: deleteStoredImagesMock,
 }));
 
 import { flushCanvasStorePersistence, useCanvasStore } from '@/components/canvas/stores/use-canvas-store';
@@ -25,6 +45,7 @@ describe('canvas store persistence flushing', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     localForageSetItemMock.mockResolvedValue(undefined);
+    deleteStoredImagesMock.mockResolvedValue(undefined);
     useCanvasStore.setState({ hydrated: true, projects: [] });
   });
 
@@ -44,6 +65,44 @@ describe('canvas store persistence flushing', () => {
     useCanvasStore.getState().createProject('失败画布');
 
     await expect(flushCanvasStorePersistence()).rejects.toThrow('idb unavailable');
+  });
+
+  it('deletes image blobs that become unused when canvas projects are removed', async () => {
+    useCanvasStore.setState({
+      hydrated: true,
+      projects: [
+        {
+          id: 'keep',
+          title: 'keep',
+          createdAt: '2026-01-01T00:00:00.000Z',
+          updatedAt: '2026-01-01T00:00:00.000Z',
+          nodes: [{ id: 'keep-node', type: 'image' as never, title: 'keep', position: { x: 0, y: 0 }, width: 1, height: 1, metadata: { storageKey: 'image:shared' } }],
+          connections: [],
+          backgroundMode: 'lines',
+          showImageInfo: false,
+          viewport: { x: 0, y: 0, k: 1 },
+        },
+        {
+          id: 'remove',
+          title: 'remove',
+          createdAt: '2026-01-01T00:00:00.000Z',
+          updatedAt: '2026-01-01T00:00:00.000Z',
+          nodes: [
+            { id: 'remove-node', type: 'image' as never, title: 'remove', position: { x: 0, y: 0 }, width: 1, height: 1, metadata: { storageKey: 'image:orphan' } },
+            { id: 'shared-node', type: 'image' as never, title: 'shared', position: { x: 0, y: 0 }, width: 1, height: 1, metadata: { storageKey: 'image:shared' } },
+          ],
+          connections: [],
+          backgroundMode: 'lines',
+          showImageInfo: false,
+          viewport: { x: 0, y: 0, k: 1 },
+        },
+      ],
+    });
+
+    useCanvasStore.getState().deleteProjects(['remove']);
+    await Promise.resolve();
+
+    expect(deleteStoredImagesMock).toHaveBeenCalledWith(['image:orphan']);
   });
 
   it('flushes newly created generation nodes before submitting server tasks', () => {

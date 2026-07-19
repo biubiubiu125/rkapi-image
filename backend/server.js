@@ -2334,9 +2334,54 @@ function notifyImageSseResponse(options) {
   }
 }
 
-async function parseGptImageResponse(response) {
+async function readResponseTextWithAbort(response, signal) {
+  const controller = new AbortController();
+  const abortFromExternalSignal = () => {
+    if (!controller.signal.aborted) {
+      controller.abort(getAbortSignalReason(signal));
+    }
+  };
+  if (signal?.aborted) {
+    abortFromExternalSignal();
+  } else if (signal) {
+    signal.addEventListener('abort', abortFromExternalSignal, { once: true });
+  }
+  const timeout = setTimeout(() => controller.abort(new Error('请求超时')), REQUEST_TIMEOUT_MS);
+
+  try {
+    throwIfAborted(controller.signal);
+    if (response.body && typeof response.body.getReader === 'function') {
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let text = '';
+      const cancelReader = () => {
+        void reader.cancel(getAbortSignalReason(controller.signal)).catch(() => undefined);
+      };
+      controller.signal.addEventListener('abort', cancelReader, { once: true });
+      try {
+        for (;;) {
+          throwIfAborted(controller.signal);
+          const { done, value } = await reader.read();
+          throwIfAborted(controller.signal);
+          if (done) break;
+          if (value) text += decoder.decode(value, { stream: true });
+        }
+        return text + decoder.decode();
+      } finally {
+        controller.signal.removeEventListener('abort', cancelReader);
+        reader.releaseLock();
+      }
+    }
+    return await response.text();
+  } finally {
+    if (signal) signal.removeEventListener('abort', abortFromExternalSignal);
+    clearTimeout(timeout);
+  }
+}
+
+async function parseGptImageResponse(response, signal) {
   const isEventStream = isImageEventStreamResponse(response);
-  const responseText = await response.text();
+  const responseText = await readResponseTextWithAbort(response, signal);
 
   if (!response.ok) {
     throw new Error(buildUpstreamHttpErrorMessage(response.status, responseText));
@@ -2366,6 +2411,7 @@ async function parseGptImageResponse(response) {
 }
 
 async function requestGptImage(apiKey, request, resolvedSize, options = {}) {
+  const signal = options.signal;
   const baseUrl = options.baseUrl || resolveFlyreqApiBaseUrl();
   const endpoint = request.mode === 'image-to-image'
     ? '/v1/images/edits'
@@ -2381,7 +2427,7 @@ async function requestGptImage(apiKey, request, resolvedSize, options = {}) {
   const usesSse = isImageEventStreamResponse(response);
   if (usesSse) notifyImageSseResponse(options);
   try {
-    return { image: await parseGptImageResponse(response), usesSse };
+    return { image: await parseGptImageResponse(response, signal), usesSse };
   } catch (error) {
     if (usesSse && error && typeof error === 'object') {
       error.usesSse = true;
@@ -2391,6 +2437,7 @@ async function requestGptImage(apiKey, request, resolvedSize, options = {}) {
 }
 
 async function requestXaiImagineImage(apiKey, request, options = {}) {
+  const signal = options.signal;
   const baseUrl = options.baseUrl || 'https://api.x.ai';
   const endpoint = getXaiImagineEndpoint(request.mode);
   const url = appendProtocolApiPath('openai', baseUrl, endpoint);
@@ -2403,7 +2450,7 @@ async function requestXaiImagineImage(apiKey, request, options = {}) {
       const usesSse = isImageEventStreamResponse(response);
       if (usesSse) notifyImageSseResponse(options);
       try {
-        return { image: await parseGptImageResponse(response), usesSse };
+        return { image: await parseGptImageResponse(response, signal), usesSse };
       } catch (error) {
         if (usesSse && error && typeof error === 'object') {
           error.usesSse = true;
@@ -2413,7 +2460,7 @@ async function requestXaiImagineImage(apiKey, request, options = {}) {
     }
 
     const retryDelayMs = getRetryAfterDelayMs(response);
-    await response.text();
+    await readResponseTextWithAbort(response, signal);
     console.warn(`[xai-imagine] 收到 429，${Math.ceil(retryDelayMs / 1000)} 秒后重试`);
     await delay(retryDelayMs, options.signal);
   }
@@ -2517,6 +2564,7 @@ function extractGeminiImagePayload(data) {
 }
 
 async function generateFlyreqGeminiImage(apiKey, request, options = {}) {
+  const signal = options.signal;
   const baseUrl = options.baseUrl || resolveFlyreqApiBaseUrl();
   const parts = [
     { text: request.prompt },
@@ -2542,11 +2590,11 @@ async function generateFlyreqGeminiImage(apiKey, request, options = {}) {
   });
 
   if (!response.ok) {
-    const responseText = await response.text();
+    const responseText = await readResponseTextWithAbort(response, signal);
     throw new Error(buildUpstreamHttpErrorMessage(response.status, responseText));
   }
 
-  const responseText = await response.text();
+  const responseText = await readResponseTextWithAbort(response, signal);
   if (isLikelyHtmlResponse(responseText)) {
     throw new Error(buildUpstreamErrorMessage(responseText));
   }

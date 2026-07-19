@@ -34,6 +34,35 @@ describe('server task cancellation closure', () => {
     expect(serverSource).toContain('readResponseBufferWithLimit(response, MAX_REMOTE_IMAGE_BYTES, options.signal)');
   });
 
+  it('keeps task cancellation and request timeout active while reading upstream image response bodies', () => {
+    const parseSource = serverSource.slice(
+      serverSource.indexOf('async function parseGptImageResponse'),
+      serverSource.indexOf('\nasync function requestGptImage'),
+    );
+    const gptSource = serverSource.slice(
+      serverSource.indexOf('async function requestGptImage'),
+      serverSource.indexOf('\nasync function requestXaiImagineImage'),
+    );
+    const xaiSource = serverSource.slice(
+      serverSource.indexOf('async function requestXaiImagineImage'),
+      serverSource.indexOf('\n// ===== 加强网络连接'),
+    );
+    const geminiSource = serverSource.slice(
+      serverSource.indexOf('async function generateFlyreqGeminiImage'),
+      serverSource.indexOf('\nfunction drainQueue'),
+    );
+
+    expect(serverSource).toContain('async function readResponseTextWithAbort(response, signal)');
+    expect(parseSource).toContain('parseGptImageResponse(response, signal)');
+    expect(parseSource).toContain('readResponseTextWithAbort(response, signal)');
+    expect(parseSource).not.toContain('await response.text()');
+    expect(gptSource).toContain('parseGptImageResponse(response, signal)');
+    expect(xaiSource).toContain('parseGptImageResponse(response, signal)');
+    expect(xaiSource).toContain('readResponseTextWithAbort(response, signal)');
+    expect(geminiSource).toContain('readResponseTextWithAbort(response, signal)');
+    expect(geminiSource).not.toContain('await response.text()');
+  });
+
   it('notifies the server when removing a locally stored generation job', () => {
     expect(workspaceJobsSource).toContain('cancelServerTaskWithRetry');
     expect(workspaceJobsSource).toContain('cancelRemovedServerTask(removedJob)');

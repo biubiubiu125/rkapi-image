@@ -270,6 +270,8 @@ export function useAgentChat() {
   const pendingAnalysisRef = useRef('');
   const pendingReasoningRef = useRef('');
   const pendingGenerationRef = useRef<PendingGenerationData | null>(null);
+  const finalizingGeneratedTaskIdsRef = useRef<Set<string>>(new Set());
+  const finalizedGeneratedTaskIdsRef = useRef<Set<string>>(new Set());
   /** 标记当前提案是否来自"重新编辑"（而非新消息触发），用于取消时决定是否允许撤回 */
   const isReeditRef = useRef(false);
   /** 保存当前提案引用，生图完成后若 state proposal 已被清除时仍可获取 reason 等字段 */
@@ -764,6 +766,10 @@ export function useAgentChat() {
       taskWarning?: string;
     },
   ): Promise<void> => {
+    if (finalizedGeneratedTaskIdsRef.current.has(ctx.taskId)) return;
+    if (finalizingGeneratedTaskIdsRef.current.has(ctx.taskId)) return;
+    finalizingGeneratedTaskIdsRef.current.add(ctx.taskId);
+    try {
     const descController = new AbortController();
     describeAbortRef.current = descController;
 
@@ -836,6 +842,7 @@ export function useAgentChat() {
     });
     await ackServerTaskWithRetry(ctx.taskId, ctx.taskReadToken);
     await clearPendingGeneration();
+    finalizedGeneratedTaskIdsRef.current.add(ctx.taskId);
     pendingGenerationRef.current = null;
     setError(null);
     setGeneratingTaskId(null);
@@ -843,6 +850,9 @@ export function useAgentChat() {
     setGenerationDraft(null);
     setIsSyncing(false);
     setPhase('idle');
+    } finally {
+      finalizingGeneratedTaskIdsRef.current.delete(ctx.taskId);
+    }
   }, [ingestImage, persistAndAppendMessage, t]);
 
   /** 页面刷新后恢复生图轮询：使用持久化的 generation 数据继续轮询并处理结果 */

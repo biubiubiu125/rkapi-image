@@ -51,7 +51,7 @@ describe('backend GPT Image advanced params forwarding', () => {
     expect(serverSource).toContain('streamImages: body.streamImages');
     expect(serverSource).toContain('stream: Boolean(request.streamImages)');
     expect(serverSource).toContain('function isImageEventStreamResponse(response)');
-    expect(serverSource).toContain('return { image: await parseGptImageResponse(response), usesSse };');
+    expect(serverSource).toContain('return { image: await parseGptImageResponse(response, signal), usesSse };');
     expect(serverSource).toContain('let usesSse = false;');
     expect(serverSource).toContain('usesSse = generated.usesSse;');
     expect(serverSource).toContain('usesSse: usesSse || Boolean(error?.usesSse)');
