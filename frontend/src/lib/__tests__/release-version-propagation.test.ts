@@ -75,7 +75,7 @@ describe('发布版本到 UI 的传递', () => {
     const dockerTriggers = workflowTriggerBlock(dockerImageWorkflow);
 
     expect(dockerTriggers).toContain('push:');
-    expect(dockerTriggers).toContain('branches: [master, main]');
+    expect(dockerTriggers).toContain('branches: [main]');
     expect(dockerImageWorkflow).toContain('push:');
     expect(dockerImageWorkflow).toContain('REGISTRY: ghcr.io');
     expect(dockerImageWorkflow).toContain('IMAGE_NAME: ${{ github.repository }}');
