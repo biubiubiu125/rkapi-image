@@ -208,6 +208,7 @@ function ImageNodeBody({
   const url = imageUrl || (fallbackContent && !fallbackContent.startsWith("blob:") ? fallbackContent : undefined);
   const isGenerating = status === "submitting" || status === "queued" || status === "processing";
   const isError = status === "error";
+  const canRecoverErroredTask = isError && Boolean(data.metadata?.recoverableGenerationTask && data.metadata?.generationTaskId && onRefreshProgress);
 
   return (
     <div className="relative h-full w-full">
@@ -239,6 +240,9 @@ function ImageNodeBody({
           <span className="line-clamp-3 text-xs text-destructive">{data.metadata?.errorDetails || "生成失败"}</span>
           {onRetry && (
             <RetryButton onRetry={() => onRetry(data)} />
+          )}
+          {canRecoverErroredTask && (
+            <RecoverTaskButton onRefresh={() => onRefreshProgress?.(data)} />
           )}
         </div>
       )}
@@ -349,6 +353,26 @@ function RetryButton({ onRetry }: { onRetry: () => void }) {
     >
       <RefreshCw className={cn("size-3.5", cooldown > 0 && "animate-spin")} />
       {cooldown > 0 ? `${cooldown}s` : "重新生成"}
+    </button>
+  );
+}
+
+function RecoverTaskButton({ onRefresh }: { onRefresh: () => void | Promise<void> }) {
+  const [refreshing, setRefreshing] = useState(false);
+
+  return (
+    <button
+      type="button"
+      data-canvas-no-zoom
+      className="inline-flex items-center gap-1 rounded-lg border border-border bg-background px-2.5 py-1.5 text-[11px] font-medium text-foreground transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-60"
+      disabled={refreshing}
+      onClick={() => {
+        setRefreshing(true);
+        void Promise.resolve(onRefresh()).finally(() => setRefreshing(false));
+      }}
+    >
+      <RefreshCw className={cn("size-3.5", refreshing && "animate-spin")} />
+      获取当前进度
     </button>
   );
 }

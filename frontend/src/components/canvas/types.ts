@@ -72,6 +72,8 @@ export type CanvasNodeMetadata = {
   generationTaskId?: string;
   /** 单节点生成开始时间戳（用于计算用时） */
   generationStartedAt?: number;
+  /** 本地保存失败但服务端任务仍可取回时，允许错误态继续恢复同一任务。 */
+  recoverableGenerationTask?: boolean;
   /** 画布导入流程中的节点角色，用于空目标图节点也能被编排节点 @ 引用。 */
   canvasRole?: "reference" | "target" | "reference-prompt";
   /** Text 节点：渲染模式 */

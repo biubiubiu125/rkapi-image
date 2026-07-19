@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { hasConfiguredImageModel } from '@/lib/settings-storage';
+import { startPendingServerTaskAckAutoFlush } from '@/lib/server-task-ack';
 import {
   deleteImage,
   loadJobs,
@@ -7,6 +8,7 @@ import {
   saveImage,
   saveJobs,
   IMG_STORE,
+  canPersistRemoteImageRefsInJobsStorage,
   compareStoredJobsByDisplayOrder,
   restoreStoredJobBatchCreatedAt,
   type Mode,
@@ -44,7 +46,25 @@ export function useWorkspaceJobs() {
   const [clearAllDialogOpen, setClearAllDialogOpen] = useState<Mode | null>(null);
   const [cancelJobId, setCancelJobId] = useState<string | null>(null);
 
+  const persistJobs = useCallback((updater: (prev: StoredJob[]) => StoredJob[]): boolean => {
+    const next = updater(jobsRef.current);
+    const persisted = saveJobs(next);
+    jobsRef.current = next;
+    setJobs(next);
+    return persisted;
+  }, []);
+
   useEffect(() => {
+    const stopAckAutoFlush = startPendingServerTaskAckAutoFlush({
+      onAcked: (taskIds) => {
+        const ackedTaskIds = new Set(taskIds);
+        persistJobs(prev => prev.map(job => (
+          job.serverTaskId && ackedTaskIds.has(job.serverTaskId)
+            ? { ...job, serverTaskAcked: true, warning: undefined }
+            : job
+        )));
+      },
+    });
     const stored = loadInitialJobs();
     saveJobs(stored);
 
@@ -79,22 +99,23 @@ export function useWorkspaceJobs() {
         })
         .catch(() => undefined);
     }
-  }, []);
-
-  const persistJobs = useCallback((updater: (prev: StoredJob[]) => StoredJob[]) => {
-    setJobs(prev => {
-      const next = updater(prev);
-      saveJobs(next);
-      return next;
-    });
-  }, []);
-
-  const addJob = useCallback((job: StoredJob) => {
-    persistJobs(prev => [job, ...prev]);
+    return stopAckAutoFlush;
   }, [persistJobs]);
 
+  const addJobs = useCallback((newJobs: StoredJob[]): boolean => {
+    if (newJobs.length === 0) return true;
+    const next = [...newJobs, ...jobsRef.current];
+    const persisted = saveJobs(next);
+    if (!persisted) return false;
+    jobsRef.current = next;
+    setJobs(next);
+    return true;
+  }, []);
+
+  const addJob = useCallback((job: StoredJob): boolean => addJobs([job]), [addJobs]);
+
   const replaceJob = useCallback((jobId: string, updater: (job: StoredJob) => StoredJob) => {
-    persistJobs(prev => prev.map(job => (job.id === jobId ? updater(job) : job)));
+    return persistJobs(prev => prev.map(job => (job.id === jobId ? updater(job) : job)));
   }, [persistJobs]);
 
   const hasJob = useCallback((jobId: string) => {
@@ -107,13 +128,22 @@ export function useWorkspaceJobs() {
   }, []);
 
   const completeJob = useCallback(async (jobId: string, job: StoredJob) => {
-    persistJobs(prev => prev.map(current => (current.id === jobId ? job : current)));
+    try {
+      await saveImage(job);
+    } catch (error) {
+      if (!canPersistRemoteImageRefsInJobsStorage(job)) {
+        throw error;
+      }
+    }
+    const persisted = persistJobs(prev => prev.map(current => (current.id === jobId ? job : current)));
+    if (!persisted) {
+      throw new Error('任务列表持久化失败');
+    }
     setLoadedImages(prev => {
       const next = new Set(prev);
       next.add(job.id);
       return next;
     });
-    await saveImage(job).catch(() => undefined);
   }, [persistJobs]);
 
   const failJob = useCallback(async (jobId: string, error: string, options?: FailJobOptions) => {
@@ -207,6 +237,7 @@ export function useWorkspaceJobs() {
     try {
       await retryDownloadCachedImages(job, {
         addJob,
+        addJobs,
         replaceJob,
         completeJob,
         failJob,
@@ -214,7 +245,7 @@ export function useWorkspaceJobs() {
     } catch {
       // retryDownload failure is non-critical
     }
-  }, [addJob, replaceJob, completeJob, failJob]);
+  }, [addJob, addJobs, replaceJob, completeJob, failJob]);
 
   return {
     hasApiKey,
@@ -234,6 +265,7 @@ export function useWorkspaceJobs() {
     hasJob,
     getJob,
     addJob,
+    addJobs,
     replaceJob,
     completeJob,
     failJob,

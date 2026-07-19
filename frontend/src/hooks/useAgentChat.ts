@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { hasConfiguredTextModel } from '@/lib/settings-storage';
 import { generateUUID } from '@/lib/uuid';
 import { createFlyreqTask, getFlyreqTask, resolveImageTaskProvider, type ImageReference } from '@/lib/flyreq-task-client';
+import { ackServerTaskWithRetry } from '@/lib/server-task-ack';
 import { fetchImageAsBlob } from '@/lib/image-downloader';
 import {
   getGptImageAdvancedParamsForModel,
@@ -23,6 +24,7 @@ import {
   type AgentMessage,
   type AgentImageRecord,
   type AgentProposal,
+  type AgentProposalData,
 } from '@/lib/agent-chat-config';
 import {
   loadAgentSession,
@@ -45,6 +47,7 @@ import {
 } from '@/lib/agent-context-store';
 import { getDefaultConfiguredTextModel } from '@/lib/model-endpoints';
 import { useI18n } from '@/components/LanguageProvider';
+import { useModelRegistryRefresh } from '@/hooks/useModelRegistryRefresh';
 
 export type AgentPhase = 'idle' | 'loading' | 'describing' | 'streaming' | 'proposal' | 'generating';
 
@@ -152,6 +155,33 @@ function parseImgSeq(imgId: string): number {
   return match ? Number(match[1]) : 0;
 }
 
+function getUnknownErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function isLocalPersistenceError(error: unknown): boolean {
+  const message = getUnknownErrorMessage(error);
+  return message.includes('本地持久存储') || message.includes('本地保存不完整') || message.includes('持久化失败') || message.includes('持久化中止');
+}
+
+function proposalDataFromPendingGeneration(data: PendingGenerationData): AgentProposalData {
+  return {
+    action: data.selectedImageIds.length > 0 ? 'edit' : 'generate',
+    prompt: data.proposal.prompt,
+    referencedImageIds: data.selectedImageIds,
+    model: data.model as ModelId,
+    outputSize: data.outputSize,
+    customSize: data.customSize,
+    aspectRatio: data.aspectRatio,
+    temperature: data.temperature,
+    gptImageQuality: data.gptImageQuality,
+    gptImageStyle: data.gptImageStyle,
+    gptImageBackground: data.gptImageBackground,
+    gptImageOutputFormat: data.gptImageOutputFormat,
+    parallelCount: data.parallelCount,
+  };
+}
+
 /**
  * 按最后一个上下文分隔点切片：分隔点之前的对话和图片对模型不可见。
  * 界面仍展示全部消息，这里只影响喂给模型的上下文。
@@ -186,8 +216,9 @@ async function resultImageToBlob(ref: string): Promise<Blob> {
 
 export function useAgentChat() {
   const { locale, t } = useI18n();
+  useModelRegistryRefresh();
   const [ready, setReady] = useState(false);
-  const [hasApiKey] = useState(() => hasConfiguredTextModel());
+  const hasApiKey = hasConfiguredTextModel();
   const [phase, setPhase] = useState<AgentPhase>('idle');
   const [messages, setMessages] = useState<AgentMessage[]>([]);
   const [images, setImages] = useState<AgentImageRecord[]>([]);
@@ -216,6 +247,7 @@ export function useAgentChat() {
   /** 当模型返回提案时，暂存分析文本，等生图完成后与结果合并为一条消息 */
   const pendingAnalysisRef = useRef('');
   const pendingReasoningRef = useRef('');
+  const pendingGenerationRef = useRef<PendingGenerationData | null>(null);
   /** 标记当前提案是否来自"重新编辑"（而非新消息触发），用于取消时决定是否允许撤回 */
   const isReeditRef = useRef(false);
   /** 保存当前提案引用，生图完成后若 state proposal 已被清除时仍可获取 reason 等字段 */
@@ -300,6 +332,7 @@ export function useAgentChat() {
         pendingAnalysisRef.current = generation.pendingAnalysis;
         pendingReasoningRef.current = generation.pendingReasoning;
         proposalRef.current = generation.proposal;
+        pendingGenerationRef.current = generation;
         setGeneratingTaskId(generation.taskId);
         setGeneratingStartedAt(generation.startedAt);
         setGenerationDraft({
@@ -323,12 +356,47 @@ export function useAgentChat() {
 
   const appendMessage = useCallback((message: AgentMessage) => {
     setMessages(prev => [...prev, message]);
-    void putMessage(message);
+    void putMessage(message).catch(error => {
+      console.warn('[agent] 消息持久化失败', error);
+    });
+  }, []);
+
+  const persistAndAppendMessage = useCallback(async (message: AgentMessage) => {
+    await putMessage(message);
+    setMessages(prev => [...prev, message]);
   }, []);
 
   const registerImage = useCallback((record: AgentImageRecord) => {
     setImages(prev => [...prev, record]);
-    void putImageRecord(record);
+    void putImageRecord(record).catch(error => {
+      console.warn('[agent] 图片记录持久化失败', error);
+    });
+  }, []);
+
+  const persistAndRegisterImage = useCallback(async (record: AgentImageRecord) => {
+    await putImageRecord(record);
+    setImages(prev => [...prev, record]);
+  }, []);
+
+  const persistAndShowProposal = useCallback((data: {
+    proposal: AgentProposal;
+    pendingAnalysis: string;
+    pendingReasoning: string;
+    isReedit: boolean;
+  }) => {
+    void (async () => {
+      try {
+        await savePendingProposal(data);
+        pendingAnalysisRef.current = data.pendingAnalysis;
+        pendingReasoningRef.current = data.pendingReasoning;
+        isReeditRef.current = data.isReedit;
+        setProposal(data.proposal);
+        setPhase('proposal');
+      } catch (error) {
+        setError(getUnknownErrorMessage(error) || '浏览器本地持久存储不可用');
+        setPhase('idle');
+      }
+    })();
   }, []);
 
   const nextImgId = useCallback(() => {
@@ -382,9 +450,13 @@ export function useAgentChat() {
       height: dims?.height && dims.height > 0 ? dims.height : undefined,
       createdAt: Date.now(),
     };
-    registerImage(record);
+    if (source === 'generated') {
+      await persistAndRegisterImage(record);
+    } else {
+      registerImage(record);
+    }
     return record;
-  }, [getAgentTextModelConfig, locale, nextImgId, registerImage]);
+  }, [getAgentTextModelConfig, locale, nextImgId, persistAndRegisterImage, registerImage]);
 
   /** 重新生成已有图片的描述 */
   const redescribeImage = useCallback(async (imgId: string): Promise<string> => {
@@ -403,7 +475,9 @@ export function useAgentChat() {
     const description = newDescription;
     const updated: AgentImageRecord = { ...record, description };
     setImages(prev => prev.map(img => img.imgId === imgId ? updated : img));
-    void putImageRecord(updated);
+    void putImageRecord(updated).catch(error => {
+      console.warn('[agent] 图片描述持久化失败', error);
+    });
     return description;
   }, [getAgentTextModelConfig, images, locale]);
 
@@ -460,14 +534,8 @@ export function useAgentChat() {
               setImageModelState(resolvedModel);
               void saveImageModel(resolvedModel);
             }
-            // 有提案：不保存为单独消息，暂存分析文本供生图成功后合并
-            pendingAnalysisRef.current = text;
-            pendingReasoningRef.current = reasoning;
-            isReeditRef.current = false;
-            setProposal(parsedProposal);
-            setPhase('proposal');
-            // 持久化 pending proposal，刷新页面后可以恢复
-            void savePendingProposal({
+            // 有提案：不保存为单独消息，先持久化再进入 proposal，刷新页面后可以恢复。
+            persistAndShowProposal({
               proposal: parsedProposal,
               pendingAnalysis: text,
               pendingReasoning: reasoning,
@@ -476,13 +544,19 @@ export function useAgentChat() {
           } else {
             // 纯文本回复：正常保存为消息
             if (text.length > 0) {
-              appendMessage({
+              void persistAndAppendMessage({
                 id: generateUUID(),
                 role: 'assistant',
                 text,
                 reasoning: reasoning.length > 0 ? reasoning : undefined,
                 createdAt: Date.now(),
+              }).then(() => {
+                setPhase('idle');
+              }).catch(error => {
+                setError(getUnknownErrorMessage(error) || 'Agent 消息持久化失败');
+                setPhase('idle');
               });
+              return;
             }
             setPhase('idle');
           }
@@ -499,7 +573,7 @@ export function useAgentChat() {
       configured.baseUrl,
     );
     streamHandleRef.current = handle;
-  }, [appendMessage, appendStreamingToken, flushAndCancelRaf, getAgentTextModelConfig, locale, webSearchEnabled]);
+  }, [appendStreamingToken, flushAndCancelRaf, getAgentTextModelConfig, locale, persistAndAppendMessage, persistAndShowProposal, webSearchEnabled]);
 
   const sendMessage = useCallback(async (text: string, uploads: PendingUpload[], imageReferences?: string[]) => {
     if (phase !== 'idle') return;
@@ -563,13 +637,19 @@ export function useAgentChat() {
       imageIds: uploadedIds.length > 0 ? uploadedIds : undefined,
       createdAt: Date.now(),
     };
-    appendMessage(userMessage);
+    try {
+      await persistAndAppendMessage(userMessage);
+    } catch (error) {
+      setError(getUnknownErrorMessage(error) || '浏览器本地持久存储不可用');
+      setPhase('idle');
+      return;
+    }
 
     const fullHistory = [...messages, userMessage];
     const fullCatalog = [...images, ...uploadedRecords];
     const { history, catalog } = sliceActiveContext(fullHistory, fullCatalog);
     runChat(history, catalog);
-  }, [phase, messages, images, appendMessage, ingestImage, runChat]);
+  }, [phase, messages, images, persistAndAppendMessage, ingestImage, runChat]);
 
   const cancelProposal = useCallback(() => {
     setProposal(null);
@@ -684,8 +764,13 @@ export function useAgentChat() {
       }
     }
 
-    if (records.length === 0) {
-      throw new Error(errors[0] || '图片处理失败');
+    if (records.length !== allImages.length) {
+      const recordIds = records.map(record => record.imgId);
+      await Promise.allSettled([
+        deleteImageRecords(recordIds),
+        ...recordIds.map(imgId => deleteAgentImageBytes(imgId)),
+      ]);
+      throw new Error(`生成结果本地保存不完整：${errors.filter(Boolean).join('; ') || '图片处理失败'}`);
     }
 
     const imgIds = records.map(r => r.imgId);
@@ -702,7 +787,7 @@ export function useAgentChat() {
       generatedText += `\n${t('agentGeneration.partialFailure', { errors: errors.join('; ') })}`;
     }
 
-    appendMessage({
+    await persistAndAppendMessage({
       id: generateUUID(),
       role: 'assistant',
       text: generatedText,
@@ -712,17 +797,21 @@ export function useAgentChat() {
       proposalData: ctx.proposalData,
       createdAt: Date.now(),
     });
-    void clearPendingGeneration();
+    await ackServerTaskWithRetry(ctx.taskId);
+    await clearPendingGeneration();
+    pendingGenerationRef.current = null;
+    setError(null);
     setGeneratingTaskId(null);
     setGeneratingStartedAt(null);
     setGenerationDraft(null);
     setIsSyncing(false);
     setPhase('idle');
-  }, [appendMessage, ingestImage, t]);
+  }, [ingestImage, persistAndAppendMessage, t]);
 
   /** 页面刷新后恢复生图轮询：使用持久化的 generation 数据继续轮询并处理结果 */
   const resumeGeneration = useCallback(async (data: PendingGenerationData) => {
     pollAbortRef.current = false;
+    pendingGenerationRef.current = data;
     try {
       const task = await pollTask(data.taskId);
       if (!mountedRef.current) return;
@@ -733,45 +822,47 @@ export function useAgentChat() {
         taskId: data.taskId,
         prompt: data.proposal.prompt,
         analysisFallbackReason: data.proposal.reason || '',
-        proposalData: {
-          action: data.selectedImageIds.length > 0 ? 'edit' : 'generate',
+        proposalData: proposalDataFromPendingGeneration(data),
+      });
+    } catch (err) {
+      if (!isLocalPersistenceError(err)) {
+        void clearPendingGeneration();
+        pendingGenerationRef.current = null;
+        setGeneratingTaskId(null);
+        setGeneratingStartedAt(null);
+        setGenerationDraft(null);
+        setProposal({
+          action: data.proposal?.action ?? (data.selectedImageIds.length > 0 ? 'edit' : 'generate'),
           prompt: data.proposal.prompt,
           referencedImageIds: data.selectedImageIds,
-          model: data.model as ModelId,
-          outputSize: data.outputSize,
-          customSize: data.customSize,
-          aspectRatio: data.aspectRatio,
+          reason: data.proposal?.reason ?? '',
+          requestedAspectRatio: data.proposal?.requestedAspectRatio,
+          suggestedAspectRatio: data.proposal?.suggestedAspectRatio ?? data.aspectRatio,
+          requestedOutputSize: data.proposal?.requestedOutputSize ?? data.outputSize,
           temperature: data.temperature,
           gptImageQuality: data.gptImageQuality,
           gptImageStyle: data.gptImageStyle,
           gptImageBackground: data.gptImageBackground,
           gptImageOutputFormat: data.gptImageOutputFormat,
           parallelCount: data.parallelCount,
-        },
-      });
-    } catch (err) {
-      void clearPendingGeneration();
-      setError(err instanceof Error ? err.message : '生图失败');
-      setProposal({
-        action: data.proposal?.action ?? (data.selectedImageIds.length > 0 ? 'edit' : 'generate'),
-        prompt: data.proposal.prompt,
-        referencedImageIds: data.selectedImageIds,
-        reason: data.proposal?.reason ?? '',
-        requestedAspectRatio: data.proposal?.requestedAspectRatio,
-        suggestedAspectRatio: data.proposal?.suggestedAspectRatio ?? data.aspectRatio,
-        requestedOutputSize: data.proposal?.requestedOutputSize ?? data.outputSize,
-        temperature: data.temperature,
-        gptImageQuality: data.gptImageQuality,
-        gptImageStyle: data.gptImageStyle,
-        gptImageBackground: data.gptImageBackground,
-        gptImageOutputFormat: data.gptImageOutputFormat,
-        parallelCount: data.parallelCount,
-      });
-      setGeneratingTaskId(null);
-      setGeneratingStartedAt(null);
-      setGenerationDraft(null);
+        });
+        setPhase('proposal');
+      } else {
+        setGeneratingTaskId(data.taskId);
+        setGeneratingStartedAt(data.startedAt);
+        setGenerationDraft({
+          analysis: data.pendingAnalysis || data.proposal.reason || '',
+          reasoning: data.pendingReasoning || undefined,
+          prompt: data.proposal.prompt,
+          parallelCount: data.parallelCount,
+          taskId: data.taskId,
+          startedAt: data.startedAt,
+        });
+        setProposal(null);
+        setPhase('generating');
+      }
+      setError(getUnknownErrorMessage(err) || '生图失败');
       setIsSyncing(false);
-      setPhase('proposal');
     }
   }, [pollTask, processGeneratedTask]);
 
@@ -786,16 +877,44 @@ export function useAgentChat() {
 
     try {
       const task = await getFlyreqTask(taskId);
-      if (task.status === 'completed') return 'completed';
+      if (task.status === 'completed') {
+        const allImages = task.result?.images;
+        const pending = pendingGenerationRef.current;
+        if (allImages?.length && pending?.taskId === taskId) {
+          await processGeneratedTask(allImages, {
+            taskId,
+            prompt: pending.proposal.prompt,
+            analysisFallbackReason: pending.proposal.reason || '',
+            proposalData: proposalDataFromPendingGeneration(pending),
+          });
+        }
+        return 'completed';
+      }
       if (task.status === 'failed' || task.status === 'expired') return 'failed';
       if (task.status === 'processing') return 'processing';
       return 'queued';
-    } catch {
+    } catch (err) {
+      const pending = pendingGenerationRef.current;
+      if (pending?.taskId === taskId) {
+        setError(getUnknownErrorMessage(err) || '生图失败');
+        setGeneratingTaskId(taskId);
+        setGeneratingStartedAt(pending.startedAt);
+        setGenerationDraft({
+          analysis: pending.pendingAnalysis || pending.proposal.reason || '',
+          reasoning: pending.pendingReasoning || undefined,
+          prompt: pending.proposal.prompt,
+          parallelCount: pending.parallelCount,
+          taskId,
+          startedAt: pending.startedAt,
+        });
+        setProposal(null);
+        setPhase('generating');
+      }
       return 'error';
     } finally {
       setIsSyncing(false);
     }
-  }, [phase, generatingTaskId]);
+  }, [phase, generatingTaskId, processGeneratedTask]);
 
   const approveProposal = useCallback(async (
     finalPrompt: string,
@@ -840,6 +959,8 @@ export function useAgentChat() {
       startedAt,
     });
 
+    let createdTaskId: string | null = null;
+    let pendingGenerationPersisted = false;
     try {
       const references: ImageReference[] = [];
       for (const imgId of selectedImageIds) {
@@ -868,9 +989,8 @@ export function useAgentChat() {
         parallelCount: params.parallelCount,
         images: references,
       });
-      setGeneratingTaskId(taskId);
-      setGenerationDraft(prev => prev ? { ...prev, taskId } : prev);
-      void savePendingGeneration({
+      createdTaskId = taskId;
+      const pendingGeneration: PendingGenerationData = {
         taskId,
         proposal: approvedProposal,
         pendingAnalysis: pendingAnalysisRef.current,
@@ -887,7 +1007,12 @@ export function useAgentChat() {
         gptImageOutputFormat: params.gptImageOutputFormat,
         parallelCount: params.parallelCount,
         startedAt,
-      });
+      };
+      pendingGenerationRef.current = pendingGeneration;
+      setGeneratingTaskId(taskId);
+      setGenerationDraft(prev => prev ? { ...prev, taskId } : prev);
+      await savePendingGeneration(pendingGeneration);
+      pendingGenerationPersisted = true;
 
       const task = await pollTask(taskId);
       if (!mountedRef.current) return;
@@ -915,29 +1040,69 @@ export function useAgentChat() {
         },
       });
     } catch (err) {
-      void clearPendingGeneration();
-      setError(err instanceof Error ? err.message : '生图失败');
-      setProposal({
-        action: approvedProposal.action,
-        prompt,
-        referencedImageIds: selectedImageIds,
-        reason: approvedProposal.reason,
-        requestedAspectRatio: approvedProposal.requestedAspectRatio,
-        suggestedAspectRatio: approvedProposal.suggestedAspectRatio,
-        requestedOutputSize: approvedProposal.requestedOutputSize,
-        temperature: params.temperature,
-        gptImageQuality: params.gptImageQuality,
-        gptImageStyle: params.gptImageStyle,
-        gptImageBackground: params.gptImageBackground,
-        gptImageOutputFormat: params.gptImageOutputFormat,
-        parallelCount: params.parallelCount,
-        requestedModelId: approvedProposal.requestedModelId,
-      });
-      setGeneratingTaskId(null);
-      setGeneratingStartedAt(null);
-      setGenerationDraft(null);
+      if (!isLocalPersistenceError(err)) {
+        void clearPendingGeneration();
+        pendingGenerationRef.current = null;
+        setGeneratingTaskId(null);
+        setGeneratingStartedAt(null);
+        setGenerationDraft(null);
+        setProposal({
+          action: approvedProposal.action,
+          prompt,
+          referencedImageIds: selectedImageIds,
+          reason: approvedProposal.reason,
+          requestedAspectRatio: approvedProposal.requestedAspectRatio,
+          suggestedAspectRatio: approvedProposal.suggestedAspectRatio,
+          requestedOutputSize: approvedProposal.requestedOutputSize,
+          temperature: params.temperature,
+          gptImageQuality: params.gptImageQuality,
+          gptImageStyle: params.gptImageStyle,
+          gptImageBackground: params.gptImageBackground,
+          gptImageOutputFormat: params.gptImageOutputFormat,
+          parallelCount: params.parallelCount,
+          requestedModelId: approvedProposal.requestedModelId,
+        });
+        setPhase('proposal');
+      } else if (createdTaskId && pendingGenerationPersisted && pendingGenerationRef.current?.taskId === createdTaskId) {
+        const recoverableTaskId = createdTaskId;
+        setGeneratingTaskId(recoverableTaskId);
+        setGeneratingStartedAt(startedAt);
+        setGenerationDraft(prev => ({
+          analysis: prev?.analysis ?? (pendingAnalysisRef.current || approvedProposal.reason || ''),
+          reasoning: prev?.reasoning ?? (pendingReasoningRef.current || undefined),
+          prompt,
+          parallelCount: params.parallelCount,
+          taskId: recoverableTaskId,
+          startedAt,
+        }));
+        setProposal(null);
+        setPhase('generating');
+      } else {
+        pendingGenerationRef.current = null;
+        setGeneratingTaskId(null);
+        setGeneratingStartedAt(null);
+        setGenerationDraft(null);
+        setProposal({
+          action: approvedProposal.action,
+          prompt,
+          referencedImageIds: selectedImageIds,
+          reason: approvedProposal.reason,
+          requestedAspectRatio: approvedProposal.requestedAspectRatio,
+          suggestedAspectRatio: approvedProposal.suggestedAspectRatio,
+          requestedOutputSize: approvedProposal.requestedOutputSize,
+          temperature: params.temperature,
+          gptImageQuality: params.gptImageQuality,
+          gptImageStyle: params.gptImageStyle,
+          gptImageBackground: params.gptImageBackground,
+          gptImageOutputFormat: params.gptImageOutputFormat,
+          parallelCount: params.parallelCount,
+          requestedModelId: approvedProposal.requestedModelId,
+        });
+        setPhase('proposal');
+      }
+      const message = getUnknownErrorMessage(err) || '生图失败';
+      setError(createdTaskId && isLocalPersistenceError(err) ? `${message}（任务 ID：${createdTaskId}）` : message);
       setIsSyncing(false);
-      setPhase('proposal');
     }
   }, [phase, proposal, pollTask, processGeneratedTask]);
 
@@ -957,6 +1122,7 @@ export function useAgentChat() {
     describeAbortRef.current?.abort();
     void clearPendingProposal();
     void clearPendingGeneration();
+    pendingGenerationRef.current = null;
   }, [flushAndCancelRaf]);
 
   const skipDescribing = useCallback(() => {
@@ -998,7 +1164,9 @@ export function useAgentChat() {
         text: '以下为新对话，助手已不记得上文',
         createdAt: Date.now(),
       };
-      void putMessage(divider);
+      void putMessage(divider).catch(error => {
+        console.warn('[agent] 上下文分隔消息持久化失败', error);
+      });
       return [...prev, divider];
     });
     setProposal(null);
@@ -1012,6 +1180,7 @@ export function useAgentChat() {
     pollWakeRef.current?.();
     describeAbortRef.current?.abort();
     await clearAgentSession();
+    pendingGenerationRef.current = null;
     setMessages([]);
     setImages([]);
     setProposal(null);
@@ -1068,19 +1237,14 @@ export function useAgentChat() {
       setImageModelState(resolvedModel);
       void saveImageModel(resolvedModel);
     }
-    // 清除上次待定分析，因为用户要重新编辑
-    pendingAnalysisRef.current = '';
-    pendingReasoningRef.current = '';
-    isReeditRef.current = true;
-    setProposal(newProposal);
-    setPhase('proposal');
-    void savePendingProposal({
+    // 清除上次待定分析，因为用户要重新编辑。
+    persistAndShowProposal({
       proposal: newProposal,
       pendingAnalysis: '',
       pendingReasoning: '',
       isReedit: true,
     });
-  }, [messages]);
+  }, [messages, persistAndShowProposal]);
 
   /** 清理指定消息引用的且不再被其他消息使用的图片 */
   const cleanupOrphanImages = useCallback((keptMessages: AgentMessage[], removedImageIds: string[]) => {

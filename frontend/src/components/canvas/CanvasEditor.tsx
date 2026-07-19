@@ -22,14 +22,15 @@ import { CanvasConfigNodePanel } from "./components/canvas-config-node-panel";
 import { FullscreenImageViewer } from "./components/fullscreen-image-viewer";
 import type { ImageActionPayload } from "@/lib/image-actions";
 import { CanvasCropDialog, CanvasUpscaleDialog, CanvasSplitDialog, CanvasAngleDialog } from "./components/canvas-node-dialogs";
-import { canvasTheme } from "./lib/canvas-theme";
+import { canvasTheme, type CanvasBackgroundMode } from "./lib/canvas-theme";
 import { getNodeSpec } from "./constants";
-import { useCanvasStore } from "./stores/use-canvas-store";
+import { flushCanvasStorePersistence, useCanvasStore } from "./stores/use-canvas-store";
 import { useCanvasConfigStore } from "./stores/use-canvas-config-store";
 import { CanvasApiKeyMissingError, submitNodeGeneration, pollNodeTask, checkExistingTask, type CanvasGeneratedImage } from "./canvas-generation-service";
 import { buildNodeGenerationContext, buildNodeGenerationInputs, hydrateNodeGenerationContext } from "./components/canvas-node-generation";
 import { buildNodeMentionReferences } from "./utils/canvas-resource-references";
 import { fitNodeSize } from "./utils/canvas-node-size";
+import { applyGeneratedImageToCanvasNodes } from "./utils/canvas-generated-node";
 import { getImageBlob, imageToDataUrl, resolveImageUrl, uploadImage, type UploadedImage } from "./lib/image-storage";
 import { imageReferenceLabel } from "./lib/image-reference-prompt";
 import { compressReferenceDataUrl, readFileAsDataUrl } from "./lib/image-utils";
@@ -43,11 +44,19 @@ import { usePromptOptimizeSetting } from "@/hooks/usePromptOptimizeSetting";
 import { readSseStream } from "@/lib/sse-stream-parser";
 import { MODEL_IMAGE_LIMITS } from "@/lib/gemini-config";
 import { normalizeModel } from "@/lib/model-capabilities";
+import { ackServerTaskWithRetry } from "@/lib/server-task-ack";
 import type { PromptWithKey } from "@/lib/prompt-gallery-data";
 
 type DialogState = { type: "crop" | "split" | "upscale" | "angle"; nodeId: string; source: string } | null;
 
 type HistorySnapshot = { nodes: CanvasNodeData[]; connections: CanvasConnection[] };
+type CanvasEditorSnapshot = {
+  nodes: CanvasNodeData[];
+  connections: CanvasConnection[];
+  viewport: ViewportTransform;
+  backgroundMode: CanvasBackgroundMode;
+  showImageInfo: boolean;
+};
 
 type AiTextStreamPayload = {
   type?: string;
@@ -119,7 +128,23 @@ function buildPromptGalleryCanvasPrompt(referenceImageCount: number) {
 }
 
 function storedToMetadata(stored: UploadedImage | CanvasGeneratedImage, extra?: Partial<CanvasNodeMetadata>): CanvasNodeMetadata {
-  return { status: "success", content: stored.url, storageKey: stored.storageKey, mimeType: stored.mimeType, naturalWidth: stored.width, naturalHeight: stored.height, bytes: stored.bytes, ...extra };
+  return { status: "success", content: stored.url, storageKey: stored.storageKey, mimeType: stored.mimeType, naturalWidth: stored.width, naturalHeight: stored.height, bytes: stored.bytes, recoverableGenerationTask: undefined, ...extra };
+}
+
+function isLocalCanvasResultSaveError(message?: string): boolean {
+  return Boolean(message && (
+    message.includes("生成结果保存失败") ||
+    message.includes("结果节点不存在") ||
+    message.includes("本地") ||
+    message.includes("持久")
+  ));
+}
+
+function isRecoverableCanvasTaskError(message: string, hasTaskId: boolean): boolean {
+  if (!hasTaskId) return false;
+  if (isLocalCanvasResultSaveError(message)) return true;
+  const normalized = message.toLowerCase();
+  return normalized.includes("network") || normalized.includes("fetch") || message.includes("网络");
 }
 
 async function importPromptGalleryImage(url: string, promptContent: string) {
@@ -197,6 +222,7 @@ export function CanvasEditor({ projectId, onBack, onRequireApiKey, showToast, sh
   const [viewport, setViewport] = useState<ViewportTransform>(() => project?.viewport ?? { x: 0, y: 0, k: 1 });
   const [backgroundMode, setBackgroundMode] = useState(project?.backgroundMode ?? "lines");
   const [showImageInfo, setShowImageInfo] = useState(project?.showImageInfo ?? false);
+  const canvasSnapshotRef = useRef<CanvasEditorSnapshot>({ nodes, connections, viewport, backgroundMode, showImageInfo });
 
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
@@ -214,6 +240,7 @@ export function CanvasEditor({ projectId, onBack, onRequireApiKey, showToast, sh
   const [aiTextOriginal, setAiTextOriginal] = useState("");
   const [aiTextGenerated, setAiTextGenerated] = useState("");
   const [aiTextTargetNodeId, setAiTextTargetNodeId] = useState<string | null>(null);
+  const aiTextAbortRef = useRef<AbortController | null>(null);
   const [templateOpen, setTemplateOpen] = useState(false);
   const [promptGalleryImporting, setPromptGalleryImporting] = useState(false);
   const [viewportSize, setViewportSize] = useState({ width: 1280, height: 720 });
@@ -238,6 +265,7 @@ export function CanvasEditor({ projectId, onBack, onRequireApiKey, showToast, sh
   const gestureActive = useRef(false);
   const clipboard = useRef<CanvasNodeData[]>([]);
   const activeGenerationsRef = useRef<Map<string, AbortController>>(new Map());
+  const autoRecoveryAttemptedRef = useRef<Set<string>>(new Set());
   const retryCooldownRef = useRef<Map<string, number>>(new Map());
   const [undoStack, setUndoStack] = useState<HistorySnapshot[]>([]);
   const [redoStack, setRedoStack] = useState<HistorySnapshot[]>([]);
@@ -251,8 +279,14 @@ export function CanvasEditor({ projectId, onBack, onRequireApiKey, showToast, sh
   const [optimizeOriginalPrompt, setOptimizeOriginalPrompt] = useState("");
   const optimizeHandleRef = useRef<StreamPromptOptimizeHandle | null>(null);
 
+  useEffect(() => () => {
+    aiTextAbortRef.current?.abort();
+    aiTextAbortRef.current = null;
+  }, []);
+
   // ---- persistence: sync local state to store (store debounces IndexedDB writes) ----
   useEffect(() => {
+    canvasSnapshotRef.current = { nodes, connections, viewport, backgroundMode, showImageInfo };
     if (!project) return;
     updateProject(projectId, { nodes, connections, viewport, backgroundMode, showImageInfo });
   }, [nodes, connections, viewport, backgroundMode, showImageInfo, project, projectId, updateProject]);
@@ -352,9 +386,34 @@ export function CanvasEditor({ projectId, onBack, onRequireApiKey, showToast, sh
   }, [viewport, viewportSize]);
 
   // ---- node mutations ----
+  const commitCanvasSnapshot = useCallback((nextSnapshot: CanvasEditorSnapshot) => {
+    canvasSnapshotRef.current = nextSnapshot;
+    setNodes(nextSnapshot.nodes);
+    setConnections(nextSnapshot.connections);
+    updateProject(projectId, nextSnapshot);
+  }, [projectId, updateProject]);
+
   const patchNode = useCallback((nodeId: string, patch: (node: CanvasNodeData) => CanvasNodeData) => {
-    setNodes((prev) => prev.map((node) => (node.id === nodeId ? patch(node) : node)));
-  }, []);
+    const snapshot = canvasSnapshotRef.current;
+    let changed = false;
+    const nextNodes = snapshot.nodes.map((node) => {
+      if (node.id !== nodeId) return node;
+      changed = true;
+      return patch(node);
+    });
+    if (!changed) return;
+    commitCanvasSnapshot({ ...snapshot, nodes: nextNodes });
+  }, [commitCanvasSnapshot]);
+
+  const persistGeneratedImageNode = useCallback(async (nodeId: string, image: CanvasGeneratedImage, extra?: Partial<CanvasNodeMetadata>) => {
+    const snapshot = canvasSnapshotRef.current;
+    const result = applyGeneratedImageToCanvasNodes(snapshot.nodes, nodeId, image, extra);
+    if (!result.updated) {
+      throw new Error("结果节点不存在，已保留服务端任务以便重新查询");
+    }
+    commitCanvasSnapshot({ ...snapshot, nodes: result.nodes });
+    await flushCanvasStorePersistence();
+  }, [commitCanvasSnapshot]);
 
   const createImageNode = useCallback((position: Position, partial?: Partial<CanvasNodeData>): CanvasNodeData => {
     const spec = getNodeSpec(CanvasNodeType.Image);
@@ -743,34 +802,49 @@ export function CanvasEditor({ projectId, onBack, onRequireApiKey, showToast, sh
       const controller = new AbortController();
       activeGenerationsRef.current.set(nodeId, controller);
 
-      // 立即标记节点为提交中状态（同步，确保 UI 即时更新）
-      setNodes((prev) => prev.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, status: "submitting", errorDetails: undefined, generationTaskId: undefined, generationStartedAt: Date.now() } } : node)));
+      // 立即标记节点为提交中状态，并同步更新快照，避免快速完成时结果写入找不到节点。
+      patchNode(nodeId, (node) => ({ ...node, metadata: { ...node.metadata, status: "submitting", errorDetails: undefined, generationTaskId: undefined, recoverableGenerationTask: undefined, generationStartedAt: Date.now() } }));
       setBusy(sourceNodeId, true);
 
+      let createdTaskId: string | null = null;
       try {
         const taskId = await submitNodeGeneration({ prompt: promptText, referenceImages, config: genConfig });
+        createdTaskId = taskId;
         if (controller.signal.aborted) return;
-        setNodes((prev) => prev.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, generationTaskId: taskId, status: "queued" } } : node)));
+        patchNode(nodeId, (node) => ({ ...node, metadata: { ...node.metadata, generationTaskId: taskId, status: "queued", recoverableGenerationTask: undefined } }));
+        await flushCanvasStorePersistence();
 
         const images = await pollNodeTask(taskId, (taskStatus) => {
           if (controller.signal.aborted) return;
-          setNodes((prev) => prev.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, status: taskStatus as CanvasNodeMetadata["status"] } } : node)));
+          patchNode(nodeId, (node) => ({ ...node, metadata: { ...node.metadata, status: taskStatus as CanvasNodeMetadata["status"] } }));
         }, controller.signal);
 
         if (controller.signal.aborted) return;
         const image = images[0];
         if (image) {
-          const size = fitNodeSize(image.width, image.height, 360, 360);
-          setNodes((prev) => prev.map((node) => (node.id === nodeId ? { ...node, width: size.width, height: size.height, metadata: { ...node.metadata, ...storedToMetadata(image, { prompt: promptText }), generationTaskId: node.metadata?.generationTaskId, generationStartedAt: node.metadata?.generationStartedAt } } : node)));
+          await persistGeneratedImageNode(nodeId, image, { prompt: promptText });
+          await ackServerTaskWithRetry(taskId);
         }
       } catch (error) {
         if (controller.signal.aborted) return;
         if (error instanceof CanvasApiKeyMissingError) {
-          setNodes((prev) => prev.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, status: "idle", generationTaskId: undefined, generationStartedAt: undefined } } : node)));
+          patchNode(nodeId, (node) => ({ ...node, metadata: { ...node.metadata, status: "idle", generationTaskId: undefined, recoverableGenerationTask: undefined, generationStartedAt: undefined } }));
           onRequireApiKey();
         } else {
           const message = error instanceof Error ? error.message : "生成失败";
-          setNodes((prev) => prev.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, status: "error", errorDetails: message } } : node)));
+          const errorDetails = createdTaskId ? `${message}（任务 ID：${createdTaskId}）` : message;
+          const persistedTaskId = Boolean(createdTaskId && canvasSnapshotRef.current.nodes.find(item => item.id === nodeId)?.metadata?.generationTaskId);
+          const recoverableGenerationTask = isRecoverableCanvasTaskError(message, persistedTaskId);
+          patchNode(nodeId, (node) => ({
+            ...node,
+            metadata: {
+              ...node.metadata,
+              status: "error",
+              generationTaskId: node.metadata?.generationTaskId ?? createdTaskId ?? undefined,
+              recoverableGenerationTask: recoverableGenerationTask ? true : false,
+              errorDetails,
+            },
+          }));
         }
       } finally {
         activeGenerationsRef.current.delete(nodeId);
@@ -778,23 +852,27 @@ export function CanvasEditor({ projectId, onBack, onRequireApiKey, showToast, sh
         let hasActive = false;
         for (const key of activeGenerationsRef.current.keys()) {
           if (key === nodeId) continue;
-          const n = nodes.find((item) => item.id === key);
+          const n = canvasSnapshotRef.current.nodes.find((item) => item.id === key);
           if (n && n.metadata?.generationStartedAt) { hasActive = true; break; }
         }
         if (!hasActive) setBusy(sourceNodeId, false);
       }
     },
-    [nodes, onRequireApiKey, setBusy],
+    [onRequireApiKey, patchNode, persistGeneratedImageNode, setBusy],
   );
 
   const runGeneration = useCallback(
     async (sourceNode: CanvasNodeData) => {
-      const promptText = (sourceNode.metadata?.composerContent ?? sourceNode.metadata?.prompt ?? "").trim();
+      const baseSnapshot = canvasSnapshotRef.current;
+      const currentNodes = baseSnapshot.nodes;
+      const currentConnections = baseSnapshot.connections;
+      const currentSourceNode = currentNodes.find((node) => node.id === sourceNode.id) ?? sourceNode;
+      const promptText = (currentSourceNode.metadata?.composerContent ?? currentSourceNode.metadata?.prompt ?? "").trim();
       if (!promptText) { showToast("请输入提示词", "info"); return; }
-      const genConfig: CanvasGenerationConfig = sourceNode.metadata?.genConfig ?? defaultConfig;
-      const locked = Boolean(sourceNode.metadata?.lockResultNodes);
+      const genConfig: CanvasGenerationConfig = currentSourceNode.metadata?.genConfig ?? defaultConfig;
+      const locked = Boolean(currentSourceNode.metadata?.lockResultNodes);
       const count = genConfig.count;
-      const context = buildNodeGenerationContext(sourceNode.id, nodes, connections, promptText);
+      const context = buildNodeGenerationContext(currentSourceNode.id, currentNodes, currentConnections, promptText);
       const model = normalizeModel(genConfig.model);
       const maxReferenceImages = MODEL_IMAGE_LIMITS[model]?.max || 1;
 
@@ -808,22 +886,24 @@ export function CanvasEditor({ projectId, onBack, onRequireApiKey, showToast, sh
       // 确定目标结果节点（并补齐不足的节点）
       let targetIds: string[] = [];
       const newConnections: CanvasConnection[] = [];
+      let nextNodes = currentNodes;
+      let nextConnections = currentConnections;
 
       if (locked) {
         // 锁定模式：复用已连接的下游图片节点，不足则新建补齐
-        const existingTargets = connections
-          .filter((c) => c.fromNodeId === sourceNode.id)
-          .map((c) => nodes.find((n) => n.id === c.toNodeId))
+        const existingTargets = currentConnections
+          .filter((c) => c.fromNodeId === currentSourceNode.id)
+          .map((c) => currentNodes.find((n) => n.id === c.toNodeId))
           .filter((n): n is CanvasNodeData => Boolean(n && n.type === CanvasNodeType.Image));
         targetIds = existingTargets.map((n) => n.id);
 
         if (targetIds.length < count) {
           const needed = count - targetIds.length;
           for (let i = 0; i < needed; i++) {
-            const node = createImageNode({ x: sourceNode.position.x + sourceNode.width + 80 + (targetIds.length + i) * 400, y: sourceNode.position.y + sourceNode.height + 60 });
+            const node = createImageNode({ x: currentSourceNode.position.x + currentSourceNode.width + 80 + (targetIds.length + i) * 400, y: currentSourceNode.position.y + currentSourceNode.height + 60 });
             targetIds.push(node.id);
-            newConnections.push({ id: nanoid(), fromNodeId: sourceNode.id, toNodeId: node.id });
-            setNodes((prev) => [...prev, node]);
+            newConnections.push({ id: nanoid(), fromNodeId: currentSourceNode.id, toNodeId: node.id });
+            nextNodes = [...nextNodes, node];
           }
         } else if (targetIds.length > count) {
           // 多余的锁定节点不参与本轮生成（保持原状态）
@@ -832,25 +912,35 @@ export function CanvasEditor({ projectId, onBack, onRequireApiKey, showToast, sh
       } else {
         // 非锁定模式：新建 count 个结果节点
         for (let i = 0; i < count; i++) {
-          const node = createImageNode({ x: sourceNode.position.x + sourceNode.width + 80 + i * 400, y: sourceNode.position.y });
+          const node = createImageNode({ x: currentSourceNode.position.x + currentSourceNode.width + 80 + i * 400, y: currentSourceNode.position.y });
           targetIds.push(node.id);
-          newConnections.push({ id: nanoid(), fromNodeId: sourceNode.id, toNodeId: node.id });
-          setNodes((prev) => [...prev, node]);
+          newConnections.push({ id: nanoid(), fromNodeId: currentSourceNode.id, toNodeId: node.id });
+          nextNodes = [...nextNodes, node];
         }
       }
 
       if (newConnections.length) {
-        setConnections((prev) => [...prev, ...newConnections]);
+        nextConnections = [...nextConnections, ...newConnections];
+      }
+
+      if (nextNodes !== currentNodes || nextConnections !== currentConnections) {
+        commitCanvasSnapshot({ ...baseSnapshot, nodes: nextNodes, connections: nextConnections });
+        try {
+          await flushCanvasStorePersistence();
+        } catch {
+          showToast("画布本地保存失败，未提交生成任务", "error");
+          return;
+        }
       }
 
       const hydrated = await hydrateNodeGenerationContext(context);
 
       // 逐节点独立并发提交
       for (const nodeId of targetIds) {
-        void startNodeGeneration(nodeId, hydrated.prompt || promptText, hydrated.referenceImages, genConfig, sourceNode.id);
+        void startNodeGeneration(nodeId, hydrated.prompt || promptText, hydrated.referenceImages, genConfig, currentSourceNode.id);
       }
     },
-    [connections, createImageNode, defaultConfig, nodes, pushHistory, startNodeGeneration, showToast],
+    [commitCanvasSnapshot, createImageNode, defaultConfig, pushHistory, startNodeGeneration, showToast],
   );
 
   // 单节点重试（带冷却）
@@ -889,37 +979,41 @@ export function CanvasEditor({ projectId, onBack, onRequireApiKey, showToast, sh
         const result = await checkExistingTask(taskId);
         if (result.status === "completed" && result.images?.length) {
           const image = result.images[0];
-          const size = fitNodeSize(image.width, image.height, 360, 360);
           activeGenerationsRef.current.get(node.id)?.abort();
           activeGenerationsRef.current.delete(node.id);
-          patchNode(node.id, (n) => ({ ...n, width: size.width, height: size.height, metadata: { ...n.metadata, ...storedToMetadata(image, { prompt: n.metadata?.prompt }), generationTaskId: n.metadata?.generationTaskId, generationStartedAt: n.metadata?.generationStartedAt } }));
+          await persistGeneratedImageNode(node.id, image, { prompt: node.metadata?.prompt });
+          await ackServerTaskWithRetry(taskId);
           showToast("已取回生成结果", "success");
           return;
         }
         if (result.status === "failed" || result.status === "expired") {
-          patchNode(node.id, (n) => ({ ...n, metadata: { ...n.metadata, status: "error", errorDetails: result.error || "生成失败" } }));
+          patchNode(node.id, (n) => ({ ...n, metadata: { ...n.metadata, status: "error", recoverableGenerationTask: isLocalCanvasResultSaveError(result.error), errorDetails: result.error || "生成失败" } }));
           showToast("任务已失败", "error");
           return;
         }
-        patchNode(node.id, (n) => ({ ...n, metadata: { ...n.metadata, status: result.status as CanvasNodeMetadata["status"] } }));
+        patchNode(node.id, (n) => ({ ...n, metadata: { ...n.metadata, status: result.status as CanvasNodeMetadata["status"], recoverableGenerationTask: undefined } }));
         showToast("已获取当前进度", "info");
       } catch {
+        patchNode(node.id, (n) => ({ ...n, metadata: { ...n.metadata, status: "error", recoverableGenerationTask: Boolean(node.metadata?.generationTaskId), errorDetails: "获取进度失败" } }));
         showToast("获取进度失败", "error");
       }
     },
-    [patchNode, showToast],
+    [patchNode, persistGeneratedImageNode, showToast],
   );
 
   // 刷新页面后恢复进行中的生成任务（检查已有 taskId 的状态）
   useEffect(() => {
     const activeNodes = nodes.filter((node) => {
       const s = node.metadata?.status;
-      return node.metadata?.generationTaskId && (s === "submitting" || s === "queued" || s === "processing");
+      return node.metadata?.generationTaskId && (s === "submitting" || s === "queued" || s === "processing" || (s === "error" && node.metadata?.recoverableGenerationTask === true));
     });
     if (!activeNodes.length) return;
 
     for (const node of activeNodes) {
       const taskId = node.metadata!.generationTaskId!;
+      const recoveryKey = `${node.id}:${taskId}`;
+      if (autoRecoveryAttemptedRef.current.has(recoveryKey)) continue;
+      autoRecoveryAttemptedRef.current.add(recoveryKey);
       const controller = new AbortController();
       activeGenerationsRef.current.set(node.id, controller);
 
@@ -931,32 +1025,31 @@ export function CanvasEditor({ projectId, onBack, onRequireApiKey, showToast, sh
 
           if (result.status === "completed" && result.images?.length) {
             const image = result.images[0];
-            const size = fitNodeSize(image.width, image.height, 360, 360);
-            patchNode(node.id, (n) => ({ ...n, width: size.width, height: size.height, metadata: { ...n.metadata, ...storedToMetadata(image, { prompt: n.metadata?.prompt }), generationTaskId: n.metadata?.generationTaskId, generationStartedAt: n.metadata?.generationStartedAt } }));
+            await persistGeneratedImageNode(node.id, image, { prompt: node.metadata?.prompt });
+            await ackServerTaskWithRetry(taskId);
             return;
           }
           if (result.status === "failed" || result.status === "expired") {
-            patchNode(node.id, (n) => ({ ...n, metadata: { ...n.metadata, status: "error", errorDetails: result.error } }));
+            patchNode(node.id, (n) => ({ ...n, metadata: { ...n.metadata, status: "error", recoverableGenerationTask: isLocalCanvasResultSaveError(result.error), errorDetails: result.error } }));
             return;
           }
 
           // 仍在进行中 → 继续轮询
-          patchNode(node.id, (n) => ({ ...n, metadata: { ...n.metadata, status: result.status as CanvasNodeMetadata["status"] } }));
-          await pollNodeTask(taskId, (taskStatus) => {
+          patchNode(node.id, (n) => ({ ...n, metadata: { ...n.metadata, status: result.status as CanvasNodeMetadata["status"], recoverableGenerationTask: undefined } }));
+          const images = await pollNodeTask(taskId, (taskStatus) => {
             if (controller.signal.aborted) return;
             patchNode(node.id, (n) => ({ ...n, metadata: { ...n.metadata, status: taskStatus as CanvasNodeMetadata["status"] } }));
           }, controller.signal);
 
           if (controller.signal.aborted) return;
-          const finalResult = await checkExistingTask(taskId);
-          if (finalResult.images?.length) {
-            const image = finalResult.images[0];
-            const size = fitNodeSize(image.width, image.height, 360, 360);
-            patchNode(node.id, (n) => ({ ...n, width: size.width, height: size.height, metadata: { ...n.metadata, ...storedToMetadata(image, { prompt: n.metadata?.prompt }), generationTaskId: n.metadata?.generationTaskId, generationStartedAt: n.metadata?.generationStartedAt } }));
+          if (images.length) {
+            const image = images[0];
+            await persistGeneratedImageNode(node.id, image, { prompt: node.metadata?.prompt });
+            await ackServerTaskWithRetry(taskId);
           }
         } catch {
           if (controller.signal.aborted) return;
-          patchNode(node.id, (n) => ({ ...n, metadata: { ...n.metadata, status: "error", errorDetails: "恢复生成状态失败" } }));
+          patchNode(node.id, (n) => ({ ...n, metadata: { ...n.metadata, status: "error", recoverableGenerationTask: Boolean(node.metadata?.generationTaskId), errorDetails: "恢复生成状态失败" } }));
         } finally {
           activeGenerationsRef.current.delete(node.id);
         }
@@ -1291,6 +1384,8 @@ export function CanvasEditor({ projectId, onBack, onRequireApiKey, showToast, sh
       const node = nodes.find((item) => item.id === nodeId);
       if (!node || node.type !== CanvasNodeType.Text) return;
 
+      aiTextAbortRef.current?.abort();
+      aiTextAbortRef.current = null;
       setAiTextTargetNodeId(nodeId);
       setAiTextOriginal(node.metadata?.content || "");
       setAiTextGenerated("");
@@ -1318,7 +1413,9 @@ export function CanvasEditor({ projectId, onBack, onRequireApiKey, showToast, sh
       setAiTextGenerated("");
       setAiTextError(null);
 
+      aiTextAbortRef.current?.abort();
       const controller = new AbortController();
+      aiTextAbortRef.current = controller;
 
       try {
         const systemPrompt = buildAiTextSystemPrompt(aiTextOriginal);
@@ -1382,7 +1479,10 @@ export function CanvasEditor({ projectId, onBack, onRequireApiKey, showToast, sh
           setAiTextError(err instanceof Error ? err.message : "AI 生成失败");
         }
       } finally {
-        setAiTextGenerating(false);
+        if (aiTextAbortRef.current === controller) {
+          aiTextAbortRef.current = null;
+          setAiTextGenerating(false);
+        }
       }
     },
     [aiTextOriginal, aiTextTargetNodeId, onRequireApiKey],
@@ -1399,6 +1499,8 @@ export function CanvasEditor({ projectId, onBack, onRequireApiKey, showToast, sh
   }, [aiTextGenerated, aiTextTargetNodeId, patchNode]);
 
   const handleAiTextCancel = useCallback(() => {
+    aiTextAbortRef.current?.abort();
+    aiTextAbortRef.current = null;
     setAiTextDialogOpen(false);
     setAiTextTargetNodeId(null);
     setAiTextOriginal("");
