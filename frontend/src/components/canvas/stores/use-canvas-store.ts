@@ -37,6 +37,33 @@ const CANVAS_STORE_KEY = "flyreq-image:canvas_store";
 type PersistedCanvasState = Pick<CanvasStore, "projects">;
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
 let queuedPersistState: PersistedCanvasState | null = null;
+let queuedPersistName: string | null = null;
+let queuedPersistValue: StorageValue<CanvasStore> | null = null;
+let persistInFlight: Promise<void> | null = null;
+
+function persistQueuedCanvasStore(): Promise<void> {
+  if (saveTimer) {
+    clearTimeout(saveTimer);
+    saveTimer = null;
+  }
+  const name = queuedPersistName;
+  const value = queuedPersistValue;
+  if (!name || !value) return persistInFlight ?? Promise.resolve();
+
+  const write = (persistInFlight ?? Promise.resolve())
+    .then(() => localForageStorage.setItem(name, JSON.stringify(value)))
+    .then(() => undefined);
+  persistInFlight = write;
+  write.then(
+    () => { if (persistInFlight === write) persistInFlight = null; },
+    () => { if (persistInFlight === write) persistInFlight = null; },
+  );
+  return write;
+}
+
+export function flushCanvasStorePersistence(): Promise<void> {
+  return persistQueuedCanvasStore();
+}
 
 const canvasStorage: PersistStorage<CanvasStore> = {
   getItem: async (name) => {
@@ -50,10 +77,13 @@ const canvasStorage: PersistStorage<CanvasStore> = {
     const nextState = value.state as PersistedCanvasState;
     if (queuedPersistState && queuedPersistState.projects === nextState.projects) return;
     queuedPersistState = nextState;
+    queuedPersistName = name;
+    queuedPersistValue = value;
     if (saveTimer) clearTimeout(saveTimer);
     saveTimer = setTimeout(() => {
-      saveTimer = null;
-      void localForageStorage.setItem(name, JSON.stringify(value));
+      void persistQueuedCanvasStore().catch(error => {
+        console.warn('[canvas-store] 画布本地持久化失败', error);
+      });
     }, 400);
   },
   removeItem: (name) => localForageStorage.removeItem(name),

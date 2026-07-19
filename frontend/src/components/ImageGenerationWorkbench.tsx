@@ -14,6 +14,7 @@ import { GenerationParamsBar, type GenerationParamsValue } from '@/components/Ge
 import { ConfirmDialog } from '@/components/workspace/dialogs/ConfirmDialog';
 import { usePromptOptimizeSetting } from '@/hooks/usePromptOptimizeSetting';
 import { useImageModelDefaultRefresh } from '@/hooks/useImageModelDefaultRefresh';
+import { useModelRegistryRefresh } from '@/hooks/useModelRegistryRefresh';
 import { getEffectivePromptSubmissionShortcutLabels, usePromptSubmissionShortcut } from '@/hooks/usePromptSubmissionShortcut';
 import { PromptSubmissionShortcutMenu } from '@/components/PromptSubmissionShortcutMenu';
 import { useI18n } from '@/components/LanguageProvider';
@@ -22,6 +23,7 @@ import { loadJsonFromStorage, saveJsonToStorage } from '@/lib/settings-storage';
 import { requireDefaultConfiguredTextModel } from '@/lib/model-endpoints';
 import { addTextAsset, getAssetBlob, type ImageAsset, type TextAsset } from '@/lib/asset-store';
 import { getDefaultModelId, MODEL_IMAGE_LIMITS, MODEL_OPTIONS, type ModelId } from '@/lib/gemini-config';
+import { getCompleteImageModels, loadRegistry } from '@/lib/flyreq-models';
 import {
   DEFAULT_GPT_IMAGE_ADVANCED_PARAMS,
   getAspectRatioOptions,
@@ -67,8 +69,8 @@ interface UploadedFile {
 
 interface ImageGenerationWorkbenchProps {
   wideMode?: boolean;
-  onSubmitText: (data: TextToImageSubmitInput) => void;
-  onSubmitImage: (data: ImageToImageSubmitInput) => void;
+  onSubmitText: (data: TextToImageSubmitInput) => Promise<boolean> | boolean | void;
+  onSubmitImage: (data: ImageToImageSubmitInput) => Promise<boolean> | boolean | void;
   disabled?: boolean;
   onDraftConsumed?: () => void;
   onConfigureApiKey?: () => void;
@@ -99,13 +101,27 @@ function hasStoredSettings(settings: Partial<WorkbenchSettings>): boolean {
 }
 
 function getSettingsFallback(preferImageSettings: boolean): Partial<WorkbenchSettings> {
-  const saved = loadJsonFromStorage<WorkbenchSettings>(WORKBENCH_SETTINGS_KEY);
-  if (hasStoredSettings(saved)) return saved;
-
   const primary = loadJsonFromStorage<WorkbenchSettings>(preferImageSettings ? I2I_SETTINGS_KEY : T2I_SETTINGS_KEY);
   if (hasStoredSettings(primary)) return primary;
 
+  const saved = loadJsonFromStorage<WorkbenchSettings>(WORKBENCH_SETTINGS_KEY);
+  if (hasStoredSettings(saved)) {
+    if (!preferImageSettings || saved.model !== getDefaultModelId('textToImage')) return saved;
+    const imageToImageDefault = getDefaultModelId('imageToImage');
+    return imageToImageDefault && imageToImageDefault !== saved.model
+      ? { ...saved, model: imageToImageDefault }
+      : saved;
+  }
+
   return loadJsonFromStorage<WorkbenchSettings>(preferImageSettings ? T2I_SETTINGS_KEY : I2I_SETTINGS_KEY);
+}
+
+function getModeSettingsKey(mode: WorkbenchMode): string {
+  return mode === 'image-to-image' ? I2I_SETTINGS_KEY : T2I_SETTINGS_KEY;
+}
+
+function getModeDefaultTask(mode: WorkbenchMode): 'textToImage' | 'imageToImage' {
+  return mode === 'image-to-image' ? 'imageToImage' : 'textToImage';
 }
 
 function normalizePromptVariants(value: unknown): string[] {
@@ -130,7 +146,7 @@ export function ImageGenerationWorkbench({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const formRef = useRef<HTMLDivElement>(null);
 
-  const [model, setModel] = useState<ModelId>(() => getDefaultModelId());
+  const [model, setModel] = useState<ModelId>(() => getDefaultModelId('textToImage'));
   const [outputSize, setOutputSize] = useState<OutputSize>('1K');
   const [customSize, setCustomSize] = useState<string | undefined>(undefined);
   const [aspectRatio, setAspectRatio] = useState<AspectRatio>('1:1');
@@ -157,11 +173,13 @@ export function ImageGenerationWorkbench({
   const optimizeHandleRef = useRef<StreamPromptOptimizeHandle | null>(null);
   const { enabled: promptOptimizeEnabled } = usePromptOptimizeSetting();
   const imageModelDefaultRefreshVersion = useImageModelDefaultRefresh();
+  const modelRegistryRefreshVersion = useModelRegistryRefresh();
   const { submissionShortcut, isSmallViewport, updateSubmissionShortcut } = usePromptSubmissionShortcut();
   const shortcutLabels = getEffectivePromptSubmissionShortcutLabels(submissionShortcut, isSmallViewport);
 
   const maxImages = MODEL_IMAGE_LIMITS[model]?.max || 1;
   const currentMode: WorkbenchMode = pendingFiles.length > 0 ? 'image-to-image' : 'text-to-image';
+  const previousModeRef = useRef<WorkbenchMode>(currentMode);
   const disabledMessage = t('workbench.disabledMessage');
 
   /**
@@ -201,7 +219,8 @@ export function ImageGenerationWorkbench({
 
       const useInitial = Boolean(initialData);
       const saved = getSettingsFallback(Boolean(initialData?.refImages?.length));
-      const nextModel = normalizeModel(useInitial && initialData?.model ? initialData.model : saved.model);
+      const nextMode: WorkbenchMode = Boolean(initialData?.refImages?.length) ? 'image-to-image' : 'text-to-image';
+      const nextModel = normalizeModel(useInitial && initialData?.model ? initialData.model : saved.model, getModeDefaultTask(nextMode));
       const validSizes = getValidOutputSizes(nextModel);
       const nextOutputSize: OutputSize = useInitial && initialData?.outputSize && validSizes.includes(initialData.outputSize)
         ? initialData.outputSize
@@ -245,6 +264,7 @@ export function ImageGenerationWorkbench({
           badge: img.badge,
         })));
       }
+      previousModeRef.current = nextMode;
 
       setSettingsReady(true);
     });
@@ -252,11 +272,64 @@ export function ImageGenerationWorkbench({
     return () => {
       cancelled = true;
     };
-  }, [imageModelDefaultRefreshVersion, initialData]);
+  }, [imageModelDefaultRefreshVersion, modelRegistryRefreshVersion, initialData]);
 
   useEffect(() => {
     if (!settingsReady) return;
-    saveJsonToStorage(WORKBENCH_SETTINGS_KEY, {
+    const previousMode = previousModeRef.current;
+    if (previousMode === currentMode) return;
+    previousModeRef.current = currentMode;
+
+    const previousDefault = getDefaultModelId(getModeDefaultTask(previousMode));
+    if (model && model !== previousDefault) return;
+
+    const saved = loadJsonFromStorage<WorkbenchSettings>(getModeSettingsKey(currentMode));
+    const nextModel = normalizeModel(saved.model, getModeDefaultTask(currentMode));
+    if (!nextModel || nextModel === model) return;
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (!cancelled) setModel(nextModel);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [currentMode, model, settingsReady]);
+
+  useEffect(() => {
+    if (!settingsReady) return;
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (cancelled) return;
+      const registry = loadRegistry();
+      const completeModels = getCompleteImageModels(registry);
+      if (completeModels.some((item) => item.id === model)) return;
+
+      const fallbackModel = normalizeModel(
+        getDefaultModelId(getModeDefaultTask(currentMode)),
+        getModeDefaultTask(currentMode),
+      );
+      if (!fallbackModel) return;
+
+      setModel(fallbackModel);
+      setGptImageAdvancedParams(prev => getGptImageAdvancedParamsForModel(fallbackModel, prev));
+      const nextValidSizes = getValidOutputSizes(fallbackModel);
+      setOutputSize((prev) => (nextValidSizes.includes(prev) ? prev : nextValidSizes[0]));
+      if (!supportsCustomSize(fallbackModel)) {
+        setCustomSize(undefined);
+      } else {
+        setCustomSize(prev => normalizeCustomImageSize(prev, getCustomSizeMaxSide(fallbackModel)));
+      }
+      const nextAspectOptions = getAspectRatioOptions(fallbackModel, outputSize);
+      if (!nextAspectOptions.some(option => option.value === aspectRatio)) {
+        setAspectRatio(nextAspectOptions[0]?.value || '1:1');
+      }
+    });
+    return () => { cancelled = true; };
+  }, [aspectRatio, currentMode, model, modelRegistryRefreshVersion, outputSize, settingsReady]);
+
+  useEffect(() => {
+    if (!settingsReady) return;
+    const settings = {
       model,
       outputSize,
       customSize,
@@ -268,8 +341,10 @@ export function ImageGenerationWorkbench({
       gptImageOutputFormat: gptImageAdvancedParams.outputFormat,
       parallelCount,
       promptVariants,
-    });
-  }, [model, outputSize, customSize, aspectRatio, temperature, gptImageAdvancedParams, parallelCount, promptVariants, settingsReady]);
+    };
+    saveJsonToStorage(WORKBENCH_SETTINGS_KEY, settings);
+    saveJsonToStorage(getModeSettingsKey(currentMode), settings);
+  }, [model, outputSize, customSize, aspectRatio, temperature, gptImageAdvancedParams, parallelCount, promptVariants, settingsReady, currentMode]);
 
   const handleOptimize = useCallback(() => {
     if (!prompt.trim()) return;
@@ -546,47 +621,62 @@ export function ImageGenerationWorkbench({
     });
   }, []);
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     const mainPrompt = prompt.trim();
     if ((!mainPrompt && !hasCompletePromptVariants) || disabled || loading) return;
     if (!model) {
       dispatchImageActionToast(t('workbench.selectImageModel'), 'error');
       return;
     }
+    if (!getCompleteImageModels(loadRegistry()).some((item) => item.id === model)) {
+      dispatchImageActionToast(t('workbench.selectImageModel'), 'error');
+      return;
+    }
 
     const modelWithBilling = model;
-    if (pendingFiles.length > 0) {
-      onSubmitImage({
-        prompt: mainPrompt,
-        files: pendingFiles,
-        outputSize,
-        customSize,
-        aspectRatio,
-        temperature,
-        model: modelWithBilling,
-        gptImageQuality: gptImageAdvancedParams.quality,
-        gptImageStyle: gptImageAdvancedParams.style,
-        gptImageBackground: gptImageAdvancedParams.background,
-        gptImageOutputFormat: gptImageAdvancedParams.outputFormat,
-        parallelCount,
-        promptVariants: submitPromptVariants,
-      });
-    } else {
-      onSubmitText({
-        prompts: [mainPrompt],
-        outputSize,
-        customSize,
-        aspectRatio,
-        temperature,
-        model: modelWithBilling,
-        gptImageQuality: gptImageAdvancedParams.quality,
-        gptImageStyle: gptImageAdvancedParams.style,
-        gptImageBackground: gptImageAdvancedParams.background,
-        gptImageOutputFormat: gptImageAdvancedParams.outputFormat,
-        parallelCount,
-        promptVariants: submitPromptVariants,
-      });
+    let submitted: boolean | void = false;
+    setLoading(true);
+    try {
+      if (pendingFiles.length > 0) {
+        submitted = await onSubmitImage({
+          prompt: mainPrompt,
+          files: pendingFiles,
+          outputSize,
+          customSize,
+          aspectRatio,
+          temperature,
+          model: modelWithBilling,
+          gptImageQuality: gptImageAdvancedParams.quality,
+          gptImageStyle: gptImageAdvancedParams.style,
+          gptImageBackground: gptImageAdvancedParams.background,
+          gptImageOutputFormat: gptImageAdvancedParams.outputFormat,
+          parallelCount,
+          promptVariants: submitPromptVariants,
+        });
+      } else {
+        submitted = await onSubmitText({
+          prompts: [mainPrompt],
+          outputSize,
+          customSize,
+          aspectRatio,
+          temperature,
+          model: modelWithBilling,
+          gptImageQuality: gptImageAdvancedParams.quality,
+          gptImageStyle: gptImageAdvancedParams.style,
+          gptImageBackground: gptImageAdvancedParams.background,
+          gptImageOutputFormat: gptImageAdvancedParams.outputFormat,
+          parallelCount,
+          promptVariants: submitPromptVariants,
+        });
+      }
+    } catch (error) {
+      dispatchImageActionToast(error instanceof Error ? error.message : t('history.failed'), 'error');
+      return;
+    } finally {
+      setLoading(false);
     }
+
+    if (submitted === false) return;
 
     setPendingFiles([]);
     setPrompt('');
@@ -615,7 +705,7 @@ export function ImageGenerationWorkbench({
     const shouldSubmit = submissionShortcut === 'enter' ? !e.shiftKey : e.shiftKey;
     if (e.key === 'Enter' && shouldSubmit && !e.ctrlKey && !e.metaKey && !e.nativeEvent.isComposing) {
       e.preventDefault();
-      handleSubmit();
+      void handleSubmit();
     }
   };
 
@@ -773,7 +863,7 @@ export function ImageGenerationWorkbench({
               <Button variant="outline" size="icon" onClick={handleClearDraft} disabled={!canClear} title={t('workbench.clearDraft')}>
                 <X className="w-5 h-5" />
               </Button>
-              <Button onClick={handleSubmit} disabled={!canSubmit} size="icon" title={currentMode === 'image-to-image' ? t('workbench.submitImageToImage') : t('workbench.submitTextToImage')}>
+              <Button onClick={() => void handleSubmit()} disabled={!canSubmit} size="icon" title={currentMode === 'image-to-image' ? t('workbench.submitImageToImage') : t('workbench.submitTextToImage')}>
                 {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : <ArrowUp className="w-5 h-5" />}
               </Button>
             </div>

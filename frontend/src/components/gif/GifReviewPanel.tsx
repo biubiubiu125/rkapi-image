@@ -56,6 +56,7 @@ export function GifReviewPanel(props: GifReviewPanelProps) {
   const [delayPopoverOpen, setDelayPopoverOpen] = useState(false);
   const [loopPopoverOpen, setLoopPopoverOpen] = useState(false);
   const [paddingPopoverOpen, setPaddingPopoverOpen] = useState(false);
+  const canRetryGridSync = props.status === 'review_grid' && props.job?.serverTaskId && props.job.serverTaskAcked === false;
 
   return (
     <div className="rounded-xl border border-border bg-card p-4 shadow-md">
@@ -117,6 +118,29 @@ export function GifReviewPanel(props: GifReviewPanelProps) {
               />
             )}
           </div>
+
+          {(props.status === 'review_grid' || props.status === 'done') && props.job?.error && (
+            <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-700 dark:text-amber-300">
+              <div className="flex min-w-0 items-start gap-2">
+                <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+                <p className="min-w-0 text-xs leading-5">{props.job.error}</p>
+              </div>
+              {canRetryGridSync && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={props.onRefreshFromServer}
+                  disabled={props.isSyncing || props.refreshCooldownActive}
+                  className="gap-1"
+                >
+                  {props.isSyncing
+                    ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    : <RefreshCw className="h-3.5 w-3.5" />}
+                  主动同步状态
+                </Button>
+              )}
+            </div>
+          )}
 
           {(props.status === 'review_grid' || props.status === 'done') && (
             <div className="rounded-lg border border-border/50 bg-muted/30 p-3">

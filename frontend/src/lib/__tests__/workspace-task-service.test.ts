@@ -4,19 +4,19 @@ vi.hoisted(() => {
   const storage = new Map<string, string>();
   storage.set('flyreq-model-registry', JSON.stringify({
     imageModels: [{
-      id: 'flyreq-gpt-image-2',
+      id: 'rkapi-4k-image',
       protocol: 'openai',
-      name: 'FlyReq',
+      name: 'RKAPI-4k',
       modelId: 'gpt-image-2',
       apiKey: 'test-api-key',
-      baseUrl: 'https://api.openai.com',
+      baseUrl: 'https://api.rkai6.com',
       builtinPreset: 'gpt-image-2',
       maxRefImages: 16,
       maxOutputSize: '4K',
       supportsAdvancedParams: true,
     }],
     textModels: [],
-    defaults: { textToImage: 'flyreq-gpt-image-2', imageToImage: 'flyreq-gpt-image-2' },
+    defaults: { textToImage: 'rkapi-4k-image', imageToImage: 'rkapi-4k-image' },
   }));
   Object.defineProperty(globalThis, 'localStorage', {
     value: {
@@ -31,8 +31,8 @@ vi.hoisted(() => {
   });
 });
 
-import { ackFlyreqTask, createFlyreqTasks, resolveImageTaskProvider, type FlyreqTaskResponse } from '@/lib/flyreq-task-client';
-import { downloadAndStoreImages } from '@/lib/image-downloader';
+import { ackFlyreqTask, cancelFlyreqTask, createFlyreqTasks, resolveImageTaskProvider, type FlyreqTaskResponse } from '@/lib/flyreq-task-client';
+import { deleteStoredBlobs, downloadAndStoreImages } from '@/lib/image-downloader';
 import { compareStoredJobsByDisplayOrder, getStoredJobDisplayPrompt, restoreStoredJobBatchCreatedAt, type StoredJob } from '@/lib/job-store';
 import {
   finalizeCompletedServerTask,
@@ -46,6 +46,7 @@ vi.mock('@/lib/flyreq-task-client', async importOriginal => {
   return {
     ...actual,
     ackFlyreqTask: vi.fn(),
+    cancelFlyreqTask: vi.fn(),
     createFlyreqTasks: vi.fn(),
     resolveImageTaskProvider: vi.fn(),
   };
@@ -55,12 +56,15 @@ vi.mock('@/lib/image-downloader', async importOriginal => {
   const actual = await importOriginal<typeof import('@/lib/image-downloader')>();
   return {
     ...actual,
+    deleteStoredBlobs: vi.fn(),
     downloadAndStoreImages: vi.fn(),
   };
 });
 
 const mockedAckFlyreqTask = vi.mocked(ackFlyreqTask);
+const mockedCancelFlyreqTask = vi.mocked(cancelFlyreqTask);
 const mockedCreateFlyreqTasks = vi.mocked(createFlyreqTasks);
+const mockedDeleteStoredBlobs = vi.mocked(deleteStoredBlobs);
 const mockedDownloadAndStoreImages = vi.mocked(downloadAndStoreImages);
 const mockedResolveImageTaskProvider = vi.mocked(resolveImageTaskProvider);
 
@@ -114,11 +118,18 @@ function createActions(initialJob: StoredJob): { actions: SubmitActions; getJob:
 beforeEach(() => {
   mockedAckFlyreqTask.mockReset();
   mockedAckFlyreqTask.mockResolvedValue(undefined);
+  mockedCancelFlyreqTask.mockReset();
+  mockedCancelFlyreqTask.mockResolvedValue(undefined);
   mockedCreateFlyreqTasks.mockReset();
   mockedCreateFlyreqTasks.mockImplementation(async input => (
-    Array.from({ length: input.parallelCount }, (_, index) => `task-advanced-${index + 1}`)
+    Array.from({ length: input.parallelCount }, (_, index) => ({
+      taskId: `task-advanced-${index + 1}`,
+      readToken: `token-advanced-${index + 1}`,
+    }))
   ));
   mockedDownloadAndStoreImages.mockReset();
+  mockedDeleteStoredBlobs.mockReset();
+  mockedDeleteStoredBlobs.mockResolvedValue(undefined);
   mockedResolveImageTaskProvider.mockReset();
   mockedResolveImageTaskProvider.mockReturnValue({
     apiKey: 'test-api-key',
@@ -209,7 +220,7 @@ describe('submitTextToImage', () => {
       outputSize: '1K',
       aspectRatio: '1:1',
       temperature: 1,
-      model: 'flyreq-gpt-image-2',
+      model: 'rkapi-4k-image',
       gptImageQuality: 'high',
       gptImageStyle: 'vivid',
       gptImageBackground: 'transparent',
@@ -274,7 +285,7 @@ describe('submitTextToImage', () => {
       outputSize: '1K',
       aspectRatio: '1:1',
       temperature: 1,
-      model: 'flyreq-gpt-image-2',
+      model: 'rkapi-4k-image',
       gptImageQuality: 'auto',
       gptImageStyle: 'auto',
       gptImageBackground: 'auto',
@@ -321,7 +332,7 @@ describe('submitTextToImage', () => {
       outputSize: '1K',
       aspectRatio: '1:1',
       temperature: 1,
-      model: 'flyreq-gpt-image-2',
+      model: 'rkapi-4k-image',
       gptImageQuality: 'auto',
       gptImageStyle: 'auto',
       gptImageBackground: 'auto',
@@ -382,6 +393,59 @@ describe('submitTextToImage', () => {
       batchIndex: undefined,
     }));
   });
+
+  it('does not create server tasks when initial text jobs cannot be persisted', async () => {
+    const job = makeJob();
+    const { actions } = createActions(job);
+    vi.mocked(actions.addJob).mockReturnValue(false);
+    const onError = vi.fn();
+
+    const submitted = await submitTextToImage({
+      prompts: ['无法落盘时不要提交服务端任务'],
+      outputSize: '1K',
+      aspectRatio: '1:1',
+      temperature: 1,
+      model: 'rkapi-4k-image',
+      gptImageQuality: 'auto',
+      gptImageStyle: 'auto',
+      gptImageBackground: 'auto',
+      gptImageOutputFormat: 'png',
+      parallelCount: 1,
+    }, actions, onError);
+
+    expect(submitted).toBe(false);
+    expect(mockedCreateFlyreqTasks).not.toHaveBeenCalled();
+    expect(onError).toHaveBeenCalledWith('浏览器本地持久存储不可用');
+  });
+
+  it('does not treat text submission as successful when server task ids cannot be persisted', async () => {
+    const job = makeJob();
+    const { actions } = createActions(job);
+    vi.mocked(actions.replaceJob).mockImplementation((_jobId, updater) => {
+      updater(job);
+      return false;
+    });
+    const onError = vi.fn();
+
+    const submitted = await submitTextToImage({
+      prompts: ['persist task id before waiting'],
+      outputSize: '1K',
+      aspectRatio: '1:1',
+      temperature: 1,
+      model: 'rkapi-4k-image',
+      gptImageQuality: 'auto',
+      gptImageStyle: 'auto',
+      gptImageBackground: 'auto',
+      gptImageOutputFormat: 'png',
+      parallelCount: 1,
+    }, actions, onError);
+
+    expect(submitted).toBe(false);
+    expect(mockedCreateFlyreqTasks).toHaveBeenCalled();
+    expect(mockedCancelFlyreqTask).toHaveBeenCalledWith('task-advanced-1', 'token-advanced-1');
+    expect(actions.failJob).toHaveBeenCalledWith(expect.any(String), expect.stringContaining('task-advanced-1'));
+    expect(onError).toHaveBeenCalledWith(expect.stringContaining('task-advanced-1'));
+  });
 });
 
 describe('submitImageToImage', () => {
@@ -395,7 +459,7 @@ describe('submitImageToImage', () => {
       outputSize: '1K',
       aspectRatio: '1:1',
       temperature: 1,
-      model: 'flyreq-gpt-image-2',
+      model: 'rkapi-4k-image',
       gptImageQuality: 'auto',
       gptImageStyle: 'auto',
       gptImageBackground: 'auto',
@@ -429,6 +493,85 @@ describe('submitImageToImage', () => {
       '将参考图改为水彩画\n\n本张图要求：\n水彩风',
     ]);
   });
+
+  it('does not create server tasks when initial image jobs cannot be persisted', async () => {
+    const job = makeJob({ mode: 'image-to-image' });
+    const { actions } = createActions(job);
+    vi.mocked(actions.addJob).mockReturnValue(false);
+    const onError = vi.fn();
+
+    const submitted = await submitImageToImage({
+      prompt: '无法落盘时不要提交服务端任务',
+      files: [{ id: 'ref-1', name: 'reference.png', dataUrl: 'data:image/png;base64,ZmFrZQ==', mimeType: 'image/png' }],
+      outputSize: '1K',
+      aspectRatio: '1:1',
+      temperature: 1,
+      model: 'rkapi-4k-image',
+      gptImageQuality: 'auto',
+      gptImageStyle: 'auto',
+      gptImageBackground: 'auto',
+      gptImageOutputFormat: 'png',
+      parallelCount: 1,
+    }, actions, onError);
+
+    expect(submitted).toBe(false);
+    expect(mockedCreateFlyreqTasks).not.toHaveBeenCalled();
+    expect(onError).toHaveBeenCalledWith('浏览器本地持久存储不可用');
+  });
+
+  it('rejects oversized image submissions before local jobs are created', async () => {
+    const job = makeJob({ mode: 'image-to-image' });
+    const { actions } = createActions(job);
+    const onError = vi.fn();
+
+    const submitted = await submitImageToImage({
+      prompt: 'oversized refs',
+      files: [{ id: 'ref-1', name: 'reference.png', dataUrl: `data:image/png;base64,${'a'.repeat(10 * 1024 * 1024)}`, mimeType: 'image/png' }],
+      outputSize: '1K',
+      aspectRatio: '1:1',
+      temperature: 1,
+      model: 'rkapi-4k-image',
+      gptImageQuality: 'auto',
+      gptImageStyle: 'auto',
+      gptImageBackground: 'auto',
+      gptImageOutputFormat: 'png',
+      parallelCount: 1,
+    }, actions, onError);
+
+    expect(submitted).toBe(false);
+    expect(actions.addJob).not.toHaveBeenCalled();
+    expect(mockedCreateFlyreqTasks).not.toHaveBeenCalled();
+    expect(onError).toHaveBeenCalledWith(expect.stringContaining('请求体过大'));
+  });
+
+  it('does not treat image submission as successful when server task ids cannot be persisted', async () => {
+    const job = makeJob({ mode: 'image-to-image' });
+    const { actions } = createActions(job);
+    vi.mocked(actions.replaceJob).mockImplementation((_jobId, updater) => {
+      updater(job);
+      return false;
+    });
+    const onError = vi.fn();
+
+    const submitted = await submitImageToImage({
+      prompt: 'persist task id before waiting',
+      files: [{ id: 'ref-1', name: 'reference.png', dataUrl: 'data:image/png;base64,ZmFrZQ==', mimeType: 'image/png' }],
+      outputSize: '1K',
+      aspectRatio: '1:1',
+      temperature: 1,
+      model: 'rkapi-4k-image',
+      gptImageQuality: 'auto',
+      gptImageStyle: 'auto',
+      gptImageBackground: 'auto',
+      gptImageOutputFormat: 'png',
+      parallelCount: 1,
+    }, actions, onError);
+
+    expect(submitted).toBe(false);
+    expect(mockedCreateFlyreqTasks).toHaveBeenCalled();
+    expect(actions.failJob).toHaveBeenCalledWith(expect.any(String), expect.stringContaining('task-advanced-1'));
+    expect(onError).toHaveBeenCalledWith(expect.stringContaining('task-advanced-1'));
+  });
 });
 
 describe('finalizeCompletedServerTask', () => {
@@ -448,13 +591,13 @@ describe('finalizeCompletedServerTask', () => {
 
     await finalizeCompletedServerTask(job, makeCompletedTask(['URL:/api/flyreq/images/task-1/0']), actions);
 
-    expect(actions.completeJob).toHaveBeenCalledTimes(2);
+    expect(actions.completeJob).toHaveBeenCalledTimes(3);
     expect(getJob().images).toEqual(['blob:cached-0']);
     expect(getJob().created_at).toBe('2026-06-07T00:00:01.000Z');
     expect(getJob().completed_at).toBe('2026-06-07T00:00:19.000Z');
     expect(getJob().serverTaskAcked).toBe(true);
     expect(getJob().imageDownloadProgress).toBeUndefined();
-    expect(mockedAckFlyreqTask).toHaveBeenCalledWith('task-1');
+    expect(mockedAckFlyreqTask).toHaveBeenCalledWith('task-1', undefined);
   });
 
   it('部分 URL 图片缓存失败时保留 URL 引用和失败进度且不 ack', async () => {
@@ -486,6 +629,56 @@ describe('finalizeCompletedServerTask', () => {
     expect(getJob().serverTaskAcked).toBe(false);
     expect(getJob().warning).toContain('1 张图片本地缓存失败');
     expect(getJob().imageDownloadProgress?.failed).toBe(1);
+    expect(mockedAckFlyreqTask).not.toHaveBeenCalled();
+  });
+
+  it('ack 失败时保留已缓存图片但不把本地状态标记为已 ack', async () => {
+    mockedDownloadAndStoreImages.mockResolvedValue({
+      successCount: 1,
+      failCount: 0,
+      blobUrls: ['blob:cached-0'],
+      items: [{ index: 0, status: 'cached', loadedBytes: 10, totalBytes: 10, percent: 100 }],
+    });
+    mockedAckFlyreqTask.mockRejectedValue(new Error('network down'));
+    const job = makeJob();
+    const { actions, getJob } = createActions(job);
+
+    await expect(finalizeCompletedServerTask(job, makeCompletedTask(['URL:/api/flyreq/images/task-1/0']), actions))
+      .resolves.toBeUndefined();
+
+    expect(getJob().status).toBe('completed');
+    expect(getJob().images).toEqual(['blob:cached-0']);
+    expect(getJob().serverTaskAcked).toBe(false);
+    expect(getJob().warning).toContain('服务端清理确认失败');
+    expect(mockedAckFlyreqTask).toHaveBeenCalledWith('task-1', undefined);
+  });
+
+  it('元数据保存失败回退到远程 URL 时清理已写入的本地 blob', async () => {
+    mockedDownloadAndStoreImages.mockResolvedValue({
+      successCount: 1,
+      failCount: 0,
+      blobUrls: ['blob:cached-0'],
+      items: [{ index: 0, status: 'cached', loadedBytes: 10, totalBytes: 10, percent: 100 }],
+    });
+    const job = makeJob();
+    let currentJob = job;
+    const actions: SubmitActions = {
+      addJob: vi.fn(),
+      replaceJob: vi.fn((_jobId, updater) => { currentJob = updater(currentJob); }),
+      completeJob: vi.fn(async (_jobId, nextJob) => {
+        if (nextJob.images?.[0] === 'blob:cached-0') {
+          throw new Error('metadata write failed');
+        }
+        currentJob = nextJob;
+      }),
+      failJob: vi.fn(),
+    };
+
+    await finalizeCompletedServerTask(job, makeCompletedTask(['URL:/api/flyreq/images/task-1/0']), actions);
+
+    expect(mockedDeleteStoredBlobs).toHaveBeenCalledWith('job-1', 1);
+    expect(currentJob.images).toEqual(['URL:/api/flyreq/images/task-1/0']);
+    expect(currentJob.serverTaskAcked).toBe(false);
     expect(mockedAckFlyreqTask).not.toHaveBeenCalled();
   });
 });

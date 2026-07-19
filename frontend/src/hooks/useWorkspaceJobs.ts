@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { hasConfiguredImageModel } from '@/lib/settings-storage';
-import { startPendingServerTaskAckAutoFlush } from '@/lib/server-task-ack';
+import { cancelServerTaskWithRetry, startPendingServerTaskAckAutoFlush } from '@/lib/server-task-ack';
 import {
   deleteImage,
   loadJobs,
@@ -170,6 +170,12 @@ export function useWorkspaceJobs() {
     }
   }, [persistJobs]);
 
+  const cancelRemovedServerTask = useCallback((job: StoredJob | undefined): Promise<boolean> => {
+    return job?.serverTaskId && job.serverTaskAcked !== true
+      ? cancelServerTaskWithRetry(job.serverTaskId, job.serverTaskReadToken).catch(() => false)
+      : Promise.resolve(false);
+  }, []);
+
   const removeJob = useCallback(async (jobId: string) => {
     const removedJob = jobsRef.current.find(job => job.id === jobId);
     if (removedJob?.blobUrls) {
@@ -182,10 +188,11 @@ export function useWorkspaceJobs() {
       return next;
     });
     await Promise.all([
+      cancelRemovedServerTask(removedJob),
       deleteImage(jobId).catch(() => undefined),
       deleteStoredBlobs(jobId, removedJob?.images?.length).catch(() => undefined),
     ]);
-  }, [persistJobs]);
+  }, [cancelRemovedServerTask, persistJobs]);
 
   const clearJobsByMode = useCallback(async (modeFilter: Mode) => {
     const toRemove = jobsRef.current.filter(job => job.mode === modeFilter);
@@ -209,11 +216,12 @@ export function useWorkspaceJobs() {
     });
 
     await Promise.all(toRemove.flatMap(job => [
+      cancelRemovedServerTask(job),
       deleteImage(job.id).catch(() => undefined),
       deleteStoredBlobs(job.id, job.images?.length).catch(() => undefined),
     ]));
     setClearAllDialogOpen(null);
-  }, [persistJobs]);
+  }, [cancelRemovedServerTask, persistJobs]);
 
   const textJobs = useMemo(
     () => jobs.filter(job => job.mode === 'text-to-image').sort(compareStoredJobsByDisplayOrder),

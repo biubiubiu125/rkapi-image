@@ -3,8 +3,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { hasConfiguredTextModel } from '@/lib/settings-storage';
 import { generateUUID } from '@/lib/uuid';
-import { createFlyreqTask, getFlyreqTask, resolveImageTaskProvider, type ImageReference } from '@/lib/flyreq-task-client';
-import { ackServerTaskWithRetry } from '@/lib/server-task-ack';
+import { createFlyreqTask, getFlyreqTask, normalizeFlyreqTaskAccess, resolveImageTaskProvider, type ImageReference } from '@/lib/flyreq-task-client';
+import { ackServerTaskWithRetry, cancelServerTaskWithRetry } from '@/lib/server-task-ack';
 import { fetchImageAsBlob } from '@/lib/image-downloader';
 import {
   getGptImageAdvancedParamsForModel,
@@ -164,6 +164,28 @@ function isLocalPersistenceError(error: unknown): boolean {
   return message.includes('本地持久存储') || message.includes('本地保存不完整') || message.includes('持久化失败') || message.includes('持久化中止');
 }
 
+class AgentTaskTerminalError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'AgentTaskTerminalError';
+  }
+}
+
+function isAgentTaskTerminalError(error: unknown): boolean {
+  return error instanceof AgentTaskTerminalError || (
+    error instanceof Error &&
+    error.name === 'AgentTaskTerminalError'
+  );
+}
+
+function isAgentTaskStoppedError(error: unknown): boolean {
+  return getUnknownErrorMessage(error) === '已停止';
+}
+
+function appendTaskIdToError(message: string, taskId: string): string {
+  return message.includes(taskId) ? message : `${message}（任务 ID：${taskId}）`;
+}
+
 function proposalDataFromPendingGeneration(data: PendingGenerationData): AgentProposalData {
   return {
     action: data.selectedImageIds.length > 0 ? 'edit' : 'generate',
@@ -302,6 +324,11 @@ export function useAgentChat() {
     streamingReasoningBufRef.current = '';
     if (text) setStreamingText(prev => prev + text);
     if (reasoning) setStreamingReasoning(prev => prev + reasoning);
+  }, []);
+
+  const cancelPendingGenerationTask = useCallback((pending: PendingGenerationData | null | undefined) => {
+    if (!pending?.taskId) return;
+    void cancelServerTaskWithRetry(pending.taskId, pending.taskReadToken);
   }, []);
 
   useEffect(() => {
@@ -696,14 +723,14 @@ export function useAgentChat() {
     });
   }, []);
 
-  const pollTask = useCallback(async (taskId: string) => {
+  const pollTask = useCallback(async (taskId: string, taskReadToken?: string) => {
     pollAbortRef.current = false;
     for (;;) {
       if (pollAbortRef.current || !mountedRef.current) throw new Error('已停止');
-      const task = await getFlyreqTask(taskId);
+      const task = await getFlyreqTask(taskId, taskReadToken);
       if (task.status === 'completed') return task;
       if (task.status === 'failed' || task.status === 'expired') {
-        throw new Error(task.error || task.warning || '生图任务失败');
+        throw new AgentTaskTerminalError(task.error || task.warning || '生图任务失败');
       }
       await new Promise<void>(resolve => {
         const timer = setTimeout(() => {
@@ -729,9 +756,12 @@ export function useAgentChat() {
     allImages: string[],
     ctx: {
       taskId: string;
+      taskReadToken?: string;
       prompt: string;
       analysisFallbackReason: string;
       proposalData: AgentMessage['proposalData'];
+      expectedImageCount?: number;
+      taskWarning?: string;
     },
   ): Promise<void> => {
     const descController = new AbortController();
@@ -745,6 +775,12 @@ export function useAgentChat() {
     setPhase('describing');
     const records: AgentImageRecord[] = [];
     const errors: string[] = [];
+    const warnings: string[] = [];
+    const taskWarning = ctx.taskWarning?.trim();
+    if (taskWarning) warnings.push(taskWarning);
+    if (ctx.expectedImageCount && allImages.length < ctx.expectedImageCount) {
+      warnings.push(`仅返回 ${allImages.length}/${ctx.expectedImageCount} 张图片`);
+    }
     try {
       for (let i = 0; i < allImages.length; i++) {
         try {
@@ -783,8 +819,9 @@ export function useAgentChat() {
     generatedText += `${t('agentGeneration.analysis')}: ${analysis || t('agentGeneration.completedAnalysis')}\n`;
     generatedText += `${t('agentGeneration.optimizedPrompt')}: ${ctx.prompt}\n`;
     generatedText += `${t('agentGeneration.result')}: ${t('agentGeneration.completedResult', { images: imgList })}`;
-    if (errors.length > 0) {
-      generatedText += `\n${t('agentGeneration.partialFailure', { errors: errors.join('; ') })}`;
+    const notices = [...warnings, ...errors].filter(Boolean);
+    if (notices.length > 0) {
+      generatedText += `\n${t('agentGeneration.partialFailure', { errors: notices.join('; ') })}`;
     }
 
     await persistAndAppendMessage({
@@ -797,7 +834,7 @@ export function useAgentChat() {
       proposalData: ctx.proposalData,
       createdAt: Date.now(),
     });
-    await ackServerTaskWithRetry(ctx.taskId);
+    await ackServerTaskWithRetry(ctx.taskId, ctx.taskReadToken);
     await clearPendingGeneration();
     pendingGenerationRef.current = null;
     setError(null);
@@ -813,19 +850,36 @@ export function useAgentChat() {
     pollAbortRef.current = false;
     pendingGenerationRef.current = data;
     try {
-      const task = await pollTask(data.taskId);
+      const task = await pollTask(data.taskId, data.taskReadToken);
       if (!mountedRef.current) return;
       const allImages = task.result?.images;
       if (!allImages || allImages.length === 0) throw new Error('后端未返回图片');
 
       await processGeneratedTask(allImages, {
         taskId: data.taskId,
+        taskReadToken: data.taskReadToken,
         prompt: data.proposal.prompt,
         analysisFallbackReason: data.proposal.reason || '',
         proposalData: proposalDataFromPendingGeneration(data),
+        expectedImageCount: data.parallelCount,
+        taskWarning: task.warning,
       });
     } catch (err) {
-      if (!isLocalPersistenceError(err)) {
+      const canKeepPendingGeneration = !isAgentTaskTerminalError(err) && !isAgentTaskStoppedError(err);
+      if (canKeepPendingGeneration) {
+        setGeneratingTaskId(data.taskId);
+        setGeneratingStartedAt(data.startedAt);
+        setGenerationDraft({
+          analysis: data.pendingAnalysis || data.proposal.reason || '',
+          reasoning: data.pendingReasoning || undefined,
+          prompt: data.proposal.prompt,
+          parallelCount: data.parallelCount,
+          taskId: data.taskId,
+          startedAt: data.startedAt,
+        });
+        setProposal(null);
+        setPhase('generating');
+      } else {
         void clearPendingGeneration();
         pendingGenerationRef.current = null;
         setGeneratingTaskId(null);
@@ -847,21 +901,9 @@ export function useAgentChat() {
           parallelCount: data.parallelCount,
         });
         setPhase('proposal');
-      } else {
-        setGeneratingTaskId(data.taskId);
-        setGeneratingStartedAt(data.startedAt);
-        setGenerationDraft({
-          analysis: data.pendingAnalysis || data.proposal.reason || '',
-          reasoning: data.pendingReasoning || undefined,
-          prompt: data.proposal.prompt,
-          parallelCount: data.parallelCount,
-          taskId: data.taskId,
-          startedAt: data.startedAt,
-        });
-        setProposal(null);
-        setPhase('generating');
       }
-      setError(getUnknownErrorMessage(err) || '生图失败');
+      const message = getUnknownErrorMessage(err) || '生图失败';
+      setError(canKeepPendingGeneration ? appendTaskIdToError(message, data.taskId) : message);
       setIsSyncing(false);
     }
   }, [pollTask, processGeneratedTask]);
@@ -876,16 +918,19 @@ export function useAgentChat() {
     pollWakeRef.current?.();
 
     try {
-      const task = await getFlyreqTask(taskId);
+      const pending = pendingGenerationRef.current;
+      const task = await getFlyreqTask(taskId, pending?.taskReadToken);
       if (task.status === 'completed') {
         const allImages = task.result?.images;
-        const pending = pendingGenerationRef.current;
         if (allImages?.length && pending?.taskId === taskId) {
           await processGeneratedTask(allImages, {
             taskId,
+            taskReadToken: pending.taskReadToken,
             prompt: pending.proposal.prompt,
             analysisFallbackReason: pending.proposal.reason || '',
             proposalData: proposalDataFromPendingGeneration(pending),
+            expectedImageCount: pending.parallelCount,
+            taskWarning: task.warning,
           });
         }
         return 'completed';
@@ -960,6 +1005,7 @@ export function useAgentChat() {
     });
 
     let createdTaskId: string | null = null;
+    let createdTaskReadToken: string | undefined;
     let pendingGenerationPersisted = false;
     try {
       const references: ImageReference[] = [];
@@ -970,7 +1016,7 @@ export function useAgentChat() {
       const mode = references.length > 0 ? 'image-to-image' : 'text-to-image';
       const provider = resolveImageTaskProvider(model);
 
-      const taskId = await createFlyreqTask({
+      const taskAccess = normalizeFlyreqTaskAccess(await createFlyreqTask({
         apiKey: provider.apiKey,
         baseUrl: provider.baseUrl,
         protocol: provider.protocol,
@@ -988,10 +1034,12 @@ export function useAgentChat() {
         streamImages: provider.streamImages,
         parallelCount: params.parallelCount,
         images: references,
-      });
-      createdTaskId = taskId;
+      }));
+      createdTaskId = taskAccess.taskId;
+      createdTaskReadToken = taskAccess.readToken;
       const pendingGeneration: PendingGenerationData = {
-        taskId,
+        taskId: taskAccess.taskId,
+        taskReadToken: taskAccess.readToken,
         proposal: approvedProposal,
         pendingAnalysis: pendingAnalysisRef.current,
         pendingReasoning: pendingReasoningRef.current,
@@ -1009,18 +1057,19 @@ export function useAgentChat() {
         startedAt,
       };
       pendingGenerationRef.current = pendingGeneration;
-      setGeneratingTaskId(taskId);
-      setGenerationDraft(prev => prev ? { ...prev, taskId } : prev);
+      setGeneratingTaskId(taskAccess.taskId);
+      setGenerationDraft(prev => prev ? { ...prev, taskId: taskAccess.taskId } : prev);
       await savePendingGeneration(pendingGeneration);
       pendingGenerationPersisted = true;
 
-      const task = await pollTask(taskId);
+      const task = await pollTask(taskAccess.taskId, taskAccess.readToken);
       if (!mountedRef.current) return;
       const allImages = task.result?.images;
       if (!allImages || allImages.length === 0) throw new Error('后端未返回图片');
 
       await processGeneratedTask(allImages, {
-        taskId,
+        taskId: taskAccess.taskId,
+        taskReadToken: taskAccess.readToken,
         prompt,
         analysisFallbackReason: proposalRef.current?.reason || '',
         proposalData: {
@@ -1038,9 +1087,35 @@ export function useAgentChat() {
           gptImageOutputFormat: params.gptImageOutputFormat,
           parallelCount: params.parallelCount,
         },
+        expectedImageCount: params.parallelCount,
+        taskWarning: task.warning,
       });
     } catch (err) {
-      if (!isLocalPersistenceError(err)) {
+      const canKeepPendingGeneration = Boolean(
+        createdTaskId &&
+        pendingGenerationPersisted &&
+        pendingGenerationRef.current?.taskId === createdTaskId &&
+        !isAgentTaskTerminalError(err) &&
+        !isAgentTaskStoppedError(err)
+      );
+      if (createdTaskId && !canKeepPendingGeneration && isLocalPersistenceError(err)) {
+        void cancelServerTaskWithRetry(createdTaskId, createdTaskReadToken);
+      }
+      if (canKeepPendingGeneration) {
+        const recoverableTaskId = createdTaskId!;
+        setGeneratingTaskId(recoverableTaskId);
+        setGeneratingStartedAt(startedAt);
+        setGenerationDraft(prev => ({
+          analysis: prev?.analysis ?? (pendingAnalysisRef.current || approvedProposal.reason || ''),
+          reasoning: prev?.reasoning ?? (pendingReasoningRef.current || undefined),
+          prompt,
+          parallelCount: params.parallelCount,
+          taskId: recoverableTaskId,
+          startedAt,
+        }));
+        setProposal(null);
+        setPhase('generating');
+      } else if (!isLocalPersistenceError(err)) {
         void clearPendingGeneration();
         pendingGenerationRef.current = null;
         setGeneratingTaskId(null);
@@ -1063,20 +1138,6 @@ export function useAgentChat() {
           requestedModelId: approvedProposal.requestedModelId,
         });
         setPhase('proposal');
-      } else if (createdTaskId && pendingGenerationPersisted && pendingGenerationRef.current?.taskId === createdTaskId) {
-        const recoverableTaskId = createdTaskId;
-        setGeneratingTaskId(recoverableTaskId);
-        setGeneratingStartedAt(startedAt);
-        setGenerationDraft(prev => ({
-          analysis: prev?.analysis ?? (pendingAnalysisRef.current || approvedProposal.reason || ''),
-          reasoning: prev?.reasoning ?? (pendingReasoningRef.current || undefined),
-          prompt,
-          parallelCount: params.parallelCount,
-          taskId: recoverableTaskId,
-          startedAt,
-        }));
-        setProposal(null);
-        setPhase('generating');
       } else {
         pendingGenerationRef.current = null;
         setGeneratingTaskId(null);
@@ -1101,12 +1162,13 @@ export function useAgentChat() {
         setPhase('proposal');
       }
       const message = getUnknownErrorMessage(err) || '生图失败';
-      setError(createdTaskId && isLocalPersistenceError(err) ? `${message}（任务 ID：${createdTaskId}）` : message);
+      setError(createdTaskId && (canKeepPendingGeneration || isLocalPersistenceError(err)) ? appendTaskIdToError(message, createdTaskId) : message);
       setIsSyncing(false);
     }
   }, [phase, proposal, pollTask, processGeneratedTask]);
 
   const stopStreaming = useCallback(() => {
+    const pending = pendingGenerationRef.current;
     streamHandleRef.current?.abort();
     streamHandleRef.current = null;
     pollAbortRef.current = true;
@@ -1120,10 +1182,11 @@ export function useAgentChat() {
     setIsSyncing(false);
     setPhase('idle');
     describeAbortRef.current?.abort();
+    cancelPendingGenerationTask(pending);
     void clearPendingProposal();
     void clearPendingGeneration();
     pendingGenerationRef.current = null;
-  }, [flushAndCancelRaf]);
+  }, [cancelPendingGenerationTask, flushAndCancelRaf]);
 
   const skipDescribing = useCallback(() => {
     describeAbortRef.current?.abort();
@@ -1174,11 +1237,13 @@ export function useAgentChat() {
   }, [phase]);
 
   const clearSession = useCallback(async () => {
+    const pending = pendingGenerationRef.current;
     streamHandleRef.current?.abort();
     streamHandleRef.current = null;
     pollAbortRef.current = true;
     pollWakeRef.current?.();
     describeAbortRef.current?.abort();
+    cancelPendingGenerationTask(pending);
     await clearAgentSession();
     pendingGenerationRef.current = null;
     setMessages([]);
@@ -1194,7 +1259,7 @@ export function useAgentChat() {
     setError(null);
     seqRef.current = 0;
     setPhase('idle');
-  }, [flushAndCancelRaf]);
+  }, [cancelPendingGenerationTask, flushAndCancelRaf]);
 
   /** 根据消息中的 proposalData 重新打开提案编辑 */
   const reeditProposal = useCallback((messageId: string) => {

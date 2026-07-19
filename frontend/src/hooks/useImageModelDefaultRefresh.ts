@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { MODEL_REGISTRY_STORAGE_KEY, MODEL_REGISTRY_UPDATED_EVENT } from '@/lib/flyreq-models';
 
 export const IMAGE_MODEL_DEFAULT_UPDATED_EVENT = 'flyreq-image-model-default-updated';
 
@@ -20,8 +21,19 @@ export function useImageModelDefaultRefresh(): number {
 
   useEffect(() => {
     const refresh = () => setVersion(current => current + 1);
+    const handleStorage = (event: StorageEvent) => {
+      if (event.key === MODEL_REGISTRY_STORAGE_KEY) {
+        refresh();
+      }
+    };
     window.addEventListener(IMAGE_MODEL_DEFAULT_UPDATED_EVENT, refresh);
-    return () => window.removeEventListener(IMAGE_MODEL_DEFAULT_UPDATED_EVENT, refresh);
+    window.addEventListener(MODEL_REGISTRY_UPDATED_EVENT, refresh);
+    window.addEventListener('storage', handleStorage);
+    return () => {
+      window.removeEventListener(IMAGE_MODEL_DEFAULT_UPDATED_EVENT, refresh);
+      window.removeEventListener(MODEL_REGISTRY_UPDATED_EVENT, refresh);
+      window.removeEventListener('storage', handleStorage);
+    };
   }, []);
 
   return version;

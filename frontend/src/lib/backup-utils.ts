@@ -29,6 +29,8 @@ function isBlobRef(value: unknown): value is BlobRef {
 const LOCAL_STORAGE_KEYS = [
     'flyreq-model-registry',
     'flyreq-jobs',
+    'flyreq-prompt-optimize-enabled',
+    'flyreq-image-generation-settings',
     'flyreq-t2i-settings',
     'flyreq-i2i-settings',
     'flyreq-reverse-prompt-settings',
@@ -67,6 +69,12 @@ const LOCALFORAGE_STORES: { name: string; storeName: string }[] = [
 
 type LocalForageEntry = { key: string; value: unknown } | { key: string; _blobRef: string; _blobMimeType: string };
 type LocalForageBackup = Record<string, Record<string, LocalForageEntry[]>>;
+type LocalForageInstance = ReturnType<typeof localforage.createInstance>;
+type LocalForageSnapshotEntry = { key: string; value: unknown };
+type LocalForageSnapshot = { name: string; storeName: string; entries: LocalForageSnapshotEntry[] };
+type LocalStorageSnapshot = Record<string, string | null>;
+type IndexedDBStoreSnapshot = { storeName: string; records: BackupRecord[] };
+type IndexedDBSnapshot = { name: string; version: number; stores: IndexedDBStoreSnapshot[] };
 
 /** Blob → Uint8Array（fflate 需要 Uint8Array） */
 async function blobToUint8(blob: Blob): Promise<Uint8Array> {
@@ -87,12 +95,46 @@ function jsonToU8(data: unknown): Uint8Array {
     return strToU8(JSON.stringify(data));
 }
 
+function parseJsonText<T>(text: string, sourcePath: string): T {
+    try {
+        return JSON.parse(text) as T;
+    } catch {
+        throw new Error(`备份文件 ${sourcePath} 解析失败`);
+    }
+}
+
+function collectBlobRefs(value: unknown, refs = new Set<string>()): Set<string> {
+    if (Array.isArray(value)) {
+        for (const item of value) {
+            collectBlobRefs(item, refs);
+        }
+        return refs;
+    }
+    if (!isBackupRecord(value)) return refs;
+    if (isBlobRef(value)) {
+        refs.add(value._blobRef);
+    }
+    for (const nestedValue of Object.values(value)) {
+        collectBlobRefs(nestedValue, refs);
+    }
+    return refs;
+}
+
+function assertBlobRefsExist(value: unknown, unzipped: Record<string, Uint8Array>, sourcePath: string): void {
+    for (const blobRef of collectBlobRefs(value)) {
+        if (!unzipped[`blobs/${blobRef}`]) {
+            throw new Error(`缺少 blob 引用: ${blobRef} (${sourcePath})`);
+        }
+    }
+}
+
 /**
  * 导出 localforage（keyless）store：保留 key；Blob 值以二进制存入 ZIP blobs/，JSON 内留引用。
  * 数据逐 store 写入 files 对象，释放引用后可被 GC 回收。
  */
 async function exportLocalForage(files: Record<string, Uint8Array>): Promise<LocalForageBackup> {
     const result: LocalForageBackup = {};
+    const blobWrites: Promise<void>[] = [];
     for (const cfg of LOCALFORAGE_STORES) {
         try {
             const instance = localforage.createInstance({ name: cfg.name, storeName: cfg.storeName });
@@ -100,7 +142,7 @@ async function exportLocalForage(files: Record<string, Uint8Array>): Promise<Loc
             await instance.iterate((value: unknown, key: string) => {
                 if (value instanceof Blob) {
                     const ref = nextBlobRef();
-                    blobToUint8(value).then(u8 => { files[`blobs/${ref}`] = u8; });
+                    blobWrites.push(blobToUint8(value).then(u8 => { files[`blobs/${ref}`] = u8; }));
                     entries.push({ key, _blobRef: ref, _blobMimeType: value.type });
                 } else {
                     entries.push({ key, value });
@@ -112,39 +154,83 @@ async function exportLocalForage(files: Record<string, Uint8Array>): Promise<Loc
             // skip failed localforage export
         }
     }
+    await Promise.all(blobWrites);
     return result;
 }
 
 /**
  * 导入 localforage（keyless）store：先清空，再按 key 写回；Blob 从 ZIP 还原。
  */
-async function importLocalForage(data: LocalForageBackup, unzipped: Record<string, Uint8Array>): Promise<void> {
+async function snapshotLocalForageStore(instance: LocalForageInstance): Promise<LocalForageSnapshotEntry[]> {
+    const entries: LocalForageSnapshotEntry[] = [];
+    await instance.iterate((value: unknown, key: string) => {
+        entries.push({ key, value });
+    });
+    return entries;
+}
+
+async function restoreLocalForageStore(instance: LocalForageInstance, entries: LocalForageSnapshotEntry[]): Promise<void> {
+    await instance.clear();
+    for (const entry of entries) {
+        await instance.setItem(entry.key, entry.value);
+    }
+}
+
+async function snapshotLocalForageStores(data: LocalForageBackup): Promise<LocalForageSnapshot[]> {
+    const snapshots: LocalForageSnapshot[] = [];
     for (const cfg of LOCALFORAGE_STORES) {
         const entries = data[cfg.name]?.[cfg.storeName];
         if (!Array.isArray(entries)) continue;
+        const instance = localforage.createInstance({ name: cfg.name, storeName: cfg.storeName });
+        snapshots.push({
+            ...cfg,
+            entries: await snapshotLocalForageStore(instance),
+        });
+    }
+    return snapshots;
+}
+
+async function restoreLocalForageSnapshots(snapshots: LocalForageSnapshot[]): Promise<void> {
+    for (const snapshot of snapshots) {
+        const instance = localforage.createInstance({ name: snapshot.name, storeName: snapshot.storeName });
+        await restoreLocalForageStore(instance, snapshot.entries);
+    }
+}
+
+async function importLocalForage(
+    data: LocalForageBackup,
+    unzipped: Record<string, Uint8Array>,
+    snapshots: LocalForageSnapshot[] = [],
+): Promise<void> {
+    for (const cfg of LOCALFORAGE_STORES) {
+        const entries = data[cfg.name]?.[cfg.storeName];
+        if (!Array.isArray(entries)) continue;
+
+        const instance = localforage.createInstance({ name: cfg.name, storeName: cfg.storeName });
+        const snapshot = snapshots.find(item => item.name === cfg.name && item.storeName === cfg.storeName);
+
         try {
-            const instance = localforage.createInstance({ name: cfg.name, storeName: cfg.storeName });
             await instance.clear();
+
             for (const entry of entries) {
                 let value: unknown;
                 if ('_blobRef' in entry && typeof entry._blobRef === 'string') {
                     const blobData = unzipped[`blobs/${entry._blobRef}`];
-                    if (!blobData) continue;
+                    if (!blobData) {
+                        throw new Error(`缺少 blob 引用: ${entry._blobRef} (${cfg.name}/${cfg.storeName})`);
+                    }
                     value = new Blob([blobData as unknown as BlobPart], { type: entry._blobMimeType });
                 } else {
                     value = (entry as { value: unknown }).value;
                 }
                 await instance.setItem(entry.key, value);
             }
-        } catch {
-            // skip failed localforage import
+        } catch (error) {
+            if (snapshot) await restoreLocalForageStore(instance, snapshot.entries).catch(() => undefined);
+            throw error;
         }
     }
 }
-
-/**
- * 导出 localStorage 数据
- */
 function exportLocalStorage(): Record<string, string> {
     const data: Record<string, string> = {};
 
@@ -160,6 +246,42 @@ function exportLocalStorage(): Record<string, string> {
     }
 
     return data;
+}
+
+function snapshotLocalStorage(): LocalStorageSnapshot {
+    const snapshot: LocalStorageSnapshot = {};
+    for (const key of LOCAL_STORAGE_KEYS) {
+        try {
+            snapshot[key] = localStorage.getItem(key);
+        } catch {
+            snapshot[key] = null;
+        }
+    }
+    return snapshot;
+}
+
+function restoreLocalStorageSnapshot(snapshot: LocalStorageSnapshot): void {
+    for (const [key, value] of Object.entries(snapshot)) {
+        try {
+            if (value === null) {
+                localStorage.removeItem(key);
+            } else {
+                localStorage.setItem(key, value);
+            }
+        } catch {
+            // best-effort rollback
+        }
+    }
+}
+
+function clearImportLocalStorage(): void {
+    for (const key of LOCAL_STORAGE_KEYS) {
+        try {
+            localStorage.removeItem(key);
+        } catch {
+            throw new Error(`localStorage 清空失败: ${key}`);
+        }
+    }
 }
 
 /**
@@ -344,7 +466,7 @@ export async function exportAllData(onProgress?: ProgressCallback, appVersion: s
     files['metadata.json'] = jsonToU8({
         version: appVersion,
         exportDate: new Date().toISOString(),
-        appName: 'FlyReq Image',
+        appName: 'RKAPI Image',
     });
 
     // 添加 localStorage 数据
@@ -422,34 +544,14 @@ function importLocalStorage(data: unknown): void {
         try {
             localStorage.setItem(key, value);
         } catch {
-            // skip failed localStorage import
+            throw new Error(`localStorage 导入失败: ${key}`);
         }
     }
 }
 
-/**
- * 删除 IndexedDB 数据库
- */
-async function deleteDatabase(name: string): Promise<void> {
-    if (typeof indexedDB === 'undefined') return;
-
-    return new Promise((resolve, reject) => {
-        const request = indexedDB.deleteDatabase(name);
-        request.onsuccess = () => resolve();
-        request.onerror = () => reject(request.error);
-        request.onblocked = () => {
-            // 即使被阻塞也继续，因为可能是其他标签页打开了数据库
-            resolve();
-        };
-    });
-}
-
-/**
- * 导入单个 store 的数据
- */
-async function importStore(db: IDBDatabase, storeName: string, records: BackupRecord[], unzipped: Record<string, Uint8Array>): Promise<void> {
+async function preprocessStoreRecords(storeName: string, records: BackupRecord[], unzipped: Record<string, Uint8Array>): Promise<BackupRecord[]> {
     // 先异步预处理记录：从解压数据提取二进制 / base64 解码
-    const processedRecords = await Promise.all(
+    return Promise.all(
         records.map(async (record) => {
             const processed: BackupRecord = { ...record };
 
@@ -459,9 +561,10 @@ async function importStore(db: IDBDatabase, storeName: string, records: BackupRe
                 // 新格式：_blobRef 对象 → 从解压数据恢复 Blob
                 if (isBlobRef(val)) {
                     const blobData = unzipped[`blobs/${val._blobRef}`];
-                    if (blobData) {
-                        processed[key] = new Blob([blobData as unknown as BlobPart], { type: val._blobMimeType });
+                    if (!blobData) {
+                        throw new Error(`缺少 blob 引用: ${val._blobRef} (${storeName})`);
                     }
+                    processed[key] = new Blob([blobData as unknown as BlobPart], { type: val._blobMimeType });
                     continue;
                 }
 
@@ -479,23 +582,110 @@ async function importStore(db: IDBDatabase, storeName: string, records: BackupRe
             return processed;
         })
     );
+}
 
-    // 再写回 IndexedDB
+async function importDatabaseStores(
+    db: IDBDatabase,
+    storeDataList: Array<{ storeName: string; records: BackupRecord[] }>,
+    unzipped: Record<string, Uint8Array>,
+): Promise<void> {
+    const processedStores = await Promise.all(storeDataList.map(async item => ({
+        storeName: item.storeName,
+        records: await preprocessStoreRecords(item.storeName, item.records, unzipped),
+    })));
+    if (processedStores.length === 0) return;
+
+    await replaceDatabaseStores(db, processedStores);
+}
+
+function replaceDatabaseStores(
+    db: IDBDatabase,
+    storeDataList: Array<{ storeName: string; records: BackupRecord[] }>,
+): Promise<void> {
+    if (storeDataList.length === 0) return Promise.resolve();
+
     return new Promise((resolve, reject) => {
         try {
-            const transaction = db.transaction(storeName, 'readwrite');
-            const store = transaction.objectStore(storeName);
-
-            for (const processedRecord of processedRecords) {
-                store.put(processedRecord);
+            const transaction = db.transaction(storeDataList.map(item => item.storeName), 'readwrite');
+            for (const item of storeDataList) {
+                const store = transaction.objectStore(item.storeName);
+                store.clear();
+                for (const record of item.records) {
+                    store.put(record);
+                }
             }
-
             transaction.oncomplete = () => resolve();
             transaction.onerror = () => reject(transaction.error);
         } catch (error) {
             reject(error);
         }
     });
+}
+
+function readStoreRecords(db: IDBDatabase, storeName: string): Promise<BackupRecord[]> {
+    return new Promise((resolve, reject) => {
+        try {
+            const transaction = db.transaction(storeName, 'readonly');
+            const store = transaction.objectStore(storeName);
+            const request = store.getAll();
+            request.onsuccess = () => resolve((request.result as BackupRecord[]) || []);
+            request.onerror = () => reject(request.error);
+        } catch (error) {
+            reject(error);
+        }
+    });
+}
+
+async function snapshotIndexedDBStores(data: IndexedDBBackup): Promise<IndexedDBSnapshot[]> {
+    const snapshots: IndexedDBSnapshot[] = [];
+
+    for (const dbConfig of INDEXEDDB_DATABASES) {
+        const dbData = data[dbConfig.name];
+        if (!dbData) continue;
+
+        const db = await openDatabase(dbConfig.name, dbConfig.version, true);
+        if (!db) {
+            throw new Error(`无法打开 IndexedDB 数据库 ${dbConfig.name}`);
+        }
+
+        try {
+            const stores: IndexedDBStoreSnapshot[] = [];
+            for (const storeName of dbConfig.stores) {
+                const incomingRecords = dbData[storeName];
+                if (!Array.isArray(incomingRecords)) continue;
+
+                if (!db.objectStoreNames.contains(storeName)) {
+                    throw new Error(`IndexedDB 数据库 ${dbConfig.name} 缺少 store: ${storeName}`);
+                }
+
+                stores.push({
+                    storeName,
+                    records: await readStoreRecords(db, storeName),
+                });
+            }
+
+            if (stores.length > 0) {
+                snapshots.push({ name: dbConfig.name, version: dbConfig.version, stores });
+            }
+        } finally {
+            db.close();
+        }
+    }
+
+    return snapshots;
+}
+
+async function restoreIndexedDBSnapshots(snapshots: IndexedDBSnapshot[]): Promise<void> {
+    for (const snapshot of snapshots) {
+        const db = await openDatabase(snapshot.name, snapshot.version, true);
+        if (!db) continue;
+
+        try {
+            await replaceDatabaseStores(db, snapshot.stores);
+        } finally {
+            db.close();
+        }
+    }
 }
 
 /**
@@ -509,53 +699,46 @@ async function importIndexedDB(data: IndexedDBBackup, unzipped: Record<string, U
         const dbData = data[dbConfig.name];
         if (!dbData) continue;
 
-        // 先删除整个数据库，确保重新创建
-        await deleteDatabase(dbConfig.name);
-
-        // 重新打开数据库并导入数据（createStores=true 以便创建 stores）
         const db = await openDatabase(dbConfig.name, dbConfig.version, true);
         if (!db) {
-            continue;
+            throw new Error(`无法打开 IndexedDB 数据库 ${dbConfig.name}`);
         }
 
-        for (const storeName of dbConfig.stores) {
-            try {
+        try {
+            const storeDataList: Array<{ storeName: string; records: BackupRecord[] }> = [];
+            for (const storeName of dbConfig.stores) {
                 const storeData = dbData[storeName];
                 if (!storeData || !Array.isArray(storeData)) continue;
 
                 if (!db.objectStoreNames.contains(storeName)) {
-                    continue;
+                    throw new Error(`IndexedDB 数据库 ${dbConfig.name} 缺少 store: ${storeName}`);
                 }
 
-                await importStore(db, storeName, storeData, unzipped);
+                storeDataList.push({ storeName, records: storeData });
+            }
 
+            await importDatabaseStores(db, storeDataList, unzipped);
+
+            for (const item of storeDataList) {
                 completedStores++;
                 if (onProgress) {
-                    const percent = 20 + Math.floor((completedStores / totalStores) * 70);
+                    const percent = totalStores > 0 ? 20 + Math.floor((completedStores / totalStores) * 70) : 90;
                     onProgress({
                         percent,
-                        message: `正在导入 ${dbConfig.name}/${storeName}...`,
+                        message: `正在导入 ${dbConfig.name}/${item.storeName}...`,
                     });
                 }
-            } catch {
-                // store import failed, continue with next
             }
+        } finally {
+            db.close();
         }
-
-        db.close();
     }
 }
-
-/**
- * 从 ZIP 文件导入所有数据（覆盖现有数据）
- * 使用 fflate 解压，兼容新版和旧版（JSZip 生成的）备份格式
- */
 export async function importAllData(file: File, onProgress?: ProgressCallback): Promise<void> {
     if (onProgress) {
         onProgress({ percent: 0, message: '开始导入数据...' });
     }
 
-    // 解压 ZIP 文件
     if (onProgress) {
         onProgress({ percent: 5, message: '正在解压文件...' });
     }
@@ -563,7 +746,6 @@ export async function importAllData(file: File, onProgress?: ProgressCallback): 
     const buffer = await file.arrayBuffer();
     const unzipped = unzipSync(new Uint8Array(buffer));
 
-    // 辅助：从解压结果读取文本
     const readText = (path: string): string | null => {
         const data = unzipped[path];
         return data ? new TextDecoder().decode(data) : null;
@@ -571,69 +753,71 @@ export async function importAllData(file: File, onProgress?: ProgressCallback): 
 
     const metadataText = readText('metadata.json');
     if (metadataText) {
-        const metadata = JSON.parse(metadataText) as Record<string, unknown>;
+        const metadata = parseJsonText<Record<string, unknown>>(metadataText, 'metadata.json');
         if (metadata.incremental === true) {
             throw new Error('不支持导入非完整备份文件，请选择完整备份文件');
         }
     }
 
-    // 读取 localStorage 数据
-    if (onProgress) {
-        onProgress({ percent: 10, message: '正在清空 localStorage...' });
-    }
-
-    // 清空现有 localStorage
-    for (const key of LOCAL_STORAGE_KEYS) {
-        try {
-            localStorage.removeItem(key);
-        } catch {
-            // skip failed localStorage removal
-        }
-    }
-
-    if (onProgress) {
-        onProgress({ percent: 15, message: '正在导入 localStorage...' });
-    }
-
-    const localStorageText = readText('localStorage.json');
-    if (localStorageText) {
-        const localStorageData = JSON.parse(localStorageText);
-        importLocalStorage(localStorageData);
-    }
-
-    // 读取 IndexedDB 数据
+    const localStorageData = readText('localStorage.json');
+    const parsedLocalStorageData = localStorageData ? parseJsonText<Record<string, unknown>>(localStorageData, 'localStorage.json') : null;
     const indexedDBData: IndexedDBBackup = {};
     for (const [path, data] of Object.entries(unzipped)) {
         if (path.startsWith('indexedDB/') && path.endsWith('.json')) {
             const dbName = path.replace('indexedDB/', '').replace('.json', '');
-            indexedDBData[dbName] = JSON.parse(new TextDecoder().decode(data));
+            indexedDBData[dbName] = parseJsonText<DatabaseBackup>(new TextDecoder().decode(data), path);
         }
     }
 
-    // 导入 IndexedDB
-    await importIndexedDB(indexedDBData, unzipped, onProgress);
-
-    // 读取并导入 localforage（无限画布）数据
-    if (onProgress) {
-        onProgress({ percent: 92, message: '正在导入无限画布数据...' });
-    }
     const localForageData: LocalForageBackup = {};
     for (const [path, data] of Object.entries(unzipped)) {
         if (path.startsWith('localforage/') && path.endsWith('.json')) {
             const dbName = path.replace('localforage/', '').replace('.json', '');
-            localForageData[dbName] = JSON.parse(new TextDecoder().decode(data));
+            localForageData[dbName] = parseJsonText<Record<string, LocalForageEntry[]>>(new TextDecoder().decode(data), path);
         }
     }
-    await importLocalForage(localForageData, unzipped);
+
+    assertBlobRefsExist(indexedDBData, unzipped, 'indexedDB');
+    assertBlobRefsExist(localForageData, unzipped, 'localforage');
+    const localStorageSnapshot = snapshotLocalStorage();
+    const localForageSnapshots = await snapshotLocalForageStores(localForageData);
+    const indexedDBSnapshots = await snapshotIndexedDBStores(indexedDBData);
+
+    try {
+        if (onProgress) {
+            onProgress({ percent: 12, message: '正在导入 localforage 数据...' });
+        }
+        await importLocalForage(localForageData, unzipped, localForageSnapshots);
+
+        if (onProgress) {
+            onProgress({ percent: 20, message: '正在导入 IndexedDB...' });
+        }
+        await importIndexedDB(indexedDBData, unzipped, onProgress);
+
+        if (onProgress) {
+            onProgress({ percent: 96, message: '正在清空 localStorage...' });
+        }
+
+        clearImportLocalStorage();
+
+        if (onProgress) {
+            onProgress({ percent: 98, message: '正在导入 localStorage...' });
+        }
+
+        if (parsedLocalStorageData) {
+            importLocalStorage(parsedLocalStorageData);
+        }
+    } catch (error) {
+        await restoreLocalForageSnapshots(localForageSnapshots).catch(() => undefined);
+        await restoreIndexedDBSnapshots(indexedDBSnapshots).catch(() => undefined);
+        restoreLocalStorageSnapshot(localStorageSnapshot);
+        throw error;
+    }
 
     if (onProgress) {
-        onProgress({ percent: 100, message: '导入完成！' });
+        onProgress({ percent: 100, message: '导入完成。' });
     }
 }
-
-/**
- * 下载 Blob 为文件
- */
 export function downloadBlob(blob: Blob, filename: string): void {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -653,5 +837,5 @@ export function generateBackupFilename(): string {
     const now = new Date();
     const dateStr = now.toISOString().split('T')[0];
     const timeStr = now.toTimeString().split(' ')[0].replace(/:/g, '-');
-    return `flyreq-backup-${dateStr}-${timeStr}.zip`;
+    return `rkapi-backup-${dateStr}-${timeStr}.zip`;
 }

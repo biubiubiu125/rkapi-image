@@ -1,8 +1,6 @@
-// 反推提示词的前端直连流式客户端
-// 根据模型分发：
-//   - gpt-5.4-mini          → POST /v1/responses          （OpenAI Responses API + reasoning.high）
-//   - gemini-2.5-flash      → POST /v1beta/.../streamGenerateContent?alt=sse （Google 原生流式）
-// 所有请求直接从浏览器发到外部 API（baseUrl 参数指定），不经过我们自己的服务器。
+// 反推提示词的前端流式客户端。
+// 根据模型协议组装请求体，统一提交到后端 /api/flyreq/proxy/text，
+// 后端再固定走 RKAPI 网关并按协议转发到对应上游路径。
 
 import {
   REVERSE_PROMPT_TEMPLATES,

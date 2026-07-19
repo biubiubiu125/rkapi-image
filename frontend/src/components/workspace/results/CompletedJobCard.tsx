@@ -316,8 +316,8 @@ export const CompletedJobCard = memo(function CompletedJobCard({ job, onClear, o
 
   useEffect(() => {
     if (!lazyLoad.isVisible) return;
-    void resolveImageAt(0);
-  }, [lazyLoad.isVisible, resolveImageAt]);
+    void resolveImagesAt(visiblePreviewImages.map((_, index) => index));
+  }, [lazyLoad.isVisible, resolveImagesAt, visiblePreviewImages]);
 
   if (sourceImages.length === 0) {
     return null;

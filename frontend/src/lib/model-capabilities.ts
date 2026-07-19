@@ -3,6 +3,7 @@ import {
   getDefaultModelId,
   getModelImageLimits,
   getModelOptions,
+  type ImageModelDefaultTask,
   type ModelId,
 } from '@/lib/gemini-config';
 import { getImageModelById, getImageModelOutputSizes, loadRegistry, type ImageModelConfig } from '@/lib/flyreq-models';
@@ -453,8 +454,8 @@ export function getModelDisplayName(model: string): string {
   return getModelOptions().find(option => option.value === model)?.label || getModelConfig(model)?.name || model;
 }
 
-export function normalizeModel(candidate?: string): ModelId {
-  const fallback = getDefaultModelId();
+export function normalizeModel(candidate?: string, task: ImageModelDefaultTask = 'textToImage'): ModelId {
+  const fallback = getDefaultModelId(task);
   if (!candidate) return fallback;
   return getModelOptions().some(option => option.value === candidate)
     ? candidate as ModelId

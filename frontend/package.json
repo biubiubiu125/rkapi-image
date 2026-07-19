@@ -1,12 +1,12 @@
 {
-  "name": "flyreq-image-studio-frontend",
+  "name": "rkapi-image-frontend",
   "version": "1.5.1",
   "private": true,
-  "description": "FlyReq Image 前端 - Next.js 应用",
+  "description": "RKAPI Image 前端 - Next.js 应用",
   "scripts": {
     "dev": "next dev --webpack",
     "build": "next build --webpack",
-    "start": "next start",
+    "start": "npm run build && node -e \"console.log('Static export built to frontend/out. Start production from the repository root with: npm start')\"",
     "lint": "eslint",
     "test": "vitest",
     "test:ui": "vitest --ui",

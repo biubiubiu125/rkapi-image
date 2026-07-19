@@ -9,6 +9,20 @@ function isWaitingJob(job: StoredJob): boolean {
   return job.status === 'processing' || job.status === 'queued' || job.status === '排队中';
 }
 
+function handleCompletedTaskFinalizationError(
+  job: StoredJob,
+  task: FlyreqTaskResponse,
+  actions: SubmitActions,
+  error: unknown,
+) {
+  const message = error instanceof Error ? error.message : String(error);
+  void actions.failJob(job.id, `生成已完成，但本地保存结果失败：${message || '未知错误'}。请点击「查看进度」重新同步。`, {
+    terminal: false,
+    completedAt: task.completedAt,
+    ...getTaskSseMetadata(task),
+  }).catch(() => undefined);
+}
+
 /**
  * 用 WebSocket 替代原有的 HTTP 轮询：
  * - 每个等待中的 serverTaskId 走 flyreqTaskSocket.subscribeTask
@@ -67,9 +81,9 @@ export function useServerTaskPolling(
           // 幂等：重连重订阅或 HTTP 兜底可能重复投递 completed；已完成且已 ack 则跳过，
           // 避免重复下载图片与重复 ack。
           if (currentJob.status === 'completed' && currentJob.serverTaskAcked) return;
-          // finalizeCompletedServerTask 会在内部完成图片入库 + ack；
-          // .catch 兜底下载阶段可能抛出的未处理 rejection。
-          void finalizeCompletedServerTask(currentJob, task, actions).catch(() => { /* 已落库 */ });
+          // finalizeCompletedServerTask 会在内部完成图片入库 + ack。
+          void finalizeCompletedServerTask(currentJob, task, actions)
+            .catch(error => handleCompletedTaskFinalizationError(currentJob, task, actions, error));
           return;
         }
         if (task.status === 'failed' || task.status === 'expired') {
@@ -92,7 +106,7 @@ export function useServerTaskPolling(
           actions.replaceJob(jobId, current => ({ ...current, status: '排队中', created_at: task.createdAt || current.created_at }));
         }
       };
-      const unsubscribe = flyreqTaskSocket.subscribeTask(taskId, handler);
+      const unsubscribe = flyreqTaskSocket.subscribeTask(taskId, job.serverTaskReadToken, handler);
       subscriptions.set(taskId, unsubscribe);
     }
 

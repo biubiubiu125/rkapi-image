@@ -15,19 +15,19 @@ import { dispatchImageActionToast } from '@/lib/image-actions'
 
 const TEST_REGISTRY = {
   imageModels: [{
-    id: 'flyreq-gpt-image-2',
+    id: 'rkapi-4k-image',
     protocol: 'openai',
-    name: 'FlyReq',
+    name: 'RKAPI-4k',
     modelId: 'gpt-image-2',
     apiKey: 'test-api-key',
-    baseUrl: 'https://api.openai.com',
+    baseUrl: 'https://api.rkai6.com',
     builtinPreset: 'gpt-image-2',
     maxRefImages: 16,
     maxOutputSize: '4K',
     supportsAdvancedParams: true,
   }],
   textModels: [],
-  defaults: { textToImage: 'flyreq-gpt-image-2', imageToImage: 'flyreq-gpt-image-2' },
+  defaults: { textToImage: 'rkapi-4k-image', imageToImage: 'rkapi-4k-image' },
 }
 
 /**
@@ -95,7 +95,7 @@ describe('TextToImageForm', () => {
       outputSize: 'auto',
       aspectRatio: 'auto',
       temperature: 1,
-      model: 'flyreq-gpt-image-2',
+      model: 'rkapi-4k-image',
       gptImageQuality: 'auto',
       gptImageStyle: 'auto',
       gptImageBackground: 'auto',
@@ -124,21 +124,21 @@ describe('TextToImageForm', () => {
 
   it('shows image params control for GPT Image 2 model', async () => {
     const onSubmit = vi.fn()
-    await renderForm({ onSubmit, initialData: { model: 'flyreq-gpt-image-2' } })
+    await renderForm({ onSubmit, initialData: { model: 'rkapi-4k-image' } })
 
     expect(await screen.findByTitle('图像参数')).toBeInTheDocument()
   })
 
   it('submits default image params for GPT Image 2 model when left on auto', async () => {
     const onSubmit = vi.fn()
-    await renderForm({ onSubmit, initialData: { model: 'flyreq-gpt-image-2', prompt: 'Cut out the subject' } })
+    await renderForm({ onSubmit, initialData: { model: 'rkapi-4k-image', prompt: 'Cut out the subject' } })
 
     const textarea = screen.getByPlaceholderText('描述你想要生成的图像...')
     await screen.findByTitle('图像参数')
     fireEvent.keyDown(textarea, { key: 'Enter' })
 
     expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({
-      model: 'flyreq-gpt-image-2',
+      model: 'rkapi-4k-image',
       gptImageQuality: 'auto',
       gptImageStyle: 'auto',
       gptImageBackground: 'auto',

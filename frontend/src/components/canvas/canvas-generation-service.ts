@@ -2,10 +2,10 @@
 
 /**
  * 画布生成服务：把节点生成接入【宿主任务队列】（不改后端、不改队列）。
- * 仅使用 host 的 flyreq-task-client（createFlyreqTask / getFlyreqTask / ackFlyreqTask）。
+ * 仅使用 host 的任务链路（createFlyreqTask / getFlyreqTask）。
  * 视频/音频不在范围内；图生图无 mask（队列不支持）。
  */
-import { ackFlyreqTask, createFlyreqTask, getFlyreqTask, resolveImageTaskProvider, type FlyreqTaskResponse, type FlyreqTaskStatus, type ImageReference } from "@/lib/flyreq-task-client";
+import { createFlyreqTask, getFlyreqTask, normalizeFlyreqTaskAccess, resolveImageTaskProvider, type FlyreqTaskAccess, type FlyreqTaskResponse, type FlyreqTaskStatus, type ImageReference } from "@/lib/flyreq-task-client";
 import { normalizeModel } from "@/lib/model-capabilities";
 import { compressReferenceDataUrl } from "./lib/image-utils";
 import { uploadImage } from "./lib/image-storage";
@@ -51,13 +51,13 @@ export async function submitNodeGeneration(args: {
   prompt: string;
   referenceImages: ReferenceImage[];
   config: CanvasGenerationConfig;
-}): Promise<string> {
+}): Promise<FlyreqTaskAccess> {
   const provider = resolveImageTaskProvider(resolveTaskModel(args.config));
   const apiKey = provider.apiKey;
   if (!apiKey) throw new CanvasApiKeyMissingError();
 
   const imageRefs = (await Promise.all(args.referenceImages.map(toImageReference))).filter((ref): ref is ImageReference => ref !== null);
-  const taskId = await createFlyreqTask({
+  return normalizeFlyreqTaskAccess(await createFlyreqTask({
     apiKey,
     baseUrl: provider.baseUrl,
     protocol: provider.protocol,
@@ -75,28 +75,27 @@ export async function submitNodeGeneration(args: {
     streamImages: provider.streamImages,
     parallelCount: 1,
     images: imageRefs,
-  });
-  return taskId;
+  }));
 }
 
 /** 轮询单个任务直到终态；通过 onStatus 回调实时通知调用方。 */
 export async function pollNodeTask(
   taskId: string,
+  readToken: string | undefined,
   onStatus: (status: FlyreqTaskStatus) => void,
   signal?: AbortSignal,
 ): Promise<CanvasGeneratedImage[]> {
   const deadline = Date.now() + MAX_WAIT_MS;
   for (;;) {
     if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
-    const task = await getFlyreqTask(taskId);
+    const task = await getFlyreqTask(taskId, readToken);
     onStatus(task.status);
     if (task.status === "completed" || task.status === "failed" || task.status === "expired") {
       const images = task.result?.images || [];
       if (task.status !== "completed" || images.length === 0) {
         throw new Error(task.error || (task.status === "expired" ? "该任务已超出取回时间" : "生成失败"));
       }
-      const stored = (await Promise.all(images.map(storeResultImage))).filter((item): item is CanvasGeneratedImage => Boolean(item));
-      void ackFlyreqTask(taskId);
+      const stored = await storeCompletedImages(images);
       if (stored.length === 0) throw new Error("生成结果保存失败");
       return stored;
     }
@@ -106,11 +105,14 @@ export async function pollNodeTask(
 }
 
 /** 检查已有任务的当前状态（用于刷新页面后恢复进行中的任务）。 */
-export async function checkExistingTask(taskId: string): Promise<{ status: FlyreqTaskResponse["status"]; images?: CanvasGeneratedImage[]; error?: string }> {
-  const task = await getFlyreqTask(taskId);
-  if (task.status === "completed" && task.result?.images?.length) {
-    const stored = (await Promise.all(task.result.images.map(storeResultImage))).filter((item): item is CanvasGeneratedImage => Boolean(item));
-    void ackFlyreqTask(taskId);
+export async function checkExistingTask(taskId: string, readToken?: string): Promise<{ status: FlyreqTaskResponse["status"]; images?: CanvasGeneratedImage[]; error?: string }> {
+  const task = await getFlyreqTask(taskId, readToken);
+  if (task.status === "completed") {
+    const images = task.result?.images || [];
+    const stored = images.length > 0 ? await storeCompletedImages(images) : [];
+    if (stored.length === 0) {
+      return { status: "failed", error: "生成结果保存失败" };
+    }
     return { status: "completed", images: stored };
   }
   if (task.status === "failed" || task.status === "expired") {
@@ -135,7 +137,7 @@ export async function generateCanvasImages(args: {
   if (!apiKey) throw new CanvasApiKeyMissingError();
 
   const imageRefs = (await Promise.all(args.referenceImages.map(toImageReference))).filter((ref): ref is ImageReference => ref !== null);
-  const taskId = await createFlyreqTask({
+  const taskAccess = normalizeFlyreqTaskAccess(await createFlyreqTask({
     apiKey,
     baseUrl: provider.baseUrl,
     protocol: provider.protocol,
@@ -153,13 +155,18 @@ export async function generateCanvasImages(args: {
     streamImages: provider.streamImages,
     parallelCount: args.config.count,
     images: imageRefs,
-  });
+  }));
 
-  const images = await pollNodeTask(taskId, (s) => args.onStatus?.(s), args.signal);
+  const images = await pollNodeTask(taskAccess.taskId, taskAccess.readToken, (s) => args.onStatus?.(s), args.signal);
   return images;
 }
 
 /** 结果可能是 data URL 或 `URL:/api/flyreq/images/...`；统一下载为 blob 存入本地 IndexedDB。 */
+async function storeCompletedImages(images: string[]): Promise<CanvasGeneratedImage[]> {
+  const stored = (await Promise.all(images.map(storeResultImage))).filter((item): item is CanvasGeneratedImage => Boolean(item));
+  return stored.length === images.length ? stored : [];
+}
+
 async function storeResultImage(image: string): Promise<CanvasGeneratedImage | null> {
   const realUrl = image.startsWith("URL:") ? image.slice(4) : image;
   if (!realUrl) return null;

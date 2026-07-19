@@ -55,6 +55,7 @@ class FlyreqTaskSocket {
   private reconnectAttempt = 0;
   private consecutiveFailures = 0;
   private taskHandlers = new Map<string, Set<TaskUpdateHandler>>();
+  private taskReadTokens = new Map<string, string>();
   private queueHandlers = new Set<QueueUpdateHandler>();
   private fallbackTimer: ReturnType<typeof setInterval> | null = null;
   private fallbackInFlight = false;
@@ -74,7 +75,13 @@ class FlyreqTaskSocket {
     this.connect();
   }
 
-  subscribeTask(taskId: string, handler: TaskUpdateHandler): () => void {
+  subscribeTask(taskId: string, handler: TaskUpdateHandler): () => void;
+  subscribeTask(taskId: string, readToken: string | undefined, handler: TaskUpdateHandler): () => void;
+  subscribeTask(taskId: string, readTokenOrHandler: string | TaskUpdateHandler | undefined, maybeHandler?: TaskUpdateHandler): () => void {
+    const readToken = typeof readTokenOrHandler === 'function' ? undefined : readTokenOrHandler;
+    const handler = typeof readTokenOrHandler === 'function' ? readTokenOrHandler : maybeHandler;
+    if (!handler) return () => undefined;
+    if (readToken) this.taskReadTokens.set(taskId, readToken);
     let set = this.taskHandlers.get(taskId);
     if (!set) {
       set = new Set();
@@ -86,7 +93,7 @@ class FlyreqTaskSocket {
       // socket 不可用时，立即拉一次以便回填初始状态
       this.fetchTaskOnce(taskId);
     } else if (this.ws?.readyState === WebSocket.OPEN) {
-      this.send({ type: 'subscribeTasks', taskIds: [taskId] });
+      this.send({ type: 'subscribeTasks', tasks: this.buildTaskSubscriptions([taskId]) });
     }
     return () => this.unsubscribeTask(taskId, handler);
   }
@@ -120,6 +127,7 @@ class FlyreqTaskSocket {
     set.delete(handler);
     if (set.size === 0) {
       this.taskHandlers.delete(taskId);
+      this.taskReadTokens.delete(taskId);
       if (this.ws?.readyState === WebSocket.OPEN) {
         this.send({ type: 'unsubscribeTasks', taskIds: [taskId] });
       }
@@ -199,7 +207,7 @@ class FlyreqTaskSocket {
       // 重新订阅
       const taskIds = Array.from(this.taskHandlers.keys());
       if (taskIds.length > 0) {
-        this.send({ type: 'subscribeTasks', taskIds });
+        this.send({ type: 'subscribeTasks', tasks: this.buildTaskSubscriptions(taskIds) });
       }
       if (this.queueHandlers.size > 0) {
         this.send({ type: 'subscribeQueue' });
@@ -302,6 +310,13 @@ class FlyreqTaskSocket {
     }
   }
 
+  private buildTaskSubscriptions(taskIds: string[]): Array<{ id: string; readToken?: string }> {
+    return taskIds.map(id => ({
+      id,
+      readToken: this.taskReadTokens.get(id),
+    }));
+  }
+
   private handleServerMessage(message: ServerMessage | null): void {
     if (!message || typeof message.type !== 'string') return;
     if (message.type === 'pong') {
@@ -367,7 +382,7 @@ class FlyreqTaskSocket {
 
   private async fetchTaskOnce(taskId: string): Promise<void> {
     try {
-      const task = await getFlyreqTask(taskId);
+      const task = await getFlyreqTask(taskId, this.taskReadTokens.get(taskId));
       const handlers = this.taskHandlers.get(taskId);
       if (!handlers) return;
       for (const handler of handlers) {

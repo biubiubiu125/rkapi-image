@@ -16,6 +16,7 @@ import { AgentAssetPickerDialog, AgentTextAssetPickerDialog } from '@/components
 import { ConfirmDialog } from '@/components/workspace/dialogs/ConfirmDialog';
 import { usePromptOptimizeSetting } from '@/hooks/usePromptOptimizeSetting';
 import { useImageModelDefaultRefresh } from '@/hooks/useImageModelDefaultRefresh';
+import { useModelRegistryRefresh } from '@/hooks/useModelRegistryRefresh';
 import { streamPromptOptimize, type StreamPromptOptimizeHandle } from '@/lib/prompt-optimize-client';
 import { requireDefaultConfiguredTextModel } from '@/lib/model-endpoints';
 import { addTextAsset, getAssetBlob, type ImageAsset, type TextAsset } from '@/lib/asset-store';
@@ -53,6 +54,7 @@ import { prepareUploadImage, getOptimizationBadge } from '@/lib/upload-image-cac
 import { MAX_UPLOAD_SIZE_BYTES } from '@/lib/constants';
 import { dispatchImageActionToast } from '@/lib/image-actions';
 import { loadJsonFromStorage, saveJsonToStorage } from '@/lib/settings-storage';
+import { getCompleteImageModels, loadRegistry } from '@/lib/flyreq-models';
 import type { RefImageData, OutputSize, AspectRatio } from '@/lib/job-store';
 import type { ImageFormSettings } from '@/lib/form-settings';
 
@@ -61,6 +63,10 @@ const I2I_SETTINGS_KEY = 'flyreq-i2i-settings';
 const MAX_ASSET_IMPORTS = 5;
 
 type I2ISettings = ImageFormSettings;
+
+function isCompleteSelectedImageModel(modelId: ModelId): boolean {
+  return getCompleteImageModels(loadRegistry()).some((model) => model.id === modelId);
+}
 
 interface UploadedFile {
   id: string;
@@ -121,10 +127,10 @@ export function ImageToImageForm({
   const [prompt, setPrompt] = useState('');
   const [pendingFiles, setPendingFiles] = useState<UploadedFile[]>([]);
 
-  const disabledMessage = '请先在设置中配置 FlyReq API 密钥，配置完成后即可开始转换图片。';
+  const disabledMessage = '请先在设置中配置 RKAPI API 密钥，配置完成后即可开始转换图片。';
 
   // 先使用稳定默认值，避免 SSR/CSR 首帧不一致；挂载后再恢复缓存
-  const [model, setModel] = useState<ModelId>(() => getDefaultModelId());
+  const [model, setModel] = useState<ModelId>(() => getDefaultModelId('imageToImage'));
   const [outputSize, setOutputSize] = useState<OutputSize>('1K');
   const [customSize, setCustomSize] = useState<string | undefined>(undefined);
   const [temperature, setTemperature] = useState<number>(1);
@@ -160,6 +166,7 @@ export function ImageToImageForm({
   const optimizeHandleRef = useRef<StreamPromptOptimizeHandle | null>(null);
   const { enabled: promptOptimizeEnabled } = usePromptOptimizeSetting();
   const imageModelDefaultRefreshVersion = useImageModelDefaultRefresh();
+  const modelRegistryRefreshVersion = useModelRegistryRefresh();
 
   const handleOptimize = useCallback(() => {
     if (!prompt.trim()) return;
@@ -291,7 +298,7 @@ export function ImageToImageForm({
 
     const saved = loadJsonFromStorage<I2ISettings>(I2I_SETTINGS_KEY);
 
-    const nextModel = normalizeModel(useInitial && initialData?.model ? initialData.model : saved.model);
+    const nextModel = normalizeModel(useInitial && initialData?.model ? initialData.model : saved.model, 'imageToImage');
     const validSizes = getValidOutputSizes(nextModel);
     const nextOutputSize: OutputSize = useInitial && initialData?.outputSize && validSizes.includes(initialData.outputSize)
       ? initialData.outputSize
@@ -343,7 +350,7 @@ export function ImageToImageForm({
     return () => {
       cancelled = true;
     };
-  }, [imageModelDefaultRefreshVersion, initialData]);
+  }, [imageModelDefaultRefreshVersion, modelRegistryRefreshVersion, initialData]);
 
   // 保存设置到缓存
   useEffect(() => {
@@ -364,7 +371,7 @@ export function ImageToImageForm({
 
   const handleSubmit = () => {
     if (prompt.trim() && pendingFiles.length > 0) {
-      if (!model) {
+      if (!model || !isCompleteSelectedImageModel(model)) {
         dispatchImageActionToast('请先选择图片模型，或在设置中配置可用的图片模型。', 'error');
         return;
       }

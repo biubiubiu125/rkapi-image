@@ -1,4 +1,11 @@
-import { getResolvedImageModelId, type BuiltinImagePresetId, type ImageModelConfig, type ImageOutputSize, type ProviderProtocol } from '@/lib/flyreq-models';
+import {
+  getResolvedImageModelId,
+  RKAPI_DEFAULT_IMAGE_4K_ID,
+  type BuiltinImagePresetId,
+  type ImageModelConfig,
+  type ImageOutputSize,
+  type ProviderProtocol,
+} from '@/lib/flyreq-models';
 
 export type ExternalModelConfig = {
   type: 'image';
@@ -8,7 +15,6 @@ export type ExternalModelConfig = {
   name?: string;
   modelId?: string;
   baseUrl?: string;
-  apiKey?: string;
   maxRefImages?: number;
   maxOutputSize?: ImageOutputSize;
   /** 是否允许向 Google 图片接口发送温度参数。 */
@@ -18,6 +24,19 @@ export type ExternalModelConfig = {
 
 const CONFIG_QUERY_KEYS = new Set([
   'provider',
+  'configureModel',
+  'type',
+  'preset',
+  'protocol',
+  'modelKey',
+  'name',
+  'modelId',
+  'baseUrl',
+  'apiKey',
+  'maxRefImages',
+  'maxOutputSize',
+  'supportsTemperature',
+  'streamImages',
 ]);
 
 function normalizePreset(value: string | null): BuiltinImagePresetId | undefined {
@@ -88,7 +107,6 @@ function normalizeProviderPayload(payload: Record<string, unknown>): ExternalMod
     name: readString(payload.name),
     modelId: readString(payload.modelId),
     baseUrl: readString(payload.baseUrl),
-    apiKey: readString(payload.apiKey),
     maxRefImages: readNumber(payload.maxRefImages),
     maxOutputSize: normalizeOutputSize(readString(payload.maxOutputSize) || null),
     supportsTemperature: readBoolean(payload.supportsTemperature),
@@ -116,7 +134,6 @@ export function parseExternalModelConfig(url: URL): ExternalModelConfig | null {
     name: readTrimmed(url.searchParams, 'name'),
     modelId: readTrimmed(url.searchParams, 'modelId'),
     baseUrl: readTrimmed(url.searchParams, 'baseUrl'),
-    apiKey: readTrimmed(url.searchParams, 'apiKey'),
     maxRefImages,
     maxOutputSize: normalizeOutputSize(url.searchParams.get('maxOutputSize')),
     supportsTemperature: readBoolean(url.searchParams.get('supportsTemperature') ?? undefined),
@@ -139,14 +156,23 @@ export function getExternalImageModelMatch(models: ImageModelConfig[], config: E
     if (byKey) return byKey;
   }
 
-  const name = config.name?.trim().toLowerCase();
   const modelId = (config.modelId || (config.preset === 'gpt-image-2' ? 'gpt-image-2' : '')).trim().toLowerCase();
-  const baseUrl = config.baseUrl?.trim().replace(/\/+$/, '').toLowerCase();
-  if (!name || !modelId || !baseUrl) return undefined;
+  if (!modelId) return undefined;
+  const name = String(config.name || '').trim().toLowerCase();
 
-  return models.find((model) => (
-    model.name.trim().toLowerCase() === name
-    && getResolvedImageModelId(model).toLowerCase() === modelId
-    && model.baseUrl.trim().replace(/\/+$/, '').toLowerCase() === baseUrl
+  if (name) {
+    const byName = models.find((model) => (
+      model.name.trim().toLowerCase() === name
+      && getResolvedImageModelId(model).toLowerCase() === modelId
+      && (!config.protocol || model.protocol === config.protocol)
+    ));
+    if (byName) return byName;
+  }
+
+  const matches = models.filter((model) => (
+    getResolvedImageModelId(model).toLowerCase() === modelId
+    && (!config.protocol || model.protocol === config.protocol)
   ));
+  if (matches.length <= 1) return matches[0];
+  return matches.find((model) => model.id === RKAPI_DEFAULT_IMAGE_4K_ID) || matches[0];
 }

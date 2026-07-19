@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowUp,
   Check,
@@ -44,6 +44,7 @@ import {
 
 import { MAX_UPLOAD_SIZE_BYTES } from '@/lib/constants';
 import { loadJsonFromStorage, saveJsonToStorage } from '@/lib/settings-storage';
+import { useModelRegistryRefresh } from '@/hooks/useModelRegistryRefresh';
 
 const REVERSE_SETTINGS_KEY = 'flyreq-reverse-prompt-settings';
 
@@ -83,6 +84,7 @@ interface ReversePromptFormProps {
 }
 
 export function ReversePromptForm({ wideMode = false, disabled = false, onConfigureApiKey }: ReversePromptFormProps) {
+  const modelRegistryRefreshVersion = useModelRegistryRefresh();
   const [model, setModel] = useState<ReversePromptModelId>(getDefaultReversePromptModelId());
   const [mode, setMode] = useState<ReversePromptMode>(DEFAULT_REVERSE_MODE);
   const [settingsReady, setSettingsReady] = useState(false);
@@ -105,7 +107,10 @@ export function ReversePromptForm({ wideMode = false, disabled = false, onConfig
 
   const streamHandleRef = useRef<StreamReverseHandle | null>(null);
   const formRef = useRef<HTMLDivElement>(null);
-  const reverseModelOptions = getReversePromptModelOptionsList();
+  const reverseModelOptions = useMemo(() => {
+    void modelRegistryRefreshVersion;
+    return getReversePromptModelOptionsList();
+  }, [modelRegistryRefreshVersion]);
   const textModelMissing = reverseModelOptions.length === 0;
   const formDisabled = disabled || textModelMissing;
 
@@ -158,6 +163,21 @@ export function ReversePromptForm({ wideMode = false, disabled = false, onConfig
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    if (!settingsReady) return;
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (cancelled) return;
+      if (reverseModelOptions.length === 0) return;
+      if (reverseModelOptions.some(option => option.value === model)) return;
+      const fallbackModel = getDefaultReversePromptModelId();
+      if (fallbackModel) {
+        setModel(fallbackModel);
+      }
+    });
+    return () => { cancelled = true; };
+  }, [model, reverseModelOptions, settingsReady]);
 
   // 设置变化时持久化
   useEffect(() => {
@@ -406,7 +426,7 @@ export function ReversePromptForm({ wideMode = false, disabled = false, onConfig
               <p className="mt-2 text-sm text-muted-foreground">
                 {textModelMissing
                   ? '请先在设置中完成至少一个文本模型配置，才能使用反推提示词功能。'
-                  : '请先在设置中配置 FlyReq API 密钥，配置完成后即可使用反推提示词功能。'}
+                  : '请先在设置中配置 RKAPI API 密钥，配置完成后即可使用反推提示词功能。'}
               </p>
             </div>
             <Button onClick={() => setMissingApiKeyDialogOpen(true)}>配置</Button>

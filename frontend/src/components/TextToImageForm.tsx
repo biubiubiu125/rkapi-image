@@ -15,6 +15,7 @@ import { GenerationParamsBar, type GenerationParamsValue } from '@/components/Ge
 import { ConfirmDialog } from '@/components/workspace/dialogs/ConfirmDialog';
 import { usePromptOptimizeSetting } from '@/hooks/usePromptOptimizeSetting';
 import { useImageModelDefaultRefresh } from '@/hooks/useImageModelDefaultRefresh';
+import { useModelRegistryRefresh } from '@/hooks/useModelRegistryRefresh';
 import { getEffectivePromptSubmissionShortcutLabels, usePromptSubmissionShortcut } from '@/hooks/usePromptSubmissionShortcut';
 import { PromptSubmissionShortcutMenu } from '@/components/PromptSubmissionShortcutMenu';
 import { addTextAsset, type TextAsset } from '@/lib/asset-store';
@@ -23,6 +24,7 @@ import { streamPromptOptimize, type StreamPromptOptimizeHandle } from '@/lib/pro
 import { loadJsonFromStorage, saveJsonToStorage } from '@/lib/settings-storage';
 import { requireDefaultConfiguredTextModel } from '@/lib/model-endpoints';
 import { getDefaultModelId, type ModelId } from '@/lib/gemini-config';
+import { getCompleteImageModels, loadRegistry } from '@/lib/flyreq-models';
 import {
   getAspectRatioOptions,
   getCustomSizeMaxSide,
@@ -73,13 +75,17 @@ const T2I_SETTINGS_KEY = 'flyreq-t2i-settings';
 
 type T2ISettings = ImageFormSettings;
 
+function isCompleteSelectedImageModel(modelId: ModelId): boolean {
+  return getCompleteImageModels(loadRegistry()).some((model) => model.id === modelId);
+}
+
 export function TextToImageForm({ onSubmit, disabled = false, onDraftConsumed, onConfigureApiKey, initialData }: TextToImageFormProps) {
   const [prompt, setPrompt] = useState('');
   const [queue, setQueue] = useState<QueuedPrompt[]>([]);
 
-  const disabledMessage = '请先在设置中配置 FlyReq API 密钥，配置完成后即可开始生成图片。';
+  const disabledMessage = '请先在设置中配置 RKAPI API 密钥，配置完成后即可开始生成图片。';
 
-  const [model, setModel] = useState<ModelId>(() => getDefaultModelId());
+  const [model, setModel] = useState<ModelId>(() => getDefaultModelId('textToImage'));
   const [outputSize, setOutputSize] = useState<OutputSize>('1K');
   const [customSize, setCustomSize] = useState<string | undefined>(undefined);
   const [aspectRatio, setAspectRatio] = useState<AspectRatio>('1:1');
@@ -103,6 +109,7 @@ export function TextToImageForm({ onSubmit, disabled = false, onDraftConsumed, o
   const optimizeHandleRef = useRef<StreamPromptOptimizeHandle | null>(null);
   const { enabled: promptOptimizeEnabled } = usePromptOptimizeSetting();
   const imageModelDefaultRefreshVersion = useImageModelDefaultRefresh();
+  const modelRegistryRefreshVersion = useModelRegistryRefresh();
   const { submissionShortcut, isSmallViewport, updateSubmissionShortcut } = usePromptSubmissionShortcut();
   const shortcutLabels = getEffectivePromptSubmissionShortcutLabels(submissionShortcut, isSmallViewport);
 
@@ -182,7 +189,7 @@ export function TextToImageForm({ onSubmit, disabled = false, onDraftConsumed, o
     const useInitial = initialData ? true : false;
     const saved = loadJsonFromStorage<T2ISettings>(T2I_SETTINGS_KEY);
 
-    const nextModel = normalizeModel(useInitial && initialData?.model ? initialData.model : saved.model);
+    const nextModel = normalizeModel(useInitial && initialData?.model ? initialData.model : saved.model, 'textToImage');
     const validSizes = getValidOutputSizes(nextModel);
     const nextOutputSize: OutputSize = useInitial && initialData?.outputSize && validSizes.includes(initialData.outputSize)
       ? initialData.outputSize
@@ -219,7 +226,7 @@ export function TextToImageForm({ onSubmit, disabled = false, onDraftConsumed, o
 
       setSettingsReady(true);
     });
-  }, [imageModelDefaultRefreshVersion, initialData]);
+  }, [imageModelDefaultRefreshVersion, modelRegistryRefreshVersion, initialData]);
 
   // 保存设置到缓存
   useEffect(() => {
@@ -248,7 +255,7 @@ export function TextToImageForm({ onSubmit, disabled = false, onDraftConsumed, o
       : queue;
 
     if (finalQueue.length > 0) {
-      if (!model) {
+      if (!model || !isCompleteSelectedImageModel(model)) {
         dispatchImageActionToast('请先选择图片模型，或在设置中配置可用的图片模型。', 'error');
         return;
       }

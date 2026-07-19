@@ -75,13 +75,18 @@ export async function loadAgentSession(): Promise<AgentSessionSnapshot> {
 
 export async function putMessage(message: AgentMessage): Promise<void> {
   const db = await openAgentDB();
-  if (!db) return;
+  if (!db) throw new Error('浏览器本地持久存储不可用');
 
-  return new Promise((resolve) => {
-    const tx = db.transaction(MESSAGES_STORE, 'readwrite');
-    tx.objectStore(MESSAGES_STORE).put(message);
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => resolve();
+  return new Promise((resolve, reject) => {
+    try {
+      const tx = db.transaction(MESSAGES_STORE, 'readwrite');
+      tx.objectStore(MESSAGES_STORE).put(message);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error || new Error('Agent 消息持久化失败'));
+      tx.onabort = () => reject(tx.error || new Error('Agent 消息持久化中止'));
+    } catch (error) {
+      reject(error instanceof Error ? error : new Error(String(error)));
+    }
   });
 }
 
@@ -89,13 +94,18 @@ export async function putMessage(message: AgentMessage): Promise<void> {
 
 export async function putImageRecord(record: AgentImageRecord): Promise<void> {
   const db = await openAgentDB();
-  if (!db) return;
+  if (!db) throw new Error('浏览器本地持久存储不可用');
 
-  return new Promise((resolve) => {
-    const tx = db.transaction(IMAGES_STORE, 'readwrite');
-    tx.objectStore(IMAGES_STORE).put(record);
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => resolve();
+  return new Promise((resolve, reject) => {
+    try {
+      const tx = db.transaction(IMAGES_STORE, 'readwrite');
+      tx.objectStore(IMAGES_STORE).put(record);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error || new Error('Agent 图片记录持久化失败'));
+      tx.onabort = () => reject(tx.error || new Error('Agent 图片记录持久化中止'));
+    } catch (error) {
+      reject(error instanceof Error ? error : new Error(String(error)));
+    }
   });
 }
 
@@ -180,13 +190,18 @@ const PENDING_PROPOSAL_KEY = 'pendingProposal';
 
 export async function savePendingProposal(data: PendingProposalData): Promise<void> {
   const db = await openAgentDB();
-  if (!db) return;
+  if (!db) throw new Error('浏览器本地持久存储不可用');
 
-  return new Promise((resolve) => {
-    const tx = db.transaction(META_STORE, 'readwrite');
-    tx.objectStore(META_STORE).put({ key: PENDING_PROPOSAL_KEY, value: JSON.stringify(data) });
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => resolve();
+  return new Promise((resolve, reject) => {
+    try {
+      const tx = db.transaction(META_STORE, 'readwrite');
+      tx.objectStore(META_STORE).put({ key: PENDING_PROPOSAL_KEY, value: JSON.stringify(data) });
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error || new Error('Agent 提案恢复状态持久化失败'));
+      tx.onabort = () => reject(tx.error || new Error('Agent 提案恢复状态持久化中止'));
+    } catch (error) {
+      reject(error instanceof Error ? error : new Error(String(error)));
+    }
   });
 }
 
@@ -228,6 +243,7 @@ export async function clearPendingProposal(): Promise<void> {
 
 export interface PendingGenerationData {
   taskId: string;
+  taskReadToken?: string;
   proposal: AgentProposal;
   pendingAnalysis: string;
   pendingReasoning: string;
@@ -246,40 +262,93 @@ export interface PendingGenerationData {
 }
 
 const PENDING_GENERATION_KEY = 'pendingGeneration';
+const PENDING_GENERATION_FALLBACK_KEY = 'flyreq-agent-pending-generation';
+
+function savePendingGenerationFallback(data: PendingGenerationData): boolean {
+  if (typeof window === 'undefined') return false;
+  try {
+    window.localStorage.setItem(PENDING_GENERATION_FALLBACK_KEY, JSON.stringify(data));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function loadPendingGenerationFallback(): PendingGenerationData | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = window.localStorage.getItem(PENDING_GENERATION_FALLBACK_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as PendingGenerationData;
+    return parsed?.taskId ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function clearPendingGenerationFallback(): void {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.removeItem(PENDING_GENERATION_FALLBACK_KEY);
+  } catch {
+    // ignore fallback cleanup failures
+  }
+}
 
 export async function savePendingGeneration(data: PendingGenerationData): Promise<void> {
   const db = await openAgentDB();
-  if (!db) return;
+  if (!db) {
+    if (savePendingGenerationFallback(data)) return;
+    throw new Error('浏览器本地持久存储不可用');
+  }
 
-  return new Promise((resolve) => {
-    const tx = db.transaction(META_STORE, 'readwrite');
-    tx.objectStore(META_STORE).put({ key: PENDING_GENERATION_KEY, value: JSON.stringify(data) });
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => resolve();
+  return new Promise((resolve, reject) => {
+    const rejectOrFallback = (error: unknown) => {
+      if (savePendingGenerationFallback(data)) {
+        resolve();
+        return;
+      }
+      reject(error instanceof Error ? error : new Error(String(error)));
+    };
+
+    try {
+      const tx = db.transaction(META_STORE, 'readwrite');
+      tx.objectStore(META_STORE).put({ key: PENDING_GENERATION_KEY, value: JSON.stringify(data) });
+      tx.oncomplete = () => {
+        clearPendingGenerationFallback();
+        resolve();
+      };
+      tx.onerror = () => rejectOrFallback(tx.error || new Error('Agent 生图恢复状态持久化失败'));
+      tx.onabort = () => rejectOrFallback(tx.error || new Error('Agent 生图恢复状态持久化中止'));
+    } catch (error) {
+      rejectOrFallback(error);
+    }
   });
 }
 
 export async function loadPendingGeneration(): Promise<PendingGenerationData | null> {
   const db = await openAgentDB();
-  if (!db) return null;
+  if (!db) return loadPendingGenerationFallback();
 
   return new Promise((resolve) => {
+    const fallback = loadPendingGenerationFallback();
     const tx = db.transaction(META_STORE, 'readonly');
     const req = tx.objectStore(META_STORE).get(PENDING_GENERATION_KEY);
     req.onsuccess = () => {
       const entry = req.result as { key: string; value: string } | undefined;
-      if (!entry?.value) { resolve(null); return; }
+      if (!entry?.value) { resolve(fallback); return; }
       try {
         resolve(JSON.parse(entry.value) as PendingGenerationData);
       } catch {
-        resolve(null);
+        resolve(fallback);
       }
     };
-    req.onerror = () => resolve(null);
+    req.onerror = () => resolve(fallback);
   });
 }
 
 export async function clearPendingGeneration(): Promise<void> {
+  clearPendingGenerationFallback();
   const db = await openAgentDB();
   if (!db) return;
 
@@ -295,7 +364,10 @@ export async function clearPendingGeneration(): Promise<void> {
 // 约定：每张 agent 图片用 imgId 作为 jobId 命名空间，imageIndex 固定 0。
 
 export async function storeAgentImageBytes(imgId: string, blob: Blob): Promise<void> {
-  await storeImageBlob(imgId, 0, blob);
+  const persisted = await storeImageBlob(imgId, 0, blob);
+  if (!persisted) {
+    throw new Error('浏览器本地持久存储不可用');
+  }
 }
 
 /** 查询 flyreq-upload-cache 中缓存的图片记录 */

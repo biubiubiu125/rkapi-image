@@ -26,6 +26,8 @@ export interface ActiveGifJob {
   gptImageOutputFormat?: GptImageOutputFormat;
   refImages: RefImageData[];
   serverTaskId?: string;
+  serverTaskReadToken?: string;
+  serverTaskAcked?: boolean;
   gridImageRef?: string;
   frameDelayMs: number;
   loopCount: number;
@@ -63,16 +65,26 @@ export function loadActiveGifJob(): ActiveGifJob | null {
   }
 }
 
-export function saveActiveGifJob(job: ActiveGifJob | null): void {
-  if (typeof window === 'undefined') return;
+export function saveActiveGifJob(job: ActiveGifJob | null): boolean {
+  if (typeof window === 'undefined') return true;
   try {
     if (!job) {
       localStorage.removeItem(STORAGE_KEY);
-      return;
+      return true;
     }
     localStorage.setItem(STORAGE_KEY, JSON.stringify(job));
+    return true;
   } catch {
-    // storage quota / privacy mode — keep working with in-memory state only
+    if (!job?.serverTaskId && !job?.gridImageRef) return false;
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({
+        ...job,
+        refImages: [],
+      }));
+      return true;
+    } catch {
+      return false;
+    }
   }
 }
 

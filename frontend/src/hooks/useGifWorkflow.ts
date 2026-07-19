@@ -1,7 +1,8 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { createFlyreqTask, getFlyreqTask, ackFlyreqTask, resolveImageTaskProvider, type ImageReference } from '@/lib/flyreq-task-client';
+import { createFlyreqTask, getFlyreqTask, normalizeFlyreqTaskAccess, resolveImageTaskProvider, type ImageReference } from '@/lib/flyreq-task-client';
+import { ackServerTaskWithRetry, cancelServerTaskWithRetry } from '@/lib/server-task-ack';
 import { flyreqTaskSocket } from '@/lib/flyreq-task-socket';
 import { generateUUID } from '@/lib/uuid';
 import {
@@ -71,6 +72,12 @@ export interface GifEncodeParams {
   framePadding: number;
 }
 
+export interface GifGridImageStorageResult {
+  gridImageRef: string;
+  immediateBlobUrl: string | null;
+  shouldAckServerTask: boolean;
+}
+
 function buildImageReferences(template: { data: string; mimeType: string }, refs: RefImageData[]): ImageReference[] {
   const result: ImageReference[] = [{ data: template.data, mimeType: template.mimeType || 'image/png' }];
   for (const ref of refs) {
@@ -82,6 +89,35 @@ function buildImageReferences(template: { data: string; mimeType: string }, refs
 
 function nowIso(): string {
   return new Date().toISOString();
+}
+
+export async function cacheGifGridImage(jobId: string, imageRef: string): Promise<GifGridImageStorageResult> {
+  if (!imageRef.startsWith('URL:')) {
+    return {
+      gridImageRef: imageRef,
+      immediateBlobUrl: imageRef.startsWith('blob:') ? imageRef : null,
+      shouldAckServerTask: true,
+    };
+  }
+
+  try {
+    const result = await downloadAndStoreImages(jobId, [imageRef]);
+    if (result.successCount > 0 && result.blobUrls[0]) {
+      return {
+        gridImageRef: makeStoredBlobRef(jobId, 0),
+        immediateBlobUrl: result.blobUrls[0],
+        shouldAckServerTask: true,
+      };
+    }
+  } catch {
+    // 下载失败时保留远程 URL，服务端任务不能提前 ack，避免图片过早清理。
+  }
+
+  return {
+    gridImageRef: imageRef,
+    immediateBlobUrl: null,
+    shouldAckServerTask: false,
+  };
 }
 
 export function useGifWorkflow(): UseGifWorkflowResult {
@@ -96,11 +132,32 @@ export function useGifWorkflow(): UseGifWorkflowResult {
   const subscriptionRef = useRef<(() => void) | null>(null);
   const resolvedBlobUrlsRef = useRef<string[]>([]);
 
-  const persistJob = useCallback((next: ActiveGifJob | null) => {
+  const setVolatileJob = useCallback((next: ActiveGifJob | null) => {
     jobRef.current = next;
     setJobState(next);
-    saveActiveGifJob(next);
   }, []);
+
+  const persistJob = useCallback((next: ActiveGifJob | null) => {
+    if (!saveActiveGifJob(next)) {
+      throw new Error('浏览器本地持久存储不可用');
+    }
+    setVolatileJob(next);
+  }, [setVolatileJob]);
+
+  const markRecoverableGridSyncFailure = useCallback((target: ActiveGifJob, error: unknown) => {
+    const message = error instanceof Error ? error.message : String(error);
+    const recoverable: ActiveGifJob = {
+      ...target,
+      status: 'generating_grid',
+      error: `${message}。生成结果未完成本地保存，服务端任务仍保留，可点击刷新重试。`,
+      updatedAt: nowIso(),
+    };
+    try {
+      persistJob(recoverable);
+    } catch {
+      setVolatileJob(recoverable);
+    }
+  }, [persistJob, setVolatileJob]);
 
   const updateJob = useCallback((updater: (prev: ActiveGifJob) => ActiveGifJob) => {
     const current = jobRef.current;
@@ -141,6 +198,7 @@ export function useGifWorkflow(): UseGifWorkflowResult {
     target: ActiveGifJob,
     images: string[],
     serverTaskId: string,
+    serverTaskReadToken?: string,
   ): Promise<void> => {
     const first = images[0];
     if (!first) {
@@ -153,51 +211,57 @@ export function useGifWorkflow(): UseGifWorkflowResult {
       return;
     }
 
-    let nextRef = first;
-    let immediateBlobUrl: string | null = null;
-    if (first.startsWith('URL:')) {
-      try {
-        const result = await downloadAndStoreImages(target.id, [first]);
-        // 优先使用 downloadAndStoreImages 返回的 blobUrl，避免 IndexedDB 时序竞争
-        if (result.successCount > 0 && result.blobUrls[0]) {
-          immediateBlobUrl = result.blobUrls[0];
-          nextRef = makeStoredBlobRef(target.id, 0);
-        }
-      } catch {
-        // 下载失败：保留 URL: 引用，仍可走 HTTP 渲染
-      }
-    }
+    const storage = await cacheGifGridImage(target.id, first);
 
     const completed: ActiveGifJob = {
       ...target,
       status: 'review_grid',
-      gridImageRef: nextRef,
-      error: undefined,
+      gridImageRef: storage.gridImageRef,
+      serverTaskAcked: false,
+      error: storage.shouldAckServerTask ? undefined : '网格图本地缓存失败，暂时使用服务端远程图片。服务端任务仍保留，可点击主动同步状态重试本地缓存。',
       updatedAt: nowIso(),
     };
     persistJob(completed);
 
-    try { await ackFlyreqTask(serverTaskId); } catch { /* ignore */ }
+    if (storage.shouldAckServerTask) {
+      const acked = await ackServerTaskWithRetry(serverTaskId, serverTaskReadToken);
+      if (jobRef.current?.id !== target.id) return;
+      if (!acked) {
+        persistJob({
+          ...completed,
+          serverTaskAcked: false,
+          error: '服务端清理确认失败，任务仍保留，可稍后主动同步状态重试。',
+          updatedAt: nowIso(),
+        });
+      } else {
+        persistJob({
+          ...completed,
+          serverTaskAcked: true,
+          updatedAt: nowIso(),
+        });
+      }
+    }
 
     revokeResolvedUrls();
-    if (immediateBlobUrl) {
-      resolvedBlobUrlsRef.current.push(immediateBlobUrl);
-      setGridImageUrl(immediateBlobUrl);
+    if (storage.immediateBlobUrl) {
+      resolvedBlobUrlsRef.current.push(storage.immediateBlobUrl);
+      setGridImageUrl(storage.immediateBlobUrl);
     } else {
       const url = await loadGridImageUrl(completed);
       setGridImageUrl(url);
     }
   }, [persistJob, revokeResolvedUrls, loadGridImageUrl]);
 
-  const subscribeServerTask = useCallback((taskId: string) => {
+  const subscribeServerTask = useCallback((taskId: string, readToken?: string) => {
     clearSubscription();
-    const unsubscribe = flyreqTaskSocket.subscribeTask(taskId, task => {
+    const unsubscribe = flyreqTaskSocket.subscribeTask(taskId, readToken, task => {
       const current = jobRef.current;
       if (!current || current.serverTaskId !== taskId) return;
       if (task.status === 'completed') {
         const images = task.result?.images || [];
-        void finalizeGrid(current, images, taskId);
-        clearSubscription();
+        void finalizeGrid(current, images, taskId, current.serverTaskReadToken)
+          .then(clearSubscription)
+          .catch(error => markRecoverableGridSyncFailure(current, error));
         return;
       }
       if (task.status === 'failed' || task.status === 'expired') {
@@ -217,7 +281,7 @@ export function useGifWorkflow(): UseGifWorkflowResult {
       }
     });
     subscriptionRef.current = unsubscribe;
-  }, [clearSubscription, finalizeGrid, persistJob]);
+  }, [clearSubscription, finalizeGrid, markRecoverableGridSyncFailure, persistJob]);
 
   /**
    * 挂载时恢复本地 GIF 任务，并在组件卸载后阻止旧异步请求恢复订阅或写入状态。
@@ -243,13 +307,16 @@ export function useGifWorkflow(): UseGifWorkflowResult {
 
     if (initial.status === 'generating_grid' && initial.serverTaskId) {
       setStartedAt(Date.parse(initial.createdAt) || Date.now());
-      getFlyreqTask(initial.serverTaskId)
+      getFlyreqTask(initial.serverTaskId, initial.serverTaskReadToken)
         .then(task => {
           if (cancelled) return;
           const current = jobRef.current;
           if (!current || current.serverTaskId !== initial.serverTaskId) return;
           if (task.status === 'completed') {
-            void finalizeGrid(current, task.result?.images || [], initial.serverTaskId!);
+            void finalizeGrid(current, task.result?.images || [], initial.serverTaskId!, current.serverTaskReadToken)
+              .catch(error => {
+                if (!cancelled) markRecoverableGridSyncFailure(current, error);
+              });
           } else if (task.status === 'failed' || task.status === 'expired') {
             persistJob({
               ...current,
@@ -258,11 +325,11 @@ export function useGifWorkflow(): UseGifWorkflowResult {
               updatedAt: nowIso(),
             });
           } else {
-            subscribeServerTask(initial.serverTaskId!);
+            subscribeServerTask(initial.serverTaskId!, initial.serverTaskReadToken);
           }
         })
         .catch(() => {
-          if (!cancelled) subscribeServerTask(initial.serverTaskId!);
+          if (!cancelled) subscribeServerTask(initial.serverTaskId!, initial.serverTaskReadToken);
         });
     }
 
@@ -288,6 +355,11 @@ export function useGifWorkflow(): UseGifWorkflowResult {
     }
   }, []);
 
+  const cancelGifServerTask = useCallback((target: ActiveGifJob | null | undefined) => {
+    if (!target?.serverTaskId || target.serverTaskAcked === true) return;
+    void cancelServerTaskWithRetry(target.serverTaskId, target.serverTaskReadToken);
+  }, []);
+
   const submitGrid = useCallback(async (input: SubmitInput) => {
     let provider;
     try {
@@ -304,6 +376,7 @@ export function useGifWorkflow(): UseGifWorkflowResult {
 
     const previousJob = jobRef.current;
     clearSubscription();
+    cancelGifServerTask(previousJob);
     revokeResolvedUrls();
     setGridImageUrl(null);
     setGifBlob(null);
@@ -346,9 +419,11 @@ export function useGifWorkflow(): UseGifWorkflowResult {
 
     void cleanupJobAssets(previousJob);
 
+    let createdServerTaskId: string | null = null;
+    let createdServerTaskReadToken: string | undefined;
     try {
       // TODO: 从模型注册表读取实际的 baseUrl 和 protocol
-      const serverTaskId = await createFlyreqTask({
+      const serverTask = normalizeFlyreqTaskAccess(await createFlyreqTask({
         apiKey: provider.apiKey,
         baseUrl: provider.baseUrl,
         protocol: provider.protocol,
@@ -366,22 +441,38 @@ export function useGifWorkflow(): UseGifWorkflowResult {
         streamImages: provider.streamImages,
         parallelCount: 1,
         images: buildImageReferences(template, refsForSubmit),
-      });
+      }));
+      createdServerTaskId = serverTask.taskId;
+      createdServerTaskReadToken = serverTask.readToken;
 
-      const withTaskId: ActiveGifJob = { ...next, serverTaskId, updatedAt: nowIso() };
-      persistJob(withTaskId);
-      subscribeServerTask(serverTaskId);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      persistJob({
+      const withTaskId: ActiveGifJob = {
         ...next,
-        status: 'failed',
-        error: message,
+        serverTaskId: serverTask.taskId,
+        serverTaskReadToken: serverTask.readToken,
         updatedAt: nowIso(),
-      });
+      };
+      persistJob(withTaskId);
+      subscribeServerTask(serverTask.taskId, serverTask.readToken);
+    } catch (error) {
+      if (createdServerTaskId) {
+        void cancelServerTaskWithRetry(createdServerTaskId, createdServerTaskReadToken);
+      }
+      const message = error instanceof Error ? error.message : String(error);
+      const failedJob: ActiveGifJob = {
+        ...next,
+        ...(createdServerTaskId ? { serverTaskId: createdServerTaskId } : {}),
+        status: 'failed',
+        error: createdServerTaskId ? `${message}（任务 ID：${createdServerTaskId}）` : message,
+        updatedAt: nowIso(),
+      };
+      try {
+        persistJob(failedJob);
+      } catch {
+        setVolatileJob(failedJob);
+      }
       throw error;
     }
-  }, [cleanupJobAssets, clearSubscription, persistJob, revokeResolvedUrls, subscribeServerTask]);
+  }, [cancelGifServerTask, cleanupJobAssets, clearSubscription, persistJob, revokeResolvedUrls, setVolatileJob, subscribeServerTask]);
 
   const encodeGif = useCallback(async (params: GifEncodeParams) => {
     const current = jobRef.current;
@@ -465,13 +556,14 @@ export function useGifWorkflow(): UseGifWorkflowResult {
   const resetJob = useCallback(async () => {
     const previous = jobRef.current;
     clearSubscription();
+    cancelGifServerTask(previous);
     revokeResolvedUrls();
     setGridImageUrl(null);
     setGifBlob(null);
     setStartedAt(null);
     persistJob(null);
     await cleanupJobAssets(previous);
-  }, [cleanupJobAssets, clearSubscription, persistJob, revokeResolvedUrls]);
+  }, [cancelGifServerTask, cleanupJobAssets, clearSubscription, persistJob, revokeResolvedUrls]);
 
   const refreshFromServer = useCallback(async (onStatus?: (message: string) => void) => {
     const current = jobRef.current;
@@ -479,10 +571,10 @@ export function useGifWorkflow(): UseGifWorkflowResult {
     setIsSyncing(true);
     onStatus?.('正在查询任务状态…');
     try {
-      const task = await getFlyreqTask(current.serverTaskId);
+      const task = await getFlyreqTask(current.serverTaskId, current.serverTaskReadToken);
       if (task.status === 'completed') {
         onStatus?.('生成完成，正在下载图片…');
-        await finalizeGrid(current, task.result?.images || [], current.serverTaskId);
+        await finalizeGrid(current, task.result?.images || [], current.serverTaskId, current.serverTaskReadToken);
       } else if (task.status === 'failed' || task.status === 'expired') {
         const errorMsg = task.error || (task.status === 'expired' ? '该任务已超出取回时间' : '后端任务失败');
         persistJob({
@@ -503,15 +595,16 @@ export function useGifWorkflow(): UseGifWorkflowResult {
       const message = error instanceof Error ? error.message : String(error);
       persistJob({
         ...current,
-        status: 'failed',
-        error: message,
+        status: 'generating_grid',
+        error: `${message}。查询任务状态失败，服务端任务仍保留，可稍后刷新重试。`,
         updatedAt: nowIso(),
       });
+      subscribeServerTask(current.serverTaskId, current.serverTaskReadToken);
       onStatus?.(`查询失败：${message}`);
     } finally {
       setIsSyncing(false);
     }
-  }, [finalizeGrid, isSyncing, persistJob]);
+  }, [finalizeGrid, isSyncing, persistJob, subscribeServerTask]);
 
   const gifReady: boolean = !!job && job.status === 'done';
 

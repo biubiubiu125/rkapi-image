@@ -24,6 +24,8 @@ out.zip
 # database & images (backend)
 backend/flyreq-tasks.sqlite*
 backend/flyreq-images/
+backend/rkapi-tasks.sqlite*
+backend/rkapi-images/
 # IDE/Editor configs
 .arts/
 .claude/

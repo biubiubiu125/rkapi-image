@@ -60,7 +60,7 @@ function parseGenerationText(text: string, t: (key: I18nKey) => string): ParsedS
       color: 'text-blue-500',
     });
   }
-  
+
   const promptMatch = text.match(/(?:^|\n)(?:优化提示词|Optimized prompt)\s*[:：]\s*([\s\S]*?)(?=\n(?:结果|Result)\s*[:：]|$)/i);
   if (promptMatch) {
     sections.push({
@@ -70,7 +70,7 @@ function parseGenerationText(text: string, t: (key: I18nKey) => string): ParsedS
       color: 'text-purple-500',
     });
   }
-  
+
   const resultMatch = text.match(/(?:^|\n)(?:结果|Result)\s*[:：]\s*([\s\S]*?)$/i);
   if (resultMatch) {
     sections.push({
@@ -80,7 +80,7 @@ function parseGenerationText(text: string, t: (key: I18nKey) => string): ParsedS
       color: 'text-green-500',
     });
   }
-  
+
   // 如果没有匹配到任何部分，返回原始文本作为分析
   if (sections.length === 0) {
     sections.push({
@@ -90,7 +90,7 @@ function parseGenerationText(text: string, t: (key: I18nKey) => string): ParsedS
       color: 'text-blue-500',
     });
   }
-  
+
   return sections;
 }
 
@@ -140,7 +140,7 @@ export function AgentGenerationResult({ text, reasoning }: AgentGenerationResult
   const { t } = useI18n();
   const [copiedText, setCopiedText] = useState<string | null>(null);
   const sections = parseGenerationText(text, t);
-  
+
   const handleCopy = useCallback(async (content: string, label: string) => {
     try {
       await navigator.clipboard.writeText(content);
@@ -150,7 +150,7 @@ export function AgentGenerationResult({ text, reasoning }: AgentGenerationResult
       // 剪贴板写入失败静默忽略
     }
   }, []);
-  
+
   return (
     <div className="space-y-3">
       {/* 思考过程（可折叠） */}
@@ -166,7 +166,7 @@ export function AgentGenerationResult({ text, reasoning }: AgentGenerationResult
           </div>
         </details>
       )}
-      
+
       {/* 结构化显示三个部分 */}
       {sections.map((section, index) => (
         <GenerationSectionCard

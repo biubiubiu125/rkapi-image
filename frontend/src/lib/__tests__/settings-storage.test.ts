@@ -5,11 +5,17 @@ import {
   hasConfiguredImageModel,
   hasConfiguredTextModel,
   isPromptOptimizeEnabled,
+  loadJsonFromStorage,
   setPromptOptimizeEnabled,
 } from '@/lib/settings-storage';
 import { BUILTIN_IMAGE_PRESETS, getResolvedImageModelId, loadRegistry } from '@/lib/flyreq-models';
-import { saveFirstImageModelAsFormDefault } from '@/lib/form-settings';
-import { resolveImageTaskProvider } from '@/lib/flyreq-task-client';
+import { migrateRkapiImageFormDefaults, saveImageModelFormDefaults } from '@/lib/form-settings';
+import { checkModelsAvailability, resolveImageTaskProvider } from '@/lib/flyreq-task-client';
+import {
+  getEnabledTextModelsForSettingsSave,
+  getPersistableTextModelsForSettingsSave,
+  getSettingsModelSaveError,
+} from '@/lib/settings-text-models';
 
 const storage = new Map<string, string>();
 
@@ -63,7 +69,7 @@ describe('settings-storage model availability', () => {
         id: 'txt-1',
         protocol: 'openai',
         name: 'Text',
-        modelId: 'gpt-5.4-mini',
+        modelId: 'gpt-5.6-sol',
         apiKey: 'key',
         baseUrl: 'https://api.openai.com',
       }],
@@ -79,40 +85,327 @@ describe('settings-storage model availability', () => {
     expect(isPromptOptimizeEnabled()).toBe(false);
   });
 
-  it('sets the first saved image model as the default for every image form', () => {
+  it('ignores and removes malformed localStorage JSON instead of breaking settings initialization', () => {
+    storage.set('flyreq-model-registry', '{broken');
+
+    expect(loadJsonFromStorage('flyreq-model-registry')).toEqual({});
+    expect(storage.has('flyreq-model-registry')).toBe(false);
+  });
+
+  it('sets task-specific default models for image forms', () => {
     storage.set('flyreq-image-generation-settings', JSON.stringify({ outputSize: '2K' }));
     storage.set('flyreq-t2i-settings', JSON.stringify({ model: 'old-model', aspectRatio: '16:9' }));
 
-    saveFirstImageModelAsFormDefault('external-image-model');
+    saveImageModelFormDefaults({
+      textToImage: 'rkapi-4k-image',
+      imageToImage: 'rkapi-reverse-image',
+    });
 
     expect(JSON.parse(storage.get('flyreq-image-generation-settings') || '{}')).toEqual({
-      model: 'external-image-model',
+      model: 'rkapi-4k-image',
       outputSize: '2K',
     });
     expect(JSON.parse(storage.get('flyreq-t2i-settings') || '{}')).toEqual({
-      model: 'external-image-model',
+      model: 'rkapi-4k-image',
       aspectRatio: '16:9',
     });
     expect(JSON.parse(storage.get('flyreq-i2i-settings') || '{}')).toEqual({
-      model: 'external-image-model',
+      model: 'rkapi-reverse-image',
     });
   });
 
-  it('ships a default FlyReq image model without unlocking image workflows before the key is filled', () => {
+  it('migrates stale RKAPI image-to-image form defaults once', () => {
+    writeRegistry({
+      imageModels: [
+        {
+          id: 'rkapi-reverse-image',
+          protocol: 'openai',
+          name: 'RKAPI-逆向',
+          modelId: 'gpt-image-2',
+          apiKey: 'reverse-key',
+          baseUrl: 'https://api.rkai6.com',
+          builtinPreset: 'gpt-image-2',
+          maxRefImages: 16,
+          maxOutputSize: '4K',
+          supportsAdvancedParams: true,
+        },
+        {
+          id: 'rkapi-4k-image',
+          protocol: 'openai',
+          name: 'RKAPI-4k',
+          modelId: 'gpt-image-2',
+          apiKey: '4k-key',
+          baseUrl: 'https://api.rkai6.com',
+          builtinPreset: 'gpt-image-2',
+          maxRefImages: 16,
+          maxOutputSize: '4K',
+          supportsAdvancedParams: true,
+        },
+      ],
+      textModels: [],
+      defaults: { textToImage: 'rkapi-4k-image', imageToImage: 'rkapi-4k-image' },
+    });
+    storage.set('flyreq-i2i-settings', JSON.stringify({ model: 'rkapi-4k-image', aspectRatio: '1:1' }));
+
+    migrateRkapiImageFormDefaults();
+
+    expect(loadRegistry().defaults).toMatchObject({
+      textToImage: 'rkapi-4k-image',
+      imageToImage: 'rkapi-reverse-image',
+    });
+    expect(JSON.parse(storage.get('flyreq-i2i-settings') || '{}')).toEqual({
+      model: 'rkapi-reverse-image',
+      aspectRatio: '1:1',
+    });
+
+    storage.set('flyreq-i2i-settings', JSON.stringify({ model: 'rkapi-4k-image' }));
+    migrateRkapiImageFormDefaults();
+    expect(JSON.parse(storage.get('flyreq-i2i-settings') || '{}')).toEqual({
+      model: 'rkapi-4k-image',
+    });
+  });
+
+  it('persists RKAPI text model edits before an API key is filled', () => {
+    const textModels = [
+      {
+        id: 'rkapi-text',
+        protocol: 'openai' as const,
+        name: 'RKAPI',
+        modelId: 'custom-text-model',
+        apiKey: '',
+        baseUrl: 'https://api.rkai6.com',
+      },
+      {
+        id: 'empty-extra',
+        protocol: 'openai' as const,
+        name: 'RKAPI',
+        modelId: '',
+        apiKey: '',
+        baseUrl: 'https://api.rkai6.com',
+      },
+    ];
+
+    expect(getPersistableTextModelsForSettingsSave(textModels)).toEqual([textModels[0]]);
+    expect(getEnabledTextModelsForSettingsSave(textModels)).toEqual([]);
+  });
+
+  it('allows saving a complete RKAPI text model before image model API keys are filled', () => {
+    const imageModels = loadRegistry().imageModels;
+    const enabledTextModels = [{
+      id: 'rkapi-text',
+      protocol: 'openai' as const,
+      name: 'RKAPI',
+      modelId: 'gpt-5.6-sol',
+      apiKey: 'text-key',
+      baseUrl: 'https://api.rkai6.com',
+    }];
+
+    expect(getSettingsModelSaveError({
+      imageModels,
+      enabledTextModels,
+      promptOptimizeEnabled: false,
+    })).toBeNull();
+    expect(getSettingsModelSaveError({
+      imageModels,
+      enabledTextModels: [],
+      promptOptimizeEnabled: false,
+    })).toBe('至少完成一个图片模型或文本模型的全部信息');
+  });
+
+  it('ships RKAPI default image and text model drafts without unlocking workflows before keys are filled', () => {
     const registry = loadRegistry();
+    expect(registry.imageModels).toHaveLength(2);
     expect(registry.imageModels[0]).toMatchObject({
+      id: 'rkapi-reverse-image',
       protocol: 'openai',
-      name: 'FlyReq',
-      modelId: '',
-      usesPresetModelId: true,
+      name: 'RKAPI-逆向',
+      modelId: 'gpt-image-2',
       apiKey: '',
-      baseUrl: 'https://flyreq.com',
+      baseUrl: 'https://api.rkai6.com',
       builtinPreset: 'gpt-image-2',
       maxRefImages: 16,
       maxOutputSize: '4K',
     });
+    expect(registry.imageModels[1]).toMatchObject({
+      id: 'rkapi-4k-image',
+      protocol: 'openai',
+      name: 'RKAPI-4k',
+      modelId: 'gpt-image-2',
+      apiKey: '',
+      baseUrl: 'https://api.rkai6.com',
+      builtinPreset: 'gpt-image-2',
+      maxRefImages: 16,
+      maxOutputSize: '4K',
+    });
+    expect(registry.textModels).toEqual([expect.objectContaining({
+      id: 'rkapi-text',
+      protocol: 'openai',
+      name: 'RKAPI',
+      modelId: 'gpt-5.6-sol',
+      apiKey: '',
+      baseUrl: 'https://api.rkai6.com',
+    })]);
     expect(getResolvedImageModelId(registry.imageModels[0])).toBe('gpt-image-2');
+    expect(getResolvedImageModelId(registry.imageModels[1])).toBe('gpt-image-2');
     expect(hasConfiguredImageModel()).toBe(false);
+    expect(hasConfiguredTextModel()).toBe(false);
+  });
+
+  it('forces persisted model base URLs to the RKAPI gateway', () => {
+    writeRegistry({
+      imageModels: [{
+        id: 'img-custom',
+        protocol: 'openai',
+        name: 'Custom Image',
+        modelId: 'gpt-image-2',
+        apiKey: 'key',
+        baseUrl: 'https://api.openai.com',
+        builtinPreset: 'gpt-image-2',
+        maxRefImages: 16,
+        maxOutputSize: '4K',
+        supportsAdvancedParams: true,
+      }],
+      textModels: [{
+        id: 'txt-custom',
+        protocol: 'openai',
+        name: 'Custom Text',
+        modelId: 'gpt-5.6-sol',
+        apiKey: 'key',
+        baseUrl: 'https://api.openai.com',
+      }],
+      defaults: {
+        textToImage: 'img-custom',
+        imageToImage: 'img-custom',
+        reversePrompt: 'txt-custom',
+        agent: 'txt-custom',
+        promptOptimize: 'txt-custom',
+        imageDescribe: 'txt-custom',
+      },
+    });
+
+    const registry = loadRegistry();
+    expect(registry.imageModels[0].baseUrl).toBe('https://api.rkai6.com');
+    expect(registry.textModels[0].baseUrl).toBe('https://api.rkai6.com');
+  });
+
+  it('migrates the legacy default image model into the RKAPI image pair', () => {
+    writeRegistry({
+      imageModels: [{
+        id: 'flyreq-gpt-image-2',
+        protocol: 'openai',
+        name: 'Legacy Default',
+        modelId: '',
+        usesPresetModelId: true,
+        apiKey: 'legacy-key',
+        baseUrl: 'https://legacy.example.com',
+        builtinPreset: 'gpt-image-2',
+        maxRefImages: 8,
+        maxOutputSize: '2K',
+        supportsAdvancedParams: true,
+        streamImages: true,
+      }],
+      textModels: [],
+      defaults: {
+        textToImage: 'flyreq-gpt-image-2',
+        imageToImage: 'flyreq-gpt-image-2',
+      },
+    });
+
+    const registry = loadRegistry();
+    expect(registry.imageModels.some((model) => model.id === 'flyreq-gpt-image-2')).toBe(false);
+    expect(registry.imageModels).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: 'rkapi-reverse-image',
+        name: 'RKAPI-逆向',
+        modelId: 'gpt-image-2',
+        apiKey: 'legacy-key',
+        baseUrl: 'https://api.rkai6.com',
+        maxRefImages: 8,
+        maxOutputSize: '2K',
+      }),
+      expect.objectContaining({
+        id: 'rkapi-4k-image',
+        name: 'RKAPI-4k',
+        modelId: 'gpt-image-2',
+        apiKey: 'legacy-key',
+        baseUrl: 'https://api.rkai6.com',
+        maxRefImages: 8,
+        maxOutputSize: '4K',
+      }),
+    ]));
+    expect(registry.defaults).toMatchObject({
+      textToImage: 'rkapi-4k-image',
+      imageToImage: 'rkapi-reverse-image',
+    });
+  });
+
+  it('checks model availability with a POST body instead of putting the API key in the URL', async () => {
+    writeRegistry({
+      imageModels: [{
+        id: 'rkapi-4k-image',
+        protocol: 'openai',
+        name: 'RKAPI-4k',
+        modelId: 'gpt-image-2',
+        apiKey: 'secret-key',
+        baseUrl: 'https://api.rkai6.com',
+        builtinPreset: 'gpt-image-2',
+        maxRefImages: 16,
+        maxOutputSize: '4K',
+        supportsAdvancedParams: true,
+      }],
+      textModels: [],
+      defaults: { textToImage: 'rkapi-4k-image', imageToImage: 'rkapi-4k-image' },
+    });
+    const fetchMock = vi.fn().mockResolvedValue(new Response(
+      JSON.stringify({ data: [{ id: 'gpt-image-2' }] }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } },
+    ));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(checkModelsAvailability(['rkapi-4k-image'])).resolves.toEqual([expect.objectContaining({
+      modelId: 'rkapi-4k-image',
+      available: true,
+    })]);
+
+    expect(fetchMock).toHaveBeenCalledWith('/api/flyreq/proxy/models', expect.objectContaining({
+      method: 'POST',
+      cache: 'no-store',
+    }));
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).not.toContain('apiKey');
+    expect(JSON.parse(String(init.body))).toMatchObject({
+      apiKey: 'secret-key',
+      baseUrl: 'https://api.rkai6.com',
+      protocol: 'openai',
+    });
+  });
+
+  it('can check unsaved settings form model drafts directly', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(
+      JSON.stringify({ data: [{ id: 'draft-model' }] }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } },
+    ));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(checkModelsAvailability(['draft-text'], [{
+      id: 'draft-text',
+      name: 'RKAPI',
+      protocol: 'openai',
+      baseUrl: 'https://api.rkai6.com',
+      apiKey: 'draft-key',
+      modelId: 'draft-model',
+    }])).resolves.toEqual([expect.objectContaining({
+      modelId: 'draft-text',
+      available: true,
+    })]);
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const body = JSON.parse(String(init.body));
+    expect(body).toMatchObject({
+      apiKey: 'draft-key',
+      baseUrl: 'https://api.rkai6.com',
+      modelId: 'draft-model',
+    });
   });
 
   it('uses gpt-image-2 when a GPT Image 2 configuration leaves its model ID blank', () => {
@@ -134,7 +427,7 @@ describe('settings-storage model availability', () => {
     });
 
     const [model] = loadRegistry().imageModels;
-    expect(model).toMatchObject({ modelId: '', usesPresetModelId: true });
+    expect(model).toMatchObject({ modelId: 'gpt-image-2' });
     expect(getResolvedImageModelId(model)).toBe('gpt-image-2');
     expect(resolveImageTaskProvider('img-gpt-image-2').modelId).toBe('gpt-image-2');
     expect(hasConfiguredImageModel()).toBe(true);
@@ -156,7 +449,7 @@ describe('settings-storage model availability', () => {
     const registry = loadRegistry();
     for (const preset of Object.values(BUILTIN_IMAGE_PRESETS)) {
       const model = registry.imageModels.find((item) => item.builtinPreset === preset.id);
-      expect(model).toMatchObject({ modelId: '', usesPresetModelId: true });
+      expect(model).toMatchObject({ modelId: preset.modelId });
       expect(getResolvedImageModelId(model!)).toBe(preset.modelId);
       expect(resolveImageTaskProvider(`img-${preset.id}`).modelId).toBe(preset.modelId);
     }
@@ -232,7 +525,7 @@ describe('settings-storage model availability', () => {
         id: 'txt-1',
         protocol: 'openai',
         name: 'Text',
-        modelId: 'gpt-5.4-mini',
+        modelId: 'gpt-5.6-sol',
         apiKey: 'key',
         baseUrl: 'https://api.openai.com',
       }],

@@ -86,7 +86,7 @@ describe('fetchImageAsBlob', () => {
 });
 
 describe('downloadAndStoreImages', () => {
-  it('IndexedDB 不可用时降级到内存缓存并保留进度结果', async () => {
+  it('IndexedDB 不可用时保留内存兜底但不把结果标记为持久缓存成功', async () => {
     const progress: ImageDownloadProgressItem[] = [];
     vi.stubGlobal('indexedDB', undefined);
     vi.stubGlobal('URL', {
@@ -105,10 +105,17 @@ describe('downloadAndStoreImages', () => {
       onProgress: item => progress.push(item),
     });
 
-    expect(result.successCount).toBe(1);
-    expect(result.failCount).toBe(0);
-    expect(result.blobUrls).toEqual(['blob:cached-0']);
-    expect(result.items[0]).toMatchObject({ index: 0, status: 'cached', loadedBytes: 2, totalBytes: 2, percent: 100 });
+    expect(result.successCount).toBe(0);
+    expect(result.failCount).toBe(1);
+    expect(result.blobUrls).toEqual(['']);
+    expect(result.items[0]).toMatchObject({
+      index: 0,
+      status: 'failed',
+      loadedBytes: 2,
+      totalBytes: 2,
+      percent: 100,
+      error: '浏览器本地持久存储不可用',
+    });
     expect(progress.some(item => item.status === 'downloading' && item.percent === 100)).toBe(true);
     await expect(getStoredBlob('job-fallback', 0)).resolves.toMatchObject({ size: 2 });
   });

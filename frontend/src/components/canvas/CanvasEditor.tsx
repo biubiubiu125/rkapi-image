@@ -44,7 +44,7 @@ import { usePromptOptimizeSetting } from "@/hooks/usePromptOptimizeSetting";
 import { readSseStream } from "@/lib/sse-stream-parser";
 import { MODEL_IMAGE_LIMITS } from "@/lib/gemini-config";
 import { normalizeModel } from "@/lib/model-capabilities";
-import { ackServerTaskWithRetry } from "@/lib/server-task-ack";
+import { ackServerTaskWithRetry, cancelServerTaskWithRetry } from "@/lib/server-task-ack";
 import type { PromptWithKey } from "@/lib/prompt-gallery-data";
 
 type DialogState = { type: "crop" | "split" | "upscale" | "angle"; nodeId: string; source: string } | null;
@@ -460,11 +460,24 @@ export function CanvasEditor({ projectId, onBack, onRequireApiKey, showToast, sh
       if (!ids.length) return;
       pushHistory();
       const idSet = new Set(ids);
-      setNodes((prev) => prev.filter((node) => !idSet.has(node.id)));
-      setConnections((prev) => prev.filter((connection) => !idSet.has(connection.fromNodeId) && !idSet.has(connection.toNodeId)));
+      const snapshot = canvasSnapshotRef.current;
+      for (const node of snapshot.nodes) {
+        if (!idSet.has(node.id)) continue;
+        activeGenerationsRef.current.get(node.id)?.abort();
+        activeGenerationsRef.current.delete(node.id);
+        const taskId = node.metadata?.generationTaskId;
+        if (taskId) {
+          void cancelServerTaskWithRetry(taskId, node.metadata?.generationTaskReadToken);
+        }
+      }
+      commitCanvasSnapshot({
+        ...snapshot,
+        nodes: snapshot.nodes.filter((node) => !idSet.has(node.id)),
+        connections: snapshot.connections.filter((connection) => !idSet.has(connection.fromNodeId) && !idSet.has(connection.toNodeId)),
+      });
       setSelectedIds((prev) => prev.filter((id) => !idSet.has(id)));
     },
-    [pushHistory],
+    [commitCanvasSnapshot, pushHistory],
   );
 
   const duplicateNodes = useCallback(
@@ -803,32 +816,56 @@ export function CanvasEditor({ projectId, onBack, onRequireApiKey, showToast, sh
       activeGenerationsRef.current.set(nodeId, controller);
 
       // 立即标记节点为提交中状态，并同步更新快照，避免快速完成时结果写入找不到节点。
-      patchNode(nodeId, (node) => ({ ...node, metadata: { ...node.metadata, status: "submitting", errorDetails: undefined, generationTaskId: undefined, recoverableGenerationTask: undefined, generationStartedAt: Date.now() } }));
+      patchNode(nodeId, (node) => ({ ...node, metadata: { ...node.metadata, status: "submitting", errorDetails: undefined, generationTaskId: undefined, generationTaskReadToken: undefined, recoverableGenerationTask: undefined, generationStartedAt: Date.now() } }));
       setBusy(sourceNodeId, true);
 
       let createdTaskId: string | null = null;
+      let createdTaskReadToken: string | undefined;
+      const queueAbandonedServerTaskCancel = () => {
+        if (!createdTaskId) return;
+        void cancelServerTaskWithRetry(createdTaskId, createdTaskReadToken);
+      };
       try {
-        const taskId = await submitNodeGeneration({ prompt: promptText, referenceImages, config: genConfig });
-        createdTaskId = taskId;
-        if (controller.signal.aborted) return;
-        patchNode(nodeId, (node) => ({ ...node, metadata: { ...node.metadata, generationTaskId: taskId, status: "queued", recoverableGenerationTask: undefined } }));
+        const taskAccess = await submitNodeGeneration({ prompt: promptText, referenceImages, config: genConfig });
+        createdTaskId = taskAccess.taskId;
+        createdTaskReadToken = taskAccess.readToken;
+        if (controller.signal.aborted) {
+          queueAbandonedServerTaskCancel();
+          return;
+        }
+        patchNode(nodeId, (node) => ({
+          ...node,
+          metadata: {
+            ...node.metadata,
+            generationTaskId: taskAccess.taskId,
+            generationTaskReadToken: taskAccess.readToken,
+            status: "queued",
+            recoverableGenerationTask: undefined,
+          },
+        }));
         await flushCanvasStorePersistence();
 
-        const images = await pollNodeTask(taskId, (taskStatus) => {
+        const images = await pollNodeTask(taskAccess.taskId, taskAccess.readToken, (taskStatus) => {
           if (controller.signal.aborted) return;
           patchNode(nodeId, (node) => ({ ...node, metadata: { ...node.metadata, status: taskStatus as CanvasNodeMetadata["status"] } }));
         }, controller.signal);
 
-        if (controller.signal.aborted) return;
+        if (controller.signal.aborted) {
+          queueAbandonedServerTaskCancel();
+          return;
+        }
         const image = images[0];
         if (image) {
           await persistGeneratedImageNode(nodeId, image, { prompt: promptText });
-          await ackServerTaskWithRetry(taskId);
+          await ackServerTaskWithRetry(taskAccess.taskId, taskAccess.readToken);
         }
       } catch (error) {
-        if (controller.signal.aborted) return;
+        if (controller.signal.aborted) {
+          queueAbandonedServerTaskCancel();
+          return;
+        }
         if (error instanceof CanvasApiKeyMissingError) {
-          patchNode(nodeId, (node) => ({ ...node, metadata: { ...node.metadata, status: "idle", generationTaskId: undefined, recoverableGenerationTask: undefined, generationStartedAt: undefined } }));
+          patchNode(nodeId, (node) => ({ ...node, metadata: { ...node.metadata, status: "idle", generationTaskId: undefined, generationTaskReadToken: undefined, recoverableGenerationTask: undefined, generationStartedAt: undefined } }));
           onRequireApiKey();
         } else {
           const message = error instanceof Error ? error.message : "生成失败";
@@ -847,7 +884,9 @@ export function CanvasEditor({ projectId, onBack, onRequireApiKey, showToast, sh
           }));
         }
       } finally {
-        activeGenerationsRef.current.delete(nodeId);
+        if (activeGenerationsRef.current.get(nodeId) === controller) {
+          activeGenerationsRef.current.delete(nodeId);
+        }
         // 检查该编排节点是否还有其他活跃子任务
         let hasActive = false;
         for (const key of activeGenerationsRef.current.keys()) {
@@ -971,18 +1010,19 @@ export function CanvasEditor({ projectId, onBack, onRequireApiKey, showToast, sh
   const handleRefreshProgress = useCallback(
     async (node: CanvasNodeData) => {
       const taskId = node.metadata?.generationTaskId;
+      const taskReadToken = node.metadata?.generationTaskReadToken;
       if (!taskId) {
         showToast("该节点没有可查询的任务", "info");
         return;
       }
       try {
-        const result = await checkExistingTask(taskId);
+        const result = await checkExistingTask(taskId, taskReadToken);
         if (result.status === "completed" && result.images?.length) {
           const image = result.images[0];
           activeGenerationsRef.current.get(node.id)?.abort();
           activeGenerationsRef.current.delete(node.id);
           await persistGeneratedImageNode(node.id, image, { prompt: node.metadata?.prompt });
-          await ackServerTaskWithRetry(taskId);
+          await ackServerTaskWithRetry(taskId, taskReadToken);
           showToast("已取回生成结果", "success");
           return;
         }
@@ -1011,22 +1051,29 @@ export function CanvasEditor({ projectId, onBack, onRequireApiKey, showToast, sh
 
     for (const node of activeNodes) {
       const taskId = node.metadata!.generationTaskId!;
+      const taskReadToken = node.metadata?.generationTaskReadToken;
       const recoveryKey = `${node.id}:${taskId}`;
       if (autoRecoveryAttemptedRef.current.has(recoveryKey)) continue;
       autoRecoveryAttemptedRef.current.add(recoveryKey);
       const controller = new AbortController();
       activeGenerationsRef.current.set(node.id, controller);
+      const queueRecoveredServerTaskCancel = () => {
+        void cancelServerTaskWithRetry(taskId, taskReadToken);
+      };
 
       void (async () => {
         try {
           // 先检查当前状态
-          const result = await checkExistingTask(taskId);
-          if (controller.signal.aborted) return;
+          const result = await checkExistingTask(taskId, taskReadToken);
+          if (controller.signal.aborted) {
+            queueRecoveredServerTaskCancel();
+            return;
+          }
 
           if (result.status === "completed" && result.images?.length) {
             const image = result.images[0];
             await persistGeneratedImageNode(node.id, image, { prompt: node.metadata?.prompt });
-            await ackServerTaskWithRetry(taskId);
+            await ackServerTaskWithRetry(taskId, taskReadToken);
             return;
           }
           if (result.status === "failed" || result.status === "expired") {
@@ -1036,22 +1083,30 @@ export function CanvasEditor({ projectId, onBack, onRequireApiKey, showToast, sh
 
           // 仍在进行中 → 继续轮询
           patchNode(node.id, (n) => ({ ...n, metadata: { ...n.metadata, status: result.status as CanvasNodeMetadata["status"], recoverableGenerationTask: undefined } }));
-          const images = await pollNodeTask(taskId, (taskStatus) => {
+          const images = await pollNodeTask(taskId, taskReadToken, (taskStatus) => {
             if (controller.signal.aborted) return;
             patchNode(node.id, (n) => ({ ...n, metadata: { ...n.metadata, status: taskStatus as CanvasNodeMetadata["status"] } }));
           }, controller.signal);
 
-          if (controller.signal.aborted) return;
+          if (controller.signal.aborted) {
+            queueRecoveredServerTaskCancel();
+            return;
+          }
           if (images.length) {
             const image = images[0];
             await persistGeneratedImageNode(node.id, image, { prompt: node.metadata?.prompt });
-            await ackServerTaskWithRetry(taskId);
+            await ackServerTaskWithRetry(taskId, taskReadToken);
           }
         } catch {
-          if (controller.signal.aborted) return;
+          if (controller.signal.aborted) {
+            queueRecoveredServerTaskCancel();
+            return;
+          }
           patchNode(node.id, (n) => ({ ...n, metadata: { ...n.metadata, status: "error", recoverableGenerationTask: Boolean(node.metadata?.generationTaskId), errorDetails: "恢复生成状态失败" } }));
         } finally {
-          activeGenerationsRef.current.delete(node.id);
+          if (activeGenerationsRef.current.get(node.id) === controller) {
+            activeGenerationsRef.current.delete(node.id);
+          }
         }
       })();
     }

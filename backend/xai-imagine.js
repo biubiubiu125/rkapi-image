@@ -4,7 +4,7 @@ function getXaiImagineEndpoint(mode) {
     : '/v1/images/generations';
 }
 
-function createXaiImagineRequestInit(apiKey, request) {
+function createXaiImagineRequestInit(apiKey, request, options = {}) {
   const payload = {
     model: request.model,
     prompt: request.prompt,
@@ -26,6 +26,7 @@ function createXaiImagineRequestInit(apiKey, request) {
       'Authorization': `Bearer ${apiKey}`,
     },
     body: JSON.stringify(payload),
+    signal: options.signal,
   };
 }
 

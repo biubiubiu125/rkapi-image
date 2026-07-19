@@ -96,7 +96,7 @@ export function AiTextGenerateDialog({
             </div>
 
             <div className="flex items-center justify-end gap-2 border-t border-border pt-3">
-              <Button variant="ghost" onClick={handleCancel} disabled={loading}>
+              <Button variant="ghost" onClick={handleCancel}>
                 取消
               </Button>
               <Button onClick={handleGenerate} disabled={loading || !prompt.trim()}>
@@ -133,7 +133,7 @@ export function AiTextGenerateDialog({
             </div>
 
             <div className="flex items-center justify-end gap-2 border-t border-border pt-3">
-              <Button variant="ghost" onClick={handleCancel} disabled={loading}>
+              <Button variant="ghost" onClick={handleCancel}>
                 取消
               </Button>
               <Button onClick={handleAccept} disabled={loading || !generatedContent || !!error}>

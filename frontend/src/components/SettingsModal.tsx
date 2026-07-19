@@ -34,13 +34,20 @@ import { Switch } from '@/components/ui/switch';
 import { BackupProgress } from '@/components/BackupProgress';
 import {
   BUILTIN_IMAGE_PRESETS,
+  applyImageModelToDefaultTasks,
   applyBuiltinImagePresetModelIds,
   BUILTIN_IMAGE_PRESET_OPTIONS,
   DEFAULT_DEFAULTS,
+  RKAPI_BASE_URL,
+  RKAPI_DEFAULT_IMAGE_4K_ID,
+  RKAPI_DEFAULT_IMAGE_REVERSE_ID,
+  RKAPI_DEFAULT_TEXT_MODEL_ID,
+  RKAPI_TEXT_MODEL_NAME,
   generateModelId,
   getDefaultTextModelTemplate,
   getCompleteImageModels,
   getImageModelOutputSizes,
+  getRkapiImageModelName,
   getResolvedImageModelId,
   isXaiImaginePresetId,
   loadRegistry,
@@ -55,10 +62,13 @@ import { syncDynamicModelExports } from '@/lib/gemini-config';
 import { exportAllData, importAllData, downloadBlob, generateBackupFilename, type BackupProgress as BackupProgressType } from '@/lib/backup-utils';
 import { checkModelsAvailability, type ModelStatus } from '@/lib/flyreq-task-client';
 import { hasConfiguredImageModel, isPromptOptimizeEnabled, setPromptOptimizeEnabled } from '@/lib/settings-storage';
-import { saveFirstImageModelAsFormDefault } from '@/lib/form-settings';
-import { notifyImageModelDefaultUpdated } from '@/hooks/useImageModelDefaultRefresh';
-import { BA_RANDOM_URL, BING_WALLPAPER_URL, IMAGE_MODEL_KEY_GUIDE } from '@/lib/constants';
-import { PROMPT_DATA_SOURCES, getPromptSourceLabel } from '@/lib/prompt-gallery-data';
+import { saveImageModelFormDefaults } from '@/lib/form-settings';
+import {
+  getEnabledTextModelsForSettingsSave,
+  getPersistableTextModelsForSettingsSave,
+  getSettingsModelSaveError,
+} from '@/lib/settings-text-models';
+import { IMAGE_MODEL_KEY_GUIDE } from '@/lib/constants';
 import { getOutputSizeLabel } from '@/lib/model-capabilities';
 import { useBranding } from '@/components/BrandProvider';
 
@@ -86,14 +96,14 @@ function cloneTextModel(model: TextModelConfig): TextModelConfig {
  */
 function createImageModelDraft(): ImageModelConfig {
   const preset = BUILTIN_IMAGE_PRESETS['gpt-image-2'];
+  const id = generateModelId('img');
   return {
-    id: generateModelId('img'),
+    id,
     protocol: preset.protocol,
-    name: '',
-    modelId: '',
-    usesPresetModelId: true,
+    name: getRkapiImageModelName(id),
+    modelId: preset.modelId,
     apiKey: '',
-    baseUrl: preset.baseUrl,
+    baseUrl: RKAPI_BASE_URL,
     builtinPreset: preset.id,
     maxRefImages: preset.maxRefImages,
     maxOutputSize: preset.maxOutputSize,
@@ -116,20 +126,18 @@ function createExternalImageModelDraft(config: ExternalModelConfig): ImageModelC
   const protocol = isXaiImagine ? preset.protocol : (config.protocol || preset.protocol);
   const isGptImage = preset.id === 'gpt-image-2';
   const configuredModelId = config.modelId?.trim() || '';
-  const usesPresetModelId = !configuredModelId || configuredModelId === preset.modelId;
   return {
     id: config.modelKey || generateModelId('img'),
     protocol,
-    name: config.name || preset.name,
-    modelId: usesPresetModelId ? '' : (configuredModelId || preset.modelId),
-    usesPresetModelId: usesPresetModelId || undefined,
-    apiKey: config.apiKey || '',
-    baseUrl: config.baseUrl || preset.baseUrl,
+    name: getRkapiImageModelName(config.modelKey || ''),
+    modelId: configuredModelId || preset.modelId,
+    apiKey: '',
+    baseUrl: RKAPI_BASE_URL,
     builtinPreset: preset.id,
     maxRefImages: isXaiImagine ? preset.maxRefImages : (config.maxRefImages || preset.maxRefImages),
     maxOutputSize: isXaiImagine && config.maxOutputSize !== '1K' ? preset.maxOutputSize : (config.maxOutputSize || preset.maxOutputSize),
     supportsAdvancedParams: protocol === 'openai' && isGptImage ? preset.supportsAdvancedParams : false,
-    supportsTemperature: protocol === 'google' && Boolean(config.supportsTemperature ?? (usesPresetModelId ? preset.supportsTemperature : false)),
+    supportsTemperature: protocol === 'google' && Boolean(config.supportsTemperature ?? preset.supportsTemperature),
     streamImages: protocol === 'openai' && isGptImage ? Boolean(config.streamImages ?? preset.streamImages) : false,
   };
 }
@@ -140,24 +148,22 @@ function patchImageModelFromExternal(model: ImageModelConfig, config: ExternalMo
   const protocol = isXaiImagine ? preset.protocol : (config.protocol || model.protocol || preset.protocol);
   const isGptImage = preset.id === 'gpt-image-2';
   const configuredModelId = config.modelId === undefined
-    ? model.modelId.trim()
+    ? model.modelId.trim() || preset.modelId
     : config.modelId.trim();
-  const usesPresetModelId = !configuredModelId || configuredModelId === preset.modelId;
   return {
     ...model,
     protocol,
     builtinPreset: preset.id,
-    name: config.name || model.name || preset.name,
-    modelId: usesPresetModelId ? '' : (configuredModelId || preset.modelId),
-    usesPresetModelId: usesPresetModelId || undefined,
-    baseUrl: config.baseUrl || model.baseUrl || preset.baseUrl,
-    apiKey: config.apiKey ?? model.apiKey,
+    name: getRkapiImageModelName(model.id),
+    modelId: configuredModelId || preset.modelId,
+    baseUrl: RKAPI_BASE_URL,
+    apiKey: model.apiKey,
     maxRefImages: isXaiImagine ? preset.maxRefImages : (config.maxRefImages || model.maxRefImages || preset.maxRefImages),
     maxOutputSize: isXaiImagine && config.maxOutputSize !== '1K'
       ? preset.maxOutputSize
       : (config.maxOutputSize || model.maxOutputSize || preset.maxOutputSize),
     supportsAdvancedParams: protocol === 'openai' && isGptImage ? model.supportsAdvancedParams || preset.supportsAdvancedParams : false,
-    supportsTemperature: protocol === 'google' && Boolean(config.supportsTemperature ?? (usesPresetModelId ? model.supportsTemperature ?? preset.supportsTemperature : false)),
+    supportsTemperature: protocol === 'google' && Boolean(config.supportsTemperature ?? model.supportsTemperature ?? preset.supportsTemperature),
     streamImages: protocol === 'openai' && isGptImage ? Boolean(config.streamImages ?? model.streamImages ?? preset.streamImages) : false,
   };
 }
@@ -167,10 +173,10 @@ function createTextModelDraft(): TextModelConfig {
   return {
     id: generateModelId('txt'),
     protocol: template.protocol,
-    name: '',
-    modelId: '',
+    name: RKAPI_TEXT_MODEL_NAME,
+    modelId: template.modelId,
     apiKey: '',
-    baseUrl: template.baseUrl,
+    baseUrl: RKAPI_BASE_URL,
     note: template.note,
   };
 }
@@ -181,10 +187,6 @@ function isCompleteImageModel(model: ImageModelConfig): boolean {
 
 function isCompleteTextModel(model: TextModelConfig): boolean {
   return Boolean(model.name.trim() && model.modelId.trim() && model.apiKey.trim() && model.baseUrl.trim());
-}
-
-function hasAnyTextModelField(model: TextModelConfig): boolean {
-  return Boolean(model.name.trim() || model.modelId.trim() || model.apiKey.trim() || model.baseUrl.trim());
 }
 
 function getImageModelLabel(models: ImageModelConfig[], id: string): string | undefined {
@@ -202,21 +204,28 @@ function normalizeDefaults(
 ): DefaultModels {
   const completeImageModels = imageModels.filter(isCompleteImageModel);
   const completeTextModels = textModels.filter(isCompleteTextModel);
-  const firstImageModelId = completeImageModels[0]?.id || '';
-  const firstTextModelId = completeTextModels[0]?.id || '';
+  const preferredTextToImageId = completeImageModels.some((model) => model.id === RKAPI_DEFAULT_IMAGE_4K_ID)
+    ? RKAPI_DEFAULT_IMAGE_4K_ID
+    : completeImageModels[0]?.id || '';
+  const preferredImageToImageId = completeImageModels.some((model) => model.id === RKAPI_DEFAULT_IMAGE_REVERSE_ID)
+    ? RKAPI_DEFAULT_IMAGE_REVERSE_ID
+    : completeImageModels[0]?.id || '';
+  const preferredTextModelId = completeTextModels.some((model) => model.id === RKAPI_DEFAULT_TEXT_MODEL_ID)
+    ? RKAPI_DEFAULT_TEXT_MODEL_ID
+    : completeTextModels[0]?.id || '';
 
   return {
-    textToImage: completeImageModels.some((model) => model.id === defaults.textToImage) ? defaults.textToImage : firstImageModelId,
-    imageToImage: completeImageModels.some((model) => model.id === defaults.imageToImage) ? defaults.imageToImage : firstImageModelId,
-    reversePrompt: completeTextModels.some((model) => model.id === defaults.reversePrompt) ? defaults.reversePrompt : firstTextModelId,
-    agent: completeTextModels.some((model) => model.id === defaults.agent) ? defaults.agent : firstTextModelId,
-    promptOptimize: completeTextModels.some((model) => model.id === defaults.promptOptimize) ? defaults.promptOptimize : firstTextModelId,
-    imageDescribe: completeTextModels.some((model) => model.id === defaults.imageDescribe) ? defaults.imageDescribe : firstTextModelId,
+    textToImage: completeImageModels.some((model) => model.id === defaults.textToImage) ? defaults.textToImage : preferredTextToImageId,
+    imageToImage: completeImageModels.some((model) => model.id === defaults.imageToImage) ? defaults.imageToImage : preferredImageToImageId,
+    reversePrompt: completeTextModels.some((model) => model.id === defaults.reversePrompt) ? defaults.reversePrompt : preferredTextModelId,
+    agent: completeTextModels.some((model) => model.id === defaults.agent) ? defaults.agent : preferredTextModelId,
+    promptOptimize: completeTextModels.some((model) => model.id === defaults.promptOptimize) ? defaults.promptOptimize : preferredTextModelId,
+    imageDescribe: completeTextModels.some((model) => model.id === defaults.imageDescribe) ? defaults.imageDescribe : preferredTextModelId,
   };
 }
 
 export function SettingsModal({ isOpen, onClose, onApiKeyChange, externalModelConfig, onExternalModelConfigConsumed }: SettingsModalProps) {
-  const { platformName, platformVersion } = useBranding();
+  const { platformVersion } = useBranding();
   const [imageModels, setImageModels] = useState<ImageModelConfig[]>([]);
   const [textModels, setTextModels] = useState<TextModelConfig[]>([]);
   const [defaults, setDefaults] = useState<DefaultModels>(DEFAULT_DEFAULTS);
@@ -297,21 +306,12 @@ export function SettingsModal({ isOpen, onClose, onApiKeyChange, externalModelCo
           ? patchImageModelFromExternal(existing, externalModelConfig)
           : createExternalImageModelDraft(externalModelConfig);
         setSelectedImageModelId(nextModel.id);
-        // 外链配置是首次引导的目标模型，即使用户稍后才填写 API Key，也必须预先成为两个生图工作流的默认模型。
-        setDefaults((current) => ({
-          ...current,
-          textToImage: nextModel.id,
-          imageToImage: nextModel.id,
-        }));
+        setDefaults((current) => applyImageModelToDefaultTasks(current, nextModel.id));
         return existing
           ? prev.map((model) => (model.id === existing.id ? nextModel : model))
           : [...prev, nextModel];
       });
-      setExternalConfigNotice(
-        externalModelConfig.apiKey
-          ? '已从外部链接带入模型配置，并将其设为文生图/图生图默认模型。请确认后点击“保存设置”。URL 中的配置参数已清理。'
-          : '已从外部链接带入模型配置，请补充 API Key 后点击“保存设置”。URL 中的配置参数已清理。',
-      );
+      setExternalConfigNotice('已从外部链接带入模型配置，请补充 API Key 后点击“保存设置”。URL 中的配置参数已清理。');
       setError(null);
       setSuccess(null);
       onExternalModelConfigConsumed?.();
@@ -360,10 +360,8 @@ export function SettingsModal({ isOpen, onClose, onApiKeyChange, externalModelCo
       if (patch.builtinPreset) {
         const preset = BUILTIN_IMAGE_PRESETS[patch.builtinPreset];
         next.protocol = preset.protocol;
-        next.name = preset.name;
-        next.modelId = '';
-        next.usesPresetModelId = true;
-        next.baseUrl = preset.baseUrl;
+        next.modelId = preset.modelId;
+        next.usesPresetModelId = undefined;
         next.maxRefImages = preset.maxRefImages;
         next.maxOutputSize = preset.maxOutputSize;
         next.supportsAdvancedParams = preset.supportsAdvancedParams;
@@ -371,7 +369,7 @@ export function SettingsModal({ isOpen, onClose, onApiKeyChange, externalModelCo
         next.streamImages = preset.streamImages;
       }
       if ('modelId' in patch) {
-        next.usesPresetModelId = !next.modelId.trim();
+        next.usesPresetModelId = undefined;
         if (next.protocol === 'google' && !next.usesPresetModelId) next.supportsTemperature = false;
       }
       if (isXaiImaginePresetId(next.builtinPreset)) {
@@ -389,6 +387,8 @@ export function SettingsModal({ isOpen, onClose, onApiKeyChange, externalModelCo
       } else if (patch.protocol === 'openai') {
         next.supportsTemperature = false;
       }
+      next.name = getRkapiImageModelName(next.id);
+      next.baseUrl = RKAPI_BASE_URL;
       return next;
     }));
   };
@@ -416,15 +416,18 @@ export function SettingsModal({ isOpen, onClose, onApiKeyChange, externalModelCo
     const template = getDefaultTextModelTemplate(protocol);
     handleUpdateTextModel(id, {
       protocol: template.protocol,
-      name: template.name,
       modelId: template.modelId,
-      baseUrl: template.baseUrl,
       note: template.note,
     });
   };
 
   const handleUpdateTextModel = (id: string, patch: Partial<TextModelConfig>) => {
-    setTextModels((prev) => prev.map((model) => (model.id === id ? { ...model, ...patch } : model)));
+    setTextModels((prev) => prev.map((model) => (model.id === id ? {
+      ...model,
+      ...patch,
+      name: RKAPI_TEXT_MODEL_NAME,
+      baseUrl: RKAPI_BASE_URL,
+    } : model)));
   };
 
   const handleDeleteTextModel = (id: string) => {
@@ -444,41 +447,36 @@ export function SettingsModal({ isOpen, onClose, onApiKeyChange, externalModelCo
 
   const persistRegistry = () => {
     const hasNoCompleteImageModelBeforeSave = getCompleteImageModels(loadRegistry()).length === 0;
-    const enabledTextModels = textModels.filter(hasAnyTextModelField);
-    if (imageModels.length === 0) {
-      setError('至少填写一个图片模型');
-      return;
-    }
-    if (!imageModels.some(isCompleteImageModel)) {
-      setError('至少完成一个图片模型的全部信息');
-      return;
-    }
-    if (enabledTextModels.length > 0 && !enabledTextModels.every(isCompleteTextModel)) {
-      setError('文本模型如需启用，请填写完整；不需要文本功能时可以留空或删除');
-      return;
-    }
-    if (promptOptimizeEnabled && !enabledTextModels.some(isCompleteTextModel)) {
-      setError('启用提示词优化前，请先完成至少一个文本模型配置');
+    const persistableTextModels = getPersistableTextModelsForSettingsSave(textModels);
+    const enabledTextModels = getEnabledTextModelsForSettingsSave(textModels);
+    const saveError = getSettingsModelSaveError({
+      imageModels,
+      enabledTextModels,
+      promptOptimizeEnabled,
+    });
+    if (saveError) {
+      setError(saveError);
       return;
     }
 
     const registry = {
       imageModels,
-      textModels: enabledTextModels,
-      defaults: normalizeDefaults(defaults, imageModels, enabledTextModels),
+      textModels: persistableTextModels,
+      defaults: normalizeDefaults(defaults, imageModels, persistableTextModels),
     };
 
     saveRegistry(registry);
     if (hasNoCompleteImageModelBeforeSave && registry.defaults.textToImage) {
-      saveFirstImageModelAsFormDefault(registry.defaults.textToImage);
-      notifyImageModelDefaultUpdated();
+      saveImageModelFormDefaults({
+        textToImage: registry.defaults.textToImage,
+        imageToImage: registry.defaults.imageToImage,
+      });
     }
     if (!setPromptOptimizeEnabled(promptOptimizeEnabled)) {
       setError('启用提示词优化前，请先完成至少一个文本模型配置');
       return;
     }
     syncDynamicModelExports();
-    window.dispatchEvent(new Event('flyreq-model-registry-updated'));
     onApiKeyChange?.(hasConfiguredImageModel());
     setSuccess('设置已保存');
     setExternalConfigNotice(null);
@@ -511,7 +509,14 @@ export function SettingsModal({ isOpen, onClose, onApiKeyChange, externalModelCo
     setModelCheckError(null);
     setModelStatuses(null);
     try {
-      const statuses = await checkModelsAvailability(configuredModels.map((model) => model.id));
+      const statuses = await checkModelsAvailability(configuredModels.map((model) => model.id), configuredModels.map((model) => ({
+        id: model.id,
+        name: model.name,
+        protocol: model.protocol,
+        baseUrl: model.baseUrl,
+        apiKey: model.apiKey,
+        modelId: 'builtinPreset' in model ? getResolvedImageModelId(model) : model.modelId,
+      })));
       setModelStatuses(statuses);
     } catch (err) {
       setModelCheckError(err instanceof Error ? err.message : '检查模型失败');
@@ -597,7 +602,7 @@ export function SettingsModal({ isOpen, onClose, onApiKeyChange, externalModelCo
             </TabsTrigger>
             <TabsTrigger value="about" className="gap-2 rounded-none border-b-2 border-transparent data-active:border-primary data-active:bg-transparent data-active:shadow-none px-4 py-3">
               <Info className="w-4 h-4" />
-              关于
+              使用方法
             </TabsTrigger>
           </TabsList>
 
@@ -605,7 +610,7 @@ export function SettingsModal({ isOpen, onClose, onApiKeyChange, externalModelCo
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div className="space-y-1">
                 <p className="text-sm font-medium">模型级独立配置</p>
-                <p className="text-xs text-muted-foreground">每个模型单独记录协议、Base URL、API Key。外部只显示配置完整的模型。</p>
+                <p className="text-xs text-muted-foreground">每个模型单独记录协议、模型 ID、API Key；Base URL 统一固定为 RKAPI 网关。</p>
               </div>
               <Button onClick={persistRegistry} className="gap-2">
                 <Save className="w-4 h-4" />
@@ -648,7 +653,7 @@ export function SettingsModal({ isOpen, onClose, onApiKeyChange, externalModelCo
               <div className="flex items-center justify-between gap-3">
                 <div>
                   <p className="font-medium">图片模型</p>
-                  <p className="text-xs text-muted-foreground">默认提供 FlyReq 图片模型，填入 API Key 后即可使用。</p>
+                  <p className="text-xs text-muted-foreground">默认提供 RKAPI 图片模型，填入 API Key 后即可使用。</p>
                 </div>
                 <Button variant="outline" size="sm" className="gap-2" onClick={handleAddImageModel}>
                   <Plus className="w-4 h-4" />
@@ -695,7 +700,7 @@ export function SettingsModal({ isOpen, onClose, onApiKeyChange, externalModelCo
                     </div>
                     <div className="space-y-2">
                       <label className="text-xs text-muted-foreground">显示名称</label>
-                      <Input value={selectedImageModel.name} onChange={(event) => handleUpdateImageModel(selectedImageModel.id, { name: event.target.value })} />
+                      <Input value={selectedImageModel.name} disabled />
                     </div>
                     <div className="space-y-2">
                       <label className="text-xs text-muted-foreground">模型 ID</label>
@@ -704,14 +709,13 @@ export function SettingsModal({ isOpen, onClose, onApiKeyChange, externalModelCo
                         placeholder={BUILTIN_IMAGE_PRESETS[selectedImageModel.builtinPreset].modelId}
                         onChange={(event) => handleUpdateImageModel(selectedImageModel.id, {
                           modelId: event.target.value,
-                          usesPresetModelId: !event.target.value.trim(),
                         })}
                       />
-                      <p className="text-xs text-muted-foreground">留空时使用当前预设的默认模型 ID；填写后使用自定义模型 ID。</p>
+                      <p className="text-xs text-muted-foreground">默认使用 gpt-image-2，可按实际上游模型 ID 修改。</p>
                     </div>
                     <div className="space-y-2">
                       <label className="text-xs text-muted-foreground">Base URL</label>
-                      <Input value={selectedImageModel.baseUrl} onChange={(event) => handleUpdateImageModel(selectedImageModel.id, { baseUrl: event.target.value })} />
+                      <Input value={selectedImageModel.baseUrl} disabled />
                     </div>
                     <div className="space-y-2">
                       <label className="text-xs text-muted-foreground">API Key</label>
@@ -844,7 +848,7 @@ export function SettingsModal({ isOpen, onClose, onApiKeyChange, externalModelCo
                     </div>
                     <div className="space-y-2">
                       <label className="text-xs text-muted-foreground">显示名称</label>
-                      <Input value={selectedTextModel.name} onChange={(event) => handleUpdateTextModel(selectedTextModel.id, { name: event.target.value })} />
+                      <Input value={selectedTextModel.name} disabled />
                     </div>
                     <div className="space-y-2">
                       <label className="text-xs text-muted-foreground">模型 ID</label>
@@ -852,7 +856,7 @@ export function SettingsModal({ isOpen, onClose, onApiKeyChange, externalModelCo
                     </div>
                     <div className="space-y-2">
                       <label className="text-xs text-muted-foreground">Base URL</label>
-                      <Input value={selectedTextModel.baseUrl} onChange={(event) => handleUpdateTextModel(selectedTextModel.id, { baseUrl: event.target.value })} />
+                      <Input value={selectedTextModel.baseUrl} disabled />
                     </div>
                     <div className="space-y-2">
                       <label className="text-xs text-muted-foreground">API Key</label>
@@ -1012,120 +1016,25 @@ export function SettingsModal({ isOpen, onClose, onApiKeyChange, externalModelCo
 
           <TabsContent value="about" className="min-h-0 overflow-y-auto p-4 sm:p-6 space-y-4 mt-0">
             <div className="space-y-4 text-sm">
-              <h3 className="text-lg font-medium">{platformName} <span className="text-xs text-muted-foreground font-normal">v{platformVersion}</span></h3>
-              <div className="rounded-lg border border-primary/20 bg-primary/10 p-3">
-                <p className="font-medium text-foreground">{imageModelKeyGuide.title}</p>
-                <p className="mt-1 text-sm text-muted-foreground">{imageModelKeyGuide.description}</p>
-                <a
-                  href={imageModelKeyGuide.url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="mt-2 inline-flex items-center gap-1 text-primary hover:underline"
-                >
-                  {imageModelKeyGuide.ctaLabel}
-                  <ExternalLink className="w-3 h-3" />
-                </a>
-              </div>
-
-              <details className="group rounded-lg bg-muted/50 p-3">
-                <summary className="flex cursor-pointer select-none items-center gap-2 font-medium">
-                  <span className="text-[10px] opacity-60 transition-transform group-open:rotate-90">▶</span>
-                  使用方法
-                </summary>
-                <ol className="mt-3 list-decimal list-inside space-y-2 text-muted-foreground">
-                  <li>基础生图只需先完成至少一个图片模型；文本模型是智能文本功能的可选配置。</li>
-                  <li>保存后，外部工作区只会显示这些配置完整的模型。</li>
-                  <li>再为各工作流指定默认模型，即可开始生图、反推或 Agent 工作流。</li>
-                </ol>
-              </details>
-
-              <details className="group rounded-lg bg-muted/50 p-3">
-                <summary className="flex cursor-pointer select-none items-center gap-2 font-medium">
-                  <span className="text-[10px] opacity-60 transition-transform group-open:rotate-90">▶</span>
-                  数据来源
-                </summary>
-                <ul className="mt-3 list-disc list-inside space-y-2 text-muted-foreground">
-                  <li>
-                    <span className="text-foreground">提示词广场</span> - 提示词来源：
-                    <ul className="mt-1 ml-5 list-disc list-inside space-y-1">
-                      {PROMPT_DATA_SOURCES.map((source) => (
-                        <li key={source.name}>
-                          <a href={source.sourceUrl} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-primary hover:underline">
-                            {getPromptSourceLabel(source.sourceUrl)} <ExternalLink className="w-3 h-3" />
-                          </a>
-                        </li>
-                      ))}
-                    </ul>
-                  </li>
-                  <li>
-                    <span className="text-foreground">随机图片 · BA人物</span> -{' '}
-                    <a href={BA_RANDOM_URL} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-primary hover:underline">
-                      img.catcdn.cn <ExternalLink className="w-3 h-3" />
-                    </a>
-                  </li>
-                  <li>
-                    <span className="text-foreground">随机图片 · Bing壁纸</span> -{' '}
-                    <a href={BING_WALLPAPER_URL} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-primary hover:underline">
-                      bing.img.run <ExternalLink className="w-3 h-3" />
-                    </a>
-                  </li>
-                </ul>
-              </details>
-
-              <details className="group rounded-lg bg-muted/50 p-3">
-                <summary className="flex cursor-pointer select-none items-center gap-2 font-medium">
-                  <span className="text-[10px] opacity-60 transition-transform group-open:rotate-90">▶</span>
-                  隐私条款
-                </summary>
-                <ul className="mt-3 list-disc list-inside space-y-2 text-muted-foreground">
-                  <li>本站为本地优先应用：模型配置、任务历史、设置与生成图片默认保存在你的浏览器本地。</li>
-                  <li>每个模型的 API Key 和 Base URL 仅用于调用你自己配置的上游服务。</li>
-                  <li>生图、反推、Agent、提示词优化等功能会把你当前选择的提示词、参考图或对话内容发送到对应模型配置的上游接口。</li>
-                  <li>备份文件可能包含模型配置、本地任务记录与图片数据，请自行妥善保管。</li>
-                </ul>
-              </details>
-
-              <details className="group rounded-lg bg-muted/50 p-3">
-                <summary className="flex cursor-pointer select-none items-center gap-2 font-medium">
-                  <span className="text-[10px] opacity-60 transition-transform group-open:rotate-90">▶</span>
-                  参考项目
-                </summary>
-                <ul className="mt-3 list-disc list-inside space-y-2 text-muted-foreground">
-                  <li>
-                    项目仓库：
-                    {' '}
-                    <a href="https://github.com/doudou770/flyreq-image-studio" target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-primary hover:underline">
-                      doudou770/flyreq-image-studio <ExternalLink className="w-3 h-3" />
-                    </a>
-                  </li>
-                  <li>
-                    基于
-                    {' '}
-                    <a href="https://github.com/tianjiangqiji/flyreq-image-studio" target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-primary hover:underline">
-                      tianjiangqiji/flyreq-image-studio <ExternalLink className="w-3 h-3" />
-                    </a>
-                    {' '}
-                    修改而来。
-                  </li>
-                  <li>
-                    基于
-                    {' '}
-                    <a href="https://github.com/aaronkwhite/nanobanana-studio-web" target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-primary hover:underline">
-                      aaronkwhite/nanobanana-studio-web <ExternalLink className="w-3 h-3" />
-                    </a>
-                    {' '}
-                    修改而来。
-                  </li>
-                  <li>
-                    无限画布工作区参考
-                    {' '}
-                    <a href="https://github.com/basketikun/infinite-canvas" target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-primary hover:underline">
-                      basketikun/infinite-canvas <ExternalLink className="w-3 h-3" />
-                    </a>
-                    。
-                  </li>
-                </ul>
-              </details>
+              <h3 className="text-lg font-medium">使用方法 <span className="text-xs text-muted-foreground font-normal">v{platformVersion}</span></h3>
+              <ol className="list-decimal list-inside space-y-3 text-muted-foreground">
+                <li>
+                  <span className="font-medium text-foreground">填写模型密钥：</span>
+                  在“模型配置”中为 <code>RKAPI-逆向</code>、<code>RKAPI-4k</code> 和 <code>RKAPI</code> 填入对应 API Key；Base URL 已固定为 <code>https://api.rkai6.com</code>。
+                </li>
+                <li>
+                  <span className="font-medium text-foreground">补全模型 ID：</span>
+                  图片模型 ID 默认是 <code>gpt-image-2</code>，可按实际上游模型 ID 修改；文本模型 ID 默认是 <code>gpt-5.6-sol</code>。
+                </li>
+                <li>
+                  <span className="font-medium text-foreground">保存并选择默认模型：</span>
+                  保存后，在“默认模型”区域选择文生图、图生图、反推、Agent、提示词优化和图片描述的默认模型。
+                </li>
+                <li>
+                  <span className="font-medium text-foreground">开始使用：</span>
+                  回到工作台提交文生图或图生图任务；反推、Agent 和提示词优化功能会使用已配置的 <code>RKAPI</code> 文本模型。
+                </li>
+              </ol>
             </div>
           </TabsContent>
         </Tabs>

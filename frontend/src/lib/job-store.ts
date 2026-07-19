@@ -60,6 +60,7 @@ export interface StoredJob {
   /** 当前服务端任务包含的上游生成请求总数。 */
   sseRequests?: number;
   serverTaskId?: string;
+  serverTaskReadToken?: string;
   serverTaskAcked?: boolean;
   refImages?: RefImageData[];
   originalPrompt?: string;
@@ -156,25 +157,49 @@ function toPersistedImageRefs(result: StoredJob): string[] | undefined {
   ));
 }
 
+function isRemoteImageRef(image?: string): boolean {
+  return Boolean(image?.startsWith('URL:') || image?.startsWith('MULTI_URL:'));
+}
+
+export function canPersistRemoteImageRefsInJobsStorage(job: StoredJob): boolean {
+  return (
+    job.serverTaskAcked === false &&
+    Array.isArray(job.images) &&
+    job.images.length > 0 &&
+    job.images.every(isRemoteImageRef) &&
+    (!job.imageData || isRemoteImageRef(job.imageData))
+  );
+}
+
+export function isCompletedJobImageRenderable(job: StoredJob, loadedImages: Set<string>): boolean {
+  if (job.status !== 'completed' || (!job.images && !job.imageData)) return false;
+  return loadedImages.has(job.id) || canPersistRemoteImageRefsInJobsStorage(job);
+}
+
 export async function saveImage(result: StoredJob) {
   const db = await openDB();
-  if (!db) return;
+  if (!db) throw new Error('浏览器本地持久存储不可用');
 
   const images = toPersistedImageRefs(result);
 
-  return new Promise<void>((resolve) => {
-    const tx = db.transaction(IMG_STORE, 'readwrite');
-    tx.objectStore(IMG_STORE).put({
-      id: result.id,
-      jobId: result.id,
-      status: result.status,
-      imageData: images?.[0] || result.imageData,
-      images,
-      refImages: result.refImages,
-      error: result.error,
-    });
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => resolve();
+  return new Promise<void>((resolve, reject) => {
+    try {
+      const tx = db.transaction(IMG_STORE, 'readwrite');
+      tx.objectStore(IMG_STORE).put({
+        id: result.id,
+        jobId: result.id,
+        status: result.status,
+        imageData: images?.[0] || result.imageData,
+        images,
+        refImages: result.refImages,
+        error: result.error,
+      });
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error || new Error('图片元数据持久化失败'));
+      tx.onabort = () => reject(tx.error || new Error('图片元数据持久化中止'));
+    } catch (error) {
+      reject(error instanceof Error ? error : new Error(String(error)));
+    }
   });
 }
 
@@ -200,12 +225,14 @@ export function loadJobs(): StoredJob[] {
   }
 }
 
-export function saveJobs(jobs: StoredJob[]) {
-  if (typeof window === 'undefined') return;
+export function saveJobs(jobs: StoredJob[]): boolean {
+  if (typeof window === 'undefined') return true;
 
   const lightweight = jobs.map(({ ...job }) => {
-    delete job.imageData;
-    delete job.images;
+    if (!canPersistRemoteImageRefsInJobsStorage(job)) {
+      delete job.imageData;
+      delete job.images;
+    }
     delete job.refImages;
     delete job.blobUrls;
     delete job.imageDownloadProgress;
@@ -213,7 +240,9 @@ export function saveJobs(jobs: StoredJob[]) {
   });
   try {
     localStorage.setItem(JOBS_KEY, JSON.stringify(lightweight));
+    return true;
   } catch {
     // Keep the in-memory job list usable when storage quota or browser policy blocks writes.
+    return false;
   }
 }

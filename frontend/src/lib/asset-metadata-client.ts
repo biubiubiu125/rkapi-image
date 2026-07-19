@@ -1,8 +1,9 @@
 'use client';
 
+import { RKAPI_BASE_URL } from '@/lib/flyreq-models';
 
 
-const ASSET_METADATA_MODEL = 'gpt-5.4-mini';
+const ASSET_METADATA_MODEL = 'gpt-5.6-sol';
 
 export interface AssetMetadataSuggestion {
   name: string;
@@ -77,7 +78,7 @@ export async function generateAssetMetadata(input: GenerateAssetMetadataInput): 
     ],
   };
 
-  const baseUrl = input.baseUrl || 'https://api.openai.com';
+  const baseUrl = input.baseUrl || RKAPI_BASE_URL;
   const response = await fetch('/api/flyreq/proxy/text', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

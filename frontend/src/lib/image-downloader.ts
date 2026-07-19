@@ -183,25 +183,25 @@ export async function fetchImageAsBlob(
   throw lastError || new Error('图片下载失败');
 }
 
-async function storeImageBlobInternal(jobId: string, imageIndex: number, blob: Blob): Promise<void> {
+async function storeImageBlobInternal(jobId: string, imageIndex: number, blob: Blob): Promise<boolean> {
   const db = await openImageDb();
   if (!db) {
     setFallbackBlob(`${jobId}-${imageIndex}`, blob);
-    return;
+    return false;
   }
 
-  return new Promise<void>((resolve) => {
+  return new Promise<boolean>((resolve) => {
     const tx = db.transaction(BLOBS_STORE, 'readwrite');
     tx.objectStore(BLOBS_STORE).put({ key: `${jobId}-${imageIndex}`, jobId, imageIndex, blob, createdAt: Date.now() });
-    tx.oncomplete = () => resolve();
+    tx.oncomplete = () => resolve(true);
     tx.onerror = () => {
       setFallbackBlob(`${jobId}-${imageIndex}`, blob);
-      resolve();
+      resolve(false);
     };
   });
 }
 
-export async function storeImageBlob(jobId: string, imageIndex: number, blob: Blob): Promise<void> {
+export async function storeImageBlob(jobId: string, imageIndex: number, blob: Blob): Promise<boolean> {
   return storeImageBlobInternal(jobId, imageIndex, blob);
 }
 
@@ -334,10 +334,23 @@ export async function downloadAndStoreImages(
       const blob = await fetchImageAsBlob(url, options.maxRetries ?? 2, progress => {
         emit({ index: i, status: 'downloading', ...progress });
       });
-      await storeImageBlob(jobId, i, blob);
+      const totalBytes = items[i]?.totalBytes || blob.size || undefined;
+      const persisted = await storeImageBlob(jobId, i, blob);
+      if (!persisted) {
+        failCount++;
+        emit({
+          index: i,
+          status: 'failed',
+          loadedBytes: blob.size,
+          totalBytes,
+          percent: getPercent(blob.size, totalBytes),
+          error: '浏览器本地持久存储不可用',
+        });
+        return;
+      }
+
       blobUrls[i] = URL.createObjectURL(blob);
       successCount++;
-      const totalBytes = items[i]?.totalBytes || blob.size || undefined;
       emit({
         index: i,
         status: 'cached',

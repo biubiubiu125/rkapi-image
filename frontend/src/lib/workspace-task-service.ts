@@ -1,10 +1,14 @@
 import {
   createFlyreqTasks,
-  ackFlyreqTask,
+  normalizeFlyreqTaskAccess,
   resolveImageTaskProvider,
+  validateCreateFlyreqTaskBody,
   type FlyreqTaskResponse,
+  type FlyreqTaskAccess,
   type ImageReference,
+  type CreateFlyreqTaskInput,
 } from '@/lib/flyreq-task-client';
+import { ackServerTaskWithRetry, cancelServerTaskWithRetry } from '@/lib/server-task-ack';
 import type { ModelId } from '@/lib/gemini-config';
 import type { AspectRatio, OutputSize, StoredJob } from '@/lib/job-store';
 import {
@@ -16,7 +20,7 @@ import {
   type ParallelCount,
 } from '@/lib/model-capabilities';
 import { generateUUID } from '@/lib/uuid';
-import { downloadAndStoreImages, type DownloadResult, type ImageDownloadProgressItem } from '@/lib/image-downloader';
+import { deleteStoredBlobs, downloadAndStoreImages, type DownloadResult, type ImageDownloadProgressItem } from '@/lib/image-downloader';
 import { composeEffectiveImagePrompt } from '@/lib/prompt-variants';
 
 export interface TextToImageSubmitInput {
@@ -61,12 +65,57 @@ export interface FailJobOptions extends TaskSseMetadata {
 }
 
 export interface SubmitActions {
-  addJob: (job: StoredJob) => void;
-  replaceJob: (jobId: string, updater: (job: StoredJob) => StoredJob) => void;
+  addJob: (job: StoredJob) => boolean | void;
+  addJobs?: (jobs: StoredJob[]) => boolean;
+  replaceJob: (jobId: string, updater: (job: StoredJob) => StoredJob) => boolean | void;
   completeJob: (jobId: string, job: StoredJob) => Promise<void>;
   failJob: (jobId: string, error: string, options?: FailJobOptions) => Promise<void>;
   /** 可选：返回最新 job 快照，供异步流程避免使用过期闭包。 */
   getJob?: (jobId: string) => StoredJob | undefined;
+}
+
+const INITIAL_JOB_PERSISTENCE_ERROR = '浏览器本地持久存储不可用';
+const SERVER_TASK_ID_PERSISTENCE_ERROR = '浏览器本地持久存储不可用，服务端任务 ID 未保存';
+
+function addInitialJobs(jobs: StoredJob[], actions: SubmitActions): boolean {
+  if (actions.addJobs) return actions.addJobs(jobs);
+  for (const job of [...jobs].reverse()) {
+    if (actions.addJob(job) === false) return false;
+  }
+  return true;
+}
+
+async function persistServerTaskIds(
+  jobs: StoredJob[],
+  serverTasks: FlyreqTaskAccess[],
+  actions: SubmitActions,
+  onError: (message: string) => void,
+): Promise<boolean> {
+  const failed: Array<{ job: StoredJob; serverTask: FlyreqTaskAccess }> = [];
+
+  jobs.forEach((job, imageIndex) => {
+    const serverTask = normalizeFlyreqTaskAccess(serverTasks[imageIndex]);
+    const serverTaskId = serverTask?.taskId || '';
+    const persisted = actions.replaceJob(job.id, current => ({
+      ...current,
+      status: '排队中',
+      serverTaskId,
+      serverTaskReadToken: serverTask?.readToken,
+    }));
+    if (persisted === false && serverTask) failed.push({ job, serverTask });
+  });
+
+  if (failed.length === 0) return true;
+
+  await Promise.all(failed.map(item => cancelServerTaskWithRetry(item.serverTask.taskId, item.serverTask.readToken)));
+
+  const taskIds = failed.map(item => item.serverTask.taskId).join(', ');
+  const message = `${SERVER_TASK_ID_PERSISTENCE_ERROR}（任务 ID：${taskIds}）`;
+  onError(message);
+  for (const item of failed) {
+    await actions.failJob(item.job.id, message);
+  }
+  return false;
 }
 
 /**
@@ -107,6 +156,36 @@ function createInitialImageDownloadProgress(images: string[]): StoredJob['imageD
     status: image.startsWith('URL:') ? 'pending' : 'cached',
     loadedBytes: 0,
   })));
+}
+
+function appendServerAckWarning(warning: string | undefined): string {
+  const message = '服务端清理确认失败，服务端图片会按约 12 小时规则自动清理。';
+  if (!warning) return message;
+  return warning.includes(message) ? warning : `${warning}\n${message}`;
+}
+
+function createTaskPayload(input: CreateFlyreqTaskInput): CreateFlyreqTaskInput {
+  validateCreateFlyreqTaskBody(input);
+  return input;
+}
+
+async function confirmServerTaskAck(job: StoredJob, actions: SubmitActions): Promise<void> {
+  if (!job.serverTaskId) return;
+  const acked = await ackServerTaskWithRetry(job.serverTaskId, job.serverTaskReadToken);
+  if (!acked) {
+    await actions.completeJob(job.id, {
+      ...job,
+      serverTaskAcked: false,
+      warning: appendServerAckWarning(job.warning),
+    });
+    return;
+  }
+
+  try {
+    await actions.completeJob(job.id, { ...job, serverTaskAcked: true });
+  } catch (error) {
+    console.warn('[workspace-task] 本地 ack 状态持久化失败', error);
+  }
 }
 
 /**
@@ -298,14 +377,11 @@ export async function finalizeCompletedServerTask(
         images,
         imageData: images[0],
         warning: task.warning,
-        serverTaskAcked: true,
+        serverTaskAcked: false,
         imageDownloadProgress: undefined,
       };
       await actions.completeJob(job.id, finalJob);
-
-      if (job.serverTaskId) {
-        await ackFlyreqTask(job.serverTaskId);
-      }
+      await confirmServerTaskAck(finalJob, actions);
       return;
     }
 
@@ -345,14 +421,33 @@ export async function finalizeCompletedServerTask(
         : result.successCount === 0
           ? '本地缓存创建失败，已通过远程 URL 渲染。可点击「重新下载」重试缓存，或尽快保存图片（约 12 小时后服务端清理）。'
           : `${result.failCount} 张图片本地缓存失败（已通过远程 URL 渲染），已完成 ${result.successCount} 张。可点击「重新下载」重试缓存。`,
-      serverTaskAcked: allCached,
+      serverTaskAcked: false,
       blobUrls: blobUrls.length > 0 ? blobUrls : undefined,
       imageDownloadProgress: allCached ? undefined : buildImageDownloadProgress(result.items),
     };
-    await actions.completeJob(job.id, finalJob);
+    try {
+      await actions.completeJob(job.id, finalJob);
+    } catch (error) {
+      if (!allCached) throw error;
+      await deleteStoredBlobs(job.id, images.length).catch(() => undefined);
+      await actions.completeJob(job.id, {
+        ...job,
+        ...sseMetadata,
+        status: 'completed',
+        created_at: createdAt,
+        completed_at: completedAt,
+        images,
+        imageData: images[0],
+        warning: '本地结果元数据保存失败，已保留远程 URL 结果。可点击「重新下载」重试缓存，或尽快保存图片（约 12 小时后服务端清理）。',
+        serverTaskAcked: false,
+        blobUrls: undefined,
+        imageDownloadProgress: undefined,
+      });
+      return;
+    }
 
     if (allCached && job.serverTaskId) {
-      await ackFlyreqTask(job.serverTaskId);
+      await confirmServerTaskAck(finalJob, actions);
     }
     return;
   }
@@ -382,7 +477,7 @@ export interface RetryDownloadResult {
  *
  * 行为：
  * - 仅对 job.images 中以 URL: 开头的项执行下载；blob:/data:/IDB: 项保持不变。
- * - 全部成功：清空 warning，调用 ackFlyreqTask 让服务端按 2 分钟规则清理。
+ * - 全部成功：清空 warning，通过 ackServerTaskWithRetry 让服务端按 2 分钟规则清理。
  * - 部分/全部失败：保留 URL: 前缀，更新 warning 数量，不调用 ack（服务端继续保留）。
  * - 不抛异常；调用方根据返回值显示 toast。
  * @param job 已完成但仍包含远程图片引用的本地任务。
@@ -428,7 +523,7 @@ export async function retryDownloadCachedImages(
     warning: allCached
       ? undefined
       : `${remainingUrlCount} 张图片本地缓存仍未成功（已通过远程 URL 渲染），可继续点击「重新下载」重试。`,
-    serverTaskAcked: allCached ? true : false,
+    serverTaskAcked: false,
     blobUrls: combinedBlobUrls.length > 0 ? combinedBlobUrls : undefined,
     imageDownloadProgress: allCached ? undefined : buildImageDownloadProgress(result.items),
   };
@@ -436,7 +531,7 @@ export async function retryDownloadCachedImages(
   await actions.completeJob(job.id, updatedJob);
 
   if (allCached && job.serverTaskId && !job.serverTaskAcked) {
-    await ackFlyreqTask(job.serverTaskId);
+    await confirmServerTaskAck(updatedJob, actions);
   }
 
   return {
@@ -457,17 +552,43 @@ export async function submitTextToImage(
   input: TextToImageSubmitInput,
   actions: SubmitActions,
   onError: (message: string) => void
-): Promise<void> {
+): Promise<boolean> {
   try {
     const provider = resolveImageTaskProvider(input.model);
     const apiKey = provider.apiKey;
 
     if (!apiKey) {
       onError('请先配置 API 密钥');
-      return;
+      return false;
     }
 
+    let submitted = true;
     for (const prompt of input.prompts) {
+      const taskPayload = createTaskPayload({
+        apiKey,
+        baseUrl: provider.baseUrl,
+        protocol: provider.protocol,
+        imageApiFlavor: provider.imageApiFlavor,
+        mode: 'text-to-image',
+        prompt,
+        outputSize: input.outputSize,
+        customSize: input.customSize,
+        aspectRatio: input.aspectRatio,
+        ...(provider.supportsTemperature ? { temperature: input.temperature } : {}),
+        model: provider.modelId,
+        gptImageQuality: input.gptImageQuality,
+        gptImageStyle: input.gptImageStyle,
+        gptImageBackground: input.gptImageBackground,
+        gptImageOutputFormat: input.gptImageOutputFormat,
+        streamImages: provider.streamImages,
+        parallelCount: input.parallelCount,
+        promptVariants: input.promptVariants,
+        effectivePrompts: Array.from(
+          { length: input.parallelCount },
+          (_, imageIndex) => composeEffectiveImagePrompt(prompt, input.promptVariants?.[imageIndex]),
+        ),
+        images: [],
+      });
       const batchId = input.parallelCount > 1 ? generateUUID() : undefined;
       const batchCreatedAt = batchId ? new Date().toISOString() : undefined;
       const jobs = Array.from({ length: input.parallelCount }, (_, imageIndex) => {
@@ -492,50 +613,27 @@ export async function submitTextToImage(
           input.parallelCount > 1 ? imageIndex : undefined,
         );
       });
-      [...jobs].reverse().forEach(job => actions.addJob(job));
+      if (!addInitialJobs(jobs, actions)) {
+        onError(INITIAL_JOB_PERSISTENCE_ERROR);
+        return false;
+      }
 
       try {
-        const serverTaskIds = await createFlyreqTasks({
-          apiKey,
-          baseUrl: provider.baseUrl,
-          protocol: provider.protocol,
-          imageApiFlavor: provider.imageApiFlavor,
-          mode: 'text-to-image',
-          prompt,
-          outputSize: input.outputSize,
-          customSize: input.customSize,
-          aspectRatio: input.aspectRatio,
-          ...(provider.supportsTemperature ? { temperature: input.temperature } : {}),
-          model: provider.modelId,
-          gptImageQuality: input.gptImageQuality,
-          gptImageStyle: input.gptImageStyle,
-          gptImageBackground: input.gptImageBackground,
-          gptImageOutputFormat: input.gptImageOutputFormat,
-          streamImages: provider.streamImages,
-          parallelCount: input.parallelCount,
-          promptVariants: input.promptVariants,
-          effectivePrompts: Array.from(
-            { length: input.parallelCount },
-            (_, imageIndex) => composeEffectiveImagePrompt(prompt, input.promptVariants?.[imageIndex]),
-          ),
-          images: [],
-        });
-        jobs.forEach((job, imageIndex) => {
-          const serverTaskId = serverTaskIds[imageIndex];
-          actions.replaceJob(job.id, current => ({
-            ...current,
-            status: '排队中',
-            serverTaskId,
-          }));
-        });
+        const serverTasks = await createFlyreqTasks(taskPayload);
+        if (!await persistServerTaskIds(jobs, serverTasks, actions, onError)) {
+          submitted = false;
+        }
       } catch (error) {
+        submitted = false;
         for (const job of jobs) {
           await actions.failJob(job.id, error instanceof Error ? error.message : String(error));
         }
       }
     }
+    return submitted;
   } catch (error) {
     onError(error instanceof Error ? error.message : String(error));
+    return false;
   }
 }
 
@@ -550,14 +648,14 @@ export async function submitImageToImage(
   input: ImageToImageSubmitInput,
   actions: SubmitActions,
   onError: (message: string) => void
-): Promise<void> {
+): Promise<boolean> {
   try {
     const provider = resolveImageTaskProvider(input.model);
     const apiKey = provider.apiKey;
 
     if (!apiKey) {
       onError('请先配置 API 密钥');
-      return;
+      return false;
     }
 
     const refImages = input.files.map(file => ({
@@ -567,6 +665,31 @@ export async function submitImageToImage(
       mimeType: file.mimeType,
     }));
     const imageReferences = buildImageReferences(input.files);
+    const taskPayload = createTaskPayload({
+      apiKey,
+      baseUrl: provider.baseUrl,
+      protocol: provider.protocol,
+      imageApiFlavor: provider.imageApiFlavor,
+      mode: 'image-to-image',
+      prompt: input.prompt,
+      outputSize: input.outputSize,
+      customSize: input.customSize,
+      aspectRatio: input.aspectRatio,
+      ...(provider.supportsTemperature ? { temperature: input.temperature } : {}),
+      model: provider.modelId,
+      gptImageQuality: input.gptImageQuality,
+      gptImageStyle: input.gptImageStyle,
+      gptImageBackground: input.gptImageBackground,
+      gptImageOutputFormat: input.gptImageOutputFormat,
+      streamImages: provider.streamImages,
+      parallelCount: input.parallelCount,
+      promptVariants: input.promptVariants,
+      effectivePrompts: Array.from(
+        { length: input.parallelCount },
+        (_, imageIndex) => composeEffectiveImagePrompt(input.prompt, input.promptVariants?.[imageIndex]),
+      ),
+      images: imageReferences,
+    });
     const batchId = input.parallelCount > 1 ? generateUUID() : undefined;
     const batchCreatedAt = batchId ? new Date().toISOString() : undefined;
     const jobs = Array.from({ length: input.parallelCount }, (_, imageIndex) => {
@@ -591,48 +714,25 @@ export async function submitImageToImage(
         input.parallelCount > 1 ? imageIndex : undefined,
       );
     });
-    [...jobs].reverse().forEach(job => actions.addJob(job));
+    if (!addInitialJobs(jobs, actions)) {
+      onError(INITIAL_JOB_PERSISTENCE_ERROR);
+      return false;
+    }
 
     try {
-      const serverTaskIds = await createFlyreqTasks({
-        apiKey,
-        baseUrl: provider.baseUrl,
-        protocol: provider.protocol,
-        imageApiFlavor: provider.imageApiFlavor,
-        mode: 'image-to-image',
-        prompt: input.prompt,
-        outputSize: input.outputSize,
-        customSize: input.customSize,
-        aspectRatio: input.aspectRatio,
-        ...(provider.supportsTemperature ? { temperature: input.temperature } : {}),
-        model: provider.modelId,
-        gptImageQuality: input.gptImageQuality,
-        gptImageStyle: input.gptImageStyle,
-        gptImageBackground: input.gptImageBackground,
-        gptImageOutputFormat: input.gptImageOutputFormat,
-        streamImages: provider.streamImages,
-        parallelCount: input.parallelCount,
-        promptVariants: input.promptVariants,
-        effectivePrompts: Array.from(
-          { length: input.parallelCount },
-          (_, imageIndex) => composeEffectiveImagePrompt(input.prompt, input.promptVariants?.[imageIndex]),
-        ),
-        images: imageReferences,
-      });
-      jobs.forEach((job, imageIndex) => {
-        const serverTaskId = serverTaskIds[imageIndex];
-        actions.replaceJob(job.id, current => ({
-          ...current,
-          status: '排队中',
-          serverTaskId,
-        }));
-      });
+      const serverTasks = await createFlyreqTasks(taskPayload);
+      if (!await persistServerTaskIds(jobs, serverTasks, actions, onError)) {
+        return false;
+      }
     } catch (error) {
       for (const job of jobs) {
         await actions.failJob(job.id, error instanceof Error ? error.message : String(error));
       }
+      return false;
     }
+    return true;
   } catch (error) {
     onError(error instanceof Error ? error.message : String(error));
+    return false;
   }
 }

@@ -124,11 +124,12 @@ export function WorkspaceShell() {
 
   const submitActions = useMemo<SubmitActions>(() => ({
     addJob: workspace.addJob,
+    addJobs: workspace.addJobs,
     replaceJob: workspace.replaceJob,
     completeJob: workspace.completeJob,
     failJob: workspace.failJob,
     getJob: workspace.getJob,
-  }), [workspace.addJob, workspace.completeJob, workspace.failJob, workspace.replaceJob, workspace.getJob]);
+  }), [workspace.addJob, workspace.addJobs, workspace.completeJob, workspace.failJob, workspace.replaceJob, workspace.getJob]);
 
   useServerTaskPolling(workspace.jobs, submitActions, workspace.hasJob);
 
@@ -147,7 +148,7 @@ export function WorkspaceShell() {
     // Set 5s cooldown
     setCooldowns(prev => new Map(prev).set(job.id, Date.now() + 5000));
     try {
-      const task = await getFlyreqTask(job.serverTaskId);
+      const task = await getFlyreqTask(job.serverTaskId, job.serverTaskReadToken);
       if (task.status === 'completed') {
         showToast(locale === 'zh' ? '生成完成，正在下载图片…' : 'Generation complete. Downloading images...', 'success');
         await finalizeCompletedServerTask(job, task, submitActions);
@@ -296,15 +297,15 @@ export function WorkspaceShell() {
                   type="button"
                   onClick={promptGallery.handlePromptGalleryEntry}
                   className="flex items-center gap-2 px-2 pt-3 pb-1 rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                  aria-label="FlyReq Image logo"
+                  aria-label="RKAPI Image logo"
                 >
                   <img
                     src="/favicon.png"
-                    alt="FlyReq Image"
+                    alt="RKAPI Image"
                     className="h-8 w-8 shrink-0 rounded-lg object-cover ring-1 ring-border/60"
                   />
                   <div className="min-w-0">
-                    <h2 className="truncate text-base font-semibold tracking-tight leading-tight">FlyReq Image</h2>
+                    <h2 className="truncate text-base font-semibold tracking-tight leading-tight">RKAPI Image</h2>
                     <p className="truncate text-[11px] text-muted-foreground leading-tight">{t('app.subtitle')}</p>
                   </div>
                 </button>
@@ -400,8 +401,8 @@ export function WorkspaceShell() {
                   <div className={cn(wideMode && 'xl:h-full xl:min-h-0 xl:overflow-y-auto xl:pr-1')}>
                     <ImageGenerationWorkbench
                       wideMode={wideMode}
-                      onSubmitText={data => void submitTextToImage(data, submitActions, handleSubmitError)}
-                      onSubmitImage={data => void submitImageToImage(data, submitActions, handleSubmitError)}
+                      onSubmitText={data => submitTextToImage(data, submitActions, handleSubmitError)}
+                      onSubmitImage={data => submitImageToImage(data, submitActions, handleSubmitError)}
                       disabled={!workspace.hasApiKey}
                       onConfigureApiKey={() => setSettingsOpen(true)}
                       onDraftConsumed={handleImageDraftConsumed}
@@ -521,7 +522,7 @@ export function WorkspaceShell() {
             <>
               {locale === 'zh' ? '取消后会删除本地任务记录并停止前端等待流程。' : 'Cancelling will delete the local task record and stop the frontend waiting flow.'}
               <span className="mt-1 block text-warning">
-                {locale === 'zh' ? '如果任务已进入服务端队列，可能仍会继续执行。' : 'If the task already entered the server queue, it may still continue running.'}
+                {locale === 'zh' ? '如果任务已进入服务端队列，会同步通知服务端取消或清理。' : 'If the task already entered the server queue, the server will be asked to cancel or clean it up.'}
               </span>
             </>
           }

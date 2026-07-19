@@ -6,13 +6,19 @@ export interface PlatformBranding {
   platformName: string;
   logoUrl: string;
   iconUrl: string;
+  icon192Url?: string;
+  icon512Url?: string;
+  maskableIconUrl?: string;
   platformVersion: string;
 }
 
 const DEFAULT_PLATFORM_BRANDING: PlatformBranding = {
-  platformName: 'FlyReq Image',
+  platformName: 'RKAPI Image',
   logoUrl: '/favicon.png',
   iconUrl: '/favicon.png',
+  icon192Url: '/icon-192.png',
+  icon512Url: '/icon-512.png',
+  maskableIconUrl: '/icon-maskable-512.png',
   platformVersion: '0.0.0',
 };
 
@@ -35,6 +41,15 @@ function normalizeBranding(value: unknown): PlatformBranding {
     iconUrl: typeof source.iconUrl === 'string' && source.iconUrl.trim()
       ? source.iconUrl.trim()
       : DEFAULT_PLATFORM_BRANDING.iconUrl,
+    icon192Url: typeof source.icon192Url === 'string' && source.icon192Url.trim()
+      ? source.icon192Url.trim()
+      : DEFAULT_PLATFORM_BRANDING.icon192Url,
+    icon512Url: typeof source.icon512Url === 'string' && source.icon512Url.trim()
+      ? source.icon512Url.trim()
+      : DEFAULT_PLATFORM_BRANDING.icon512Url,
+    maskableIconUrl: typeof source.maskableIconUrl === 'string' && source.maskableIconUrl.trim()
+      ? source.maskableIconUrl.trim()
+      : DEFAULT_PLATFORM_BRANDING.maskableIconUrl,
     platformVersion: typeof source.platformVersion === 'string' && source.platformVersion.trim()
       ? source.platformVersion.trim()
       : DEFAULT_PLATFORM_BRANDING.platformVersion,

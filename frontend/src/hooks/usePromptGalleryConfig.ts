@@ -7,6 +7,7 @@ import {
   type BuiltinImagePresetModelIds,
   type DeploymentDefaultImageModelConfig,
 } from '@/lib/flyreq-models';
+import { migrateRkapiImageFormDefaults } from '@/lib/form-settings';
 
 // 1 = 常驻（直接显示） 2 = 私密（需密码） 3 = 关闭（完全隐藏）
 export type PromptGalleryMode = '1' | '2' | '3';
@@ -34,6 +35,7 @@ export function usePromptGalleryConfig() {
         if (cancelled) return;
         applyBuiltinImagePresetModelIds(data.imagePresetModelIds);
         applyDeploymentDefaultImageModel(data.defaultImageModel);
+        migrateRkapiImageFormDefaults();
         const raw = data.promptGalleryMode;
         setMode(raw === '1' || raw === '3' ? raw : '2');
         setPasswordEnabled(Boolean(data.promptGalleryPasswordEnabled));
@@ -41,6 +43,7 @@ export function usePromptGalleryConfig() {
       .catch(() => {
         applyBuiltinImagePresetModelIds();
         applyDeploymentDefaultImageModel();
+        migrateRkapiImageFormDefaults();
       })
       .finally(() => {
         if (!cancelled) setReady(true);

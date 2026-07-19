@@ -41,6 +41,7 @@ import {
 import { MAX_UPLOAD_SIZE_BYTES } from '@/lib/constants';
 import { useGifWorkflow } from '@/hooks/useGifWorkflow';
 import { usePromptOptimizeSetting } from '@/hooks/usePromptOptimizeSetting';
+import { useModelRegistryRefresh } from '@/hooks/useModelRegistryRefresh';
 import type { ImageActionPayload } from '@/lib/image-actions';
 import { getDefaultConfiguredTextModel } from '@/lib/model-endpoints';
 
@@ -69,7 +70,11 @@ interface PersistedSettings {
 
 export function GifGenerationWorkspace({ wideMode = false, hasApiKey, onConfigureApiKey, onError, showToast }: GifGenerationWorkspaceProps) {
   const workflow = useGifWorkflow();
-  const gifModelOptions = useMemo(() => getGifCompatibleModels(), []);
+  const modelRegistryRefreshVersion = useModelRegistryRefresh();
+  const gifModelOptions = useMemo(() => {
+    void modelRegistryRefreshVersion;
+    return getGifCompatibleModels();
+  }, [modelRegistryRefreshVersion]);
   const { enabled: promptOptimizeEnabled } = usePromptOptimizeSetting();
 
   const [prompt, setPrompt] = useState('');
@@ -202,6 +207,26 @@ export function GifGenerationWorkspace({ wideMode = false, hasApiKey, onConfigur
       gptImageOutputFormat: gptImageAdvancedParams.outputFormat,
     });
   }, [model, loop, closedLoop, frameDelayMs, loopCount, framePadding, gptImageAdvancedParams, settingsReady]);
+
+  useEffect(() => {
+    if (!settingsReady) return;
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (cancelled) return;
+      if (gifModelOptions.length === 0) {
+        if (model) {
+          setModel('');
+          setGptImageAdvancedParams(DEFAULT_GPT_IMAGE_ADVANCED_PARAMS);
+        }
+        return;
+      }
+      if (gifModelOptions.some((option) => option.value === model)) return;
+      const fallbackModel = getDefaultGifModelId();
+      setModel(fallbackModel);
+      setGptImageAdvancedParams(prev => getGptImageAdvancedParamsForModel(fallbackModel, prev));
+    });
+    return () => { cancelled = true; };
+  }, [gifModelOptions, model, settingsReady]);
 
   useEffect(() => {
     if (!workflow.startedAt || (workflow.job?.status !== 'generating_grid' && workflow.job?.status !== 'generating_gif')) {
@@ -342,6 +367,10 @@ export function GifGenerationWorkspace({ wideMode = false, hasApiKey, onConfigur
       setMissingKeyOpen(true);
       return;
     }
+    if (!gifModelOptions.some(option => option.value === model)) {
+      onError('当前动图模型已失效，请重新选择后再提交');
+      return;
+    }
     try {
       await workflow.submitGrid(submitInput);
     } catch (error) {
@@ -352,7 +381,7 @@ export function GifGenerationWorkspace({ wideMode = false, hasApiKey, onConfigur
         onError(message);
       }
     }
-  }, [hasApiKey, onError, submitInput, workflow]);
+  }, [gifModelOptions, hasApiKey, model, onError, submitInput, workflow]);
 
   const handleSubmitClick = useCallback(() => {
     if (!prompt.trim()) return;

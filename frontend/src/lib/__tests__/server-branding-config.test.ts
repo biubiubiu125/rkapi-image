@@ -9,16 +9,19 @@ const serverSource = fs.readFileSync(
   'utf8',
 );
 
-describe('后端平台品牌配置', () => {
-  it('从环境变量读取平台名称、Logo 和图标地址', () => {
-    expect(serverSource).toContain('FLYREQ_PLATFORM_NAME');
-    expect(serverSource).toContain('FLYREQ_PLATFORM_LOGO_URL');
-    expect(serverSource).toContain('FLYREQ_PLATFORM_ICON_URL');
+describe('backend platform branding config', () => {
+  it('reads platform name, logo, and icon through prefixed runtime env aliases', () => {
+    expect(serverSource).toContain('function getRuntimeEnvValue(env, key)');
+    expect(serverSource).toContain('env[`RKAPI_IMAGE_${key}`]');
+    expect(serverSource).toContain('env[`FLYREQ_${key}`]');
+    expect(serverSource).toContain("getRuntimeEnvValue(env, 'PLATFORM_NAME')");
+    expect(serverSource).toContain("getRuntimeEnvValue(env, 'PLATFORM_LOGO_URL')");
+    expect(serverSource).toContain("getRuntimeEnvValue(env, 'PLATFORM_ICON_URL')");
     expect(serverSource).toContain('process.env.APP_VERSION');
     expect(serverSource).toContain('function resolvePlatformBranding(env = getRuntimeEnv())');
   });
 
-  it('将品牌配置下发给页面和动态 PWA Manifest', () => {
+  it('exposes branding to the frontend config and dynamic PWA manifest', () => {
     expect(serverSource).toContain('branding: resolvePlatformBranding(env)');
     expect(serverSource).toContain("'/api/flyreq/manifest.webmanifest'");
     expect(serverSource).toContain('buildPlatformManifest(resolvePlatformBranding(getRuntimeEnv()))');

@@ -26,7 +26,13 @@ function loadOutboundUserAgentHelpers(): {
   }
 
   const defaultConstant = serverSource.slice(defaultConstantStart, defaultConstantEnd);
-  const source = `${defaultConstant}\n${serverSource.slice(start, end)}\nreturn { resolveOutboundUserAgent, createOutboundHeaders };`;
+  const envHelper = `
+function getRuntimeEnvValue(env, key) {
+  const currentValue = env['RKAPI_IMAGE_' + key];
+  if (currentValue !== undefined && String(currentValue).trim() !== '') return currentValue;
+  return env['FLYREQ_' + key];
+}`;
+  const source = `${envHelper}\n${defaultConstant}\n${serverSource.slice(start, end)}\nreturn { resolveOutboundUserAgent, createOutboundHeaders };`;
   return new Function(source)() as {
     resolveOutboundUserAgent: (env: Record<string, string>) => string;
     createOutboundHeaders: (headers: HeadersInit | undefined, env: Record<string, string>) => Headers;
@@ -37,19 +43,32 @@ describe('backend outbound User-Agent', () => {
   const { resolveOutboundUserAgent, createOutboundHeaders } = loadOutboundUserAgentHelpers();
 
   it('uses the stable product identifier when no environment override exists', () => {
-    expect(resolveOutboundUserAgent({})).toBe('FlyReq-Image-Studio/1.5.1');
+    expect(resolveOutboundUserAgent({})).toBe('RKAPI-Image/1.5.1');
   });
 
   it('uses the configured product identifier and removes HTTP control characters', () => {
     expect(resolveOutboundUserAgent({
-      FLYREQ_OUTBOUND_USER_AGENT: 'Example Studio/1.0\r\n\u0000Client',
+      RKAPI_IMAGE_OUTBOUND_USER_AGENT: 'Example Studio/1.0\r\n\u0000Client',
     })).toBe('Example Studio/1.0   Client');
+  });
+
+  it('keeps legacy environment names as a fallback', () => {
+    expect(resolveOutboundUserAgent({
+      FLYREQ_OUTBOUND_USER_AGENT: 'Legacy Studio/1.0',
+    })).toBe('Legacy Studio/1.0');
+  });
+
+  it('prefers RKAPI Image environment names over legacy names', () => {
+    expect(resolveOutboundUserAgent({
+      RKAPI_IMAGE_OUTBOUND_USER_AGENT: 'RKAPI Image/1.0',
+      FLYREQ_OUTBOUND_USER_AGENT: 'Legacy Studio/1.0',
+    })).toBe('RKAPI Image/1.0');
   });
 
   it('adds the configured User-Agent without discarding authentication headers', () => {
     const headers = createOutboundHeaders(
       { Authorization: 'Bearer test-key' },
-      { FLYREQ_OUTBOUND_USER_AGENT: 'Example Studio/1.0' },
+      { RKAPI_IMAGE_OUTBOUND_USER_AGENT: 'Example Studio/1.0' },
     );
 
     expect(headers.get('authorization')).toBe('Bearer test-key');
@@ -59,7 +78,7 @@ describe('backend outbound User-Agent', () => {
   it('keeps an explicitly supplied User-Agent unchanged', () => {
     const headers = createOutboundHeaders(
       { 'User-Agent': 'Explicit Client/2.0' },
-      { FLYREQ_OUTBOUND_USER_AGENT: 'Example Studio/1.0' },
+      { RKAPI_IMAGE_OUTBOUND_USER_AGENT: 'Example Studio/1.0' },
     );
 
     expect(headers.get('user-agent')).toBe('Explicit Client/2.0');

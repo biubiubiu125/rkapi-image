@@ -60,9 +60,11 @@ describe('backend GPT Image advanced params forwarding', () => {
     expect(serverSource).not.toContain('已回退非流式');
   });
 
-  it('preserves upstream response bodies and prompts retry on gateway timeout', () => {
+  it('sanitizes upstream response bodies and prompts retry on gateway timeout', () => {
     expect(serverSource).toContain('function getUpstreamHttpErrorPrefix(status)');
     expect(serverSource).toContain('上游服务错误（HTTP 504，请再次重试）');
-    expect(serverSource).toContain('getUpstreamHttpErrorPrefix(response.status)');
+    expect(serverSource).toContain('function buildUpstreamHttpErrorMessage(status, responseText)');
+    expect(serverSource).toContain('getUpstreamHttpErrorPrefix(status)');
+    expect(serverSource).toContain('sanitizeUpstreamErrorBody(responseText)');
   });
 });

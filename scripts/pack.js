@@ -1,4 +1,3 @@
-const { execSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 
@@ -11,6 +10,7 @@ const ZIP_PATH = path.join(ROOT, 'out.zip');
 // 后端文件列表
 const BACKEND_FILES = [
   { src: path.join(BACKEND_DIR, 'server.js'), dest: 'server.js' },
+  { src: path.join(BACKEND_DIR, 'xai-imagine.js'), dest: 'xai-imagine.js' },
   { src: path.join(BACKEND_DIR, 'package.json'), dest: 'package.json' },
   { src: path.join(BACKEND_DIR, '.env.example'), dest: '.env.example' },
   { src: path.join(BACKEND_DIR, 'blacklist.json'), dest: 'blacklist.json' },
@@ -22,7 +22,7 @@ const FRONTEND_OUT_DIR = { src: path.join(FRONTEND_DIR, 'out'), dest: 'out' };
 
 // 1. Build frontend
 console.log('[1/4] Building frontend...');
-execSync('npm run build', { cwd: FRONTEND_DIR, stdio: 'inherit' });
+require('child_process').execSync('npm run build', { cwd: FRONTEND_DIR, stdio: 'inherit' });
 
 // 2. Prepare temp directory
 console.log('[2/4] Preparing temp/...');
@@ -49,17 +49,24 @@ fs.cpSync(FRONTEND_OUT_DIR.src, path.join(TEMP_FRONTEND, 'out'), { recursive: tr
 
 // Generate root package.json for one-command deploy
 const backendPkg = JSON.parse(fs.readFileSync(path.join(BACKEND_DIR, 'package.json'), 'utf8'));
+const appVersion = process.env.APP_VERSION || backendPkg.version || '1.0.0';
 const rootPkg = {
-  name: 'flyreq-image-studio',
-  version: backendPkg.version || '1.0.0',
+  name: 'rkapi-image',
+  version: appVersion,
   private: true,
-  description: 'FlyReq Image - 生产部署包',
+  description: 'RKAPI Image - 生产部署包',
   scripts: {
-    start: 'node backend/server.js',
+    start: 'node start.js',
   },
   dependencies: backendPkg.dependencies,
 };
 fs.writeFileSync(path.join(TEMP_DIR, 'package.json'), JSON.stringify(rootPkg, null, 2) + '\n');
+fs.writeFileSync(path.join(TEMP_DIR, 'start.js'), [
+  "process.env.NODE_ENV = 'production';",
+  `process.env.APP_VERSION = process.env.APP_VERSION || ${JSON.stringify(appVersion)};`,
+  "require('./backend/server.js');",
+  '',
+].join('\n'));
 
 // 3. Create out.zip (overwrite if exists)
 console.log('[3/4] Creating out.zip...');
@@ -67,14 +74,41 @@ if (fs.existsSync(ZIP_PATH)) {
   fs.unlinkSync(ZIP_PATH);
 }
 
-// Use PowerShell to zip (Windows native)
-execSync(
-  `powershell -NoProfile -Command "Compress-Archive -Path '${TEMP_DIR}\\*' -DestinationPath '${ZIP_PATH}' -Force"`,
-  { cwd: ROOT, stdio: 'inherit' }
-);
+async function addDirectory(zip, sourceDir, targetDir = '') {
+  const entries = fs.readdirSync(sourceDir, { withFileTypes: true });
+  for (const entry of entries) {
+    const sourcePath = path.join(sourceDir, entry.name);
+    const zipPath = targetDir ? `${targetDir}/${entry.name}` : entry.name;
+    if (entry.isDirectory()) {
+      zip.folder(zipPath);
+      await addDirectory(zip, sourcePath, zipPath);
+      continue;
+    }
+    zip.file(zipPath, fs.readFileSync(sourcePath));
+  }
+}
 
-// 4. Remove temp/
-console.log('[4/4] Cleaning up temp/...');
-fs.rmSync(TEMP_DIR, { recursive: true, force: true });
+async function createZip() {
+  const JSZipModule = require(path.join(FRONTEND_DIR, 'node_modules', 'jszip'));
+  const JSZip = JSZipModule.default || JSZipModule;
+  const zip = new JSZip();
+  await addDirectory(zip, TEMP_DIR);
+  const content = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' });
+  fs.writeFileSync(ZIP_PATH, content);
+}
 
-console.log('Done! -> out.zip');
+async function main() {
+  try {
+    await createZip();
+  } finally {
+    // 4. Remove temp/
+    console.log('[4/4] Cleaning up temp/...');
+    fs.rmSync(TEMP_DIR, { recursive: true, force: true });
+  }
+  console.log('Done! -> out.zip');
+}
+
+main().catch((error) => {
+  console.error('Failed to create out.zip:', error);
+  process.exitCode = 1;
+});

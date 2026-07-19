@@ -58,8 +58,20 @@ export function setPromptOptimizeEnabled(enabled: boolean): boolean {
 
 export function loadJsonFromStorage<T>(key: string): Partial<T> {
   if (typeof window === 'undefined') return {};
-  const raw = localStorage.getItem(key);
-  return raw ? JSON.parse(raw) : {};
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as unknown;
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return {};
+    return parsed as Partial<T>;
+  } catch {
+    try {
+      localStorage.removeItem(key);
+    } catch {
+      // ignore cleanup failures
+    }
+    return {};
+  }
 }
 
 export function saveJsonToStorage<T>(key: string, value: T): void {

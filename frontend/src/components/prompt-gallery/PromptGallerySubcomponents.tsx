@@ -27,13 +27,13 @@ function makePromptGalleryImagePayload(
   };
 }
 
-export const PromptCard = memo(function PromptCard({ 
-  prompt, 
+export const PromptCard = memo(function PromptCard({
+  prompt,
   onShowDetail,
   onShowImages,
   imageCache,
   onImageLoad
-}: { 
+}: {
   prompt: PromptGalleryItem & { uniqueKey: string };
   onShowDetail: () => void;
   onShowImages: (initialIndex?: number) => void;
@@ -101,7 +101,7 @@ export const PromptCard = memo(function PromptCard({
     <div ref={cardRef} className="bg-card border border-border rounded-xl overflow-hidden hover:shadow-lg transition-shadow">
       {/* Image */}
       {prompt.images.length > 0 && (
-        <div 
+        <div
           className="relative aspect-square bg-muted cursor-pointer group"
           onClick={() => onShowImages(imageIndex)}
         >
@@ -125,7 +125,7 @@ export const PromptCard = memo(function PromptCard({
               <div className="w-12 h-12 bg-muted-foreground/10 rounded-lg" />
             </div>
           )}
-          
+
           <ImageHoverActions
             payload={currentPayload}
             onPreview={() => onShowImages(imageIndex)}
@@ -172,7 +172,7 @@ export const PromptCard = memo(function PromptCard({
       {/* Content */}
       <div className="p-3 space-y-2">
         {/* Title */}
-        <h3 
+        <h3
           className="font-semibold text-sm line-clamp-1 cursor-pointer hover:text-primary transition-colors"
           onClick={onShowDetail}
           title={prompt.title}
@@ -195,7 +195,7 @@ export const PromptCard = memo(function PromptCard({
         </div>
 
         {/* Prompt preview */}
-        <p 
+        <p
           className="text-xs text-muted-foreground line-clamp-2 cursor-pointer hover:text-foreground transition-colors"
           onClick={onShowDetail}
         >
@@ -240,10 +240,10 @@ export const PromptCard = memo(function PromptCard({
   );
 });
 
-export function PromptDetailModal({ 
-  prompt, 
-  onClose 
-}: { 
+export function PromptDetailModal({
+  prompt,
+  onClose
+}: {
   prompt: PromptGalleryItem & { uniqueKey: string };
   onClose: () => void;
 }) {
@@ -260,18 +260,18 @@ export function PromptDetailModal({
     const originalTop = document.body.style.top;
     const originalWidth = document.body.style.width;
     const scrollY = window.scrollY;
-    
+
     // Lock body scroll
     document.body.style.overflow = 'hidden';
     document.body.style.position = 'fixed';
     document.body.style.top = `-${scrollY}px`;
     document.body.style.width = '100%';
-    
+
     // Trigger animation after mount
     requestAnimationFrame(() => {
       setIsMounted(true);
     });
-    
+
     return () => {
       // Restore body styles
       document.body.style.overflow = originalOverflow;
@@ -312,11 +312,11 @@ export function PromptDetailModal({
   };
 
   return (
-    <div 
+    <div
       className={`fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4 transition-opacity duration-150 ${
         isMounted && !isClosing ? 'opacity-100' : 'opacity-0'
       }`}
-      style={{ 
+      style={{
         position: 'fixed',
         top: 0,
         left: 0,
@@ -331,7 +331,7 @@ export function PromptDetailModal({
       onWheel={(e) => e.stopPropagation()}
       onTouchMove={(e) => e.stopPropagation()}
     >
-      <div 
+      <div
         className={`bg-card border border-border rounded-xl max-w-3xl w-full max-h-[80vh] overflow-y-auto shadow-lg transition-all duration-150 ${
           isMounted && !isClosing ? 'scale-100 opacity-100' : 'scale-95 opacity-0'
         }`}
@@ -488,9 +488,9 @@ export function PromptGalleryImagePreviewModal({
   const isMultiple = images.length > 1;
   const currentPayload = makePromptGalleryImagePayload(prompt, currentSrc, currentIndex);
 
-  const resetView = () => { 
-    setScale(1); 
-    setPos({ x: 0, y: 0 }); 
+  const resetView = () => {
+    setScale(1);
+    setPos({ x: 0, y: 0 });
   };
 
   const zoomIn = () => setScale(s => Math.min(s + 0.5, 10));
@@ -529,19 +529,19 @@ export function PromptGalleryImagePreviewModal({
     const originalWidth = document.body.style.width;
     const originalDocumentOverflow = document.documentElement.style.overflow;
     const scrollY = window.scrollY;
-    
+
     // Lock body scroll
     document.body.style.overflow = 'hidden';
     document.body.style.position = 'fixed';
     document.body.style.top = `-${scrollY}px`;
     document.body.style.width = '100%';
     document.documentElement.style.overflow = 'hidden';
-    
+
     // Trigger animation after mount
     requestAnimationFrame(() => {
       setIsMounted(true);
     });
-    
+
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'ArrowLeft' && currentIndexRef.current > 0) {
         setCurrentIndex(i => i - 1);
@@ -556,7 +556,7 @@ export function PromptGalleryImagePreviewModal({
       if (e.key === 'Escape') closeRef.current();
     };
     window.addEventListener('keydown', handleKeyDown);
-    
+
     return () => {
       // Restore body styles
       document.body.style.overflow = originalOverflow;
@@ -599,7 +599,7 @@ export function PromptGalleryImagePreviewModal({
       className={`fixed inset-0 z-50 flex touch-none select-none items-center justify-center bg-black/80 transition-opacity duration-150 ${
         isMounted && !isClosing ? 'opacity-100' : 'opacity-0'
       }`}
-      style={{ 
+      style={{
         position: 'fixed',
         top: 0,
         left: 0,

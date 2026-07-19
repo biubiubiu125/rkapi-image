@@ -70,6 +70,7 @@ export type CanvasNodeMetadata = {
   lockResultNodes?: boolean;
   /** 单节点生成任务 ID（用于轮询 + 刷新恢复） */
   generationTaskId?: string;
+  generationTaskReadToken?: string;
   /** 单节点生成开始时间戳（用于计算用时） */
   generationStartedAt?: number;
   /** 本地保存失败但服务端任务仍可取回时，允许错误态继续恢复同一任务。 */

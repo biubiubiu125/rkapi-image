@@ -1,6 +1,6 @@
-// Agent 模式的浏览器直连客户端
-// 文本对话与视觉描述都打外部 API /v1/responses（与反推提示词一致，不经过自有后端）。
-// 对话请求带 tools，解析文字 delta 与 function_call 事件；描述请求为非流式一次性取全文。
+// Agent 模式的前端流式客户端。
+// 文本对话与视觉描述都提交到后端 /api/flyreq/proxy/text，
+// 后端固定走 RKAPI 网关；本文件负责组装请求体并解析流式事件。
 
 import {
   AGENT_TEXT_MODEL_FALLBACK,

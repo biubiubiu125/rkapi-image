@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
+import { MODEL_REGISTRY_UPDATED_EVENT } from '@/lib/flyreq-models';
 import {
   isPromptOptimizeEnabled,
   PROMPT_OPTIMIZE_SETTING_EVENT,
@@ -20,11 +21,11 @@ export function usePromptOptimizeSetting() {
       if (!cancelled) refresh();
     });
     window.addEventListener(PROMPT_OPTIMIZE_SETTING_EVENT, refresh);
-    window.addEventListener('flyreq-model-registry-updated', refresh);
+    window.addEventListener(MODEL_REGISTRY_UPDATED_EVENT, refresh);
     return () => {
       cancelled = true;
       window.removeEventListener(PROMPT_OPTIMIZE_SETTING_EVENT, refresh);
-      window.removeEventListener('flyreq-model-registry-updated', refresh);
+      window.removeEventListener(MODEL_REGISTRY_UPDATED_EVENT, refresh);
     };
   }, [refresh]);
 

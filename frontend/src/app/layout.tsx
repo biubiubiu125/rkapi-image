@@ -6,8 +6,8 @@ import { ServiceWorkerManager } from "@/components/ServiceWorkerManager";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "FlyReq Image - AI Image Generator",
-  description: "FlyReq Image AI image generation workspace",
+  title: "RKAPI Image - AI Image Generator",
+  description: "RKAPI Image AI image generation workspace",
   icons: {
     icon: [
       { url: '/favicon.png', type: 'image/png' },
@@ -31,6 +31,37 @@ export default function RootLayout({
   return (
     <html lang="en" suppressHydrationWarning>
       <head>
+        <Script
+          id="brand-init"
+          strategy="beforeInteractive"
+          dangerouslySetInnerHTML={{
+            __html: `
+              (function() {
+                try {
+                  fetch('/api/flyreq/config', { cache: 'no-store' })
+                    .then(function(response) { return response.ok ? response.json() : null; })
+                    .then(function(data) {
+                      var branding = data && data.branding;
+                      if (!branding) return;
+                      var name = typeof branding.platformName === 'string' ? branding.platformName.trim() : '';
+                      if (name) {
+                        document.title = name;
+                        var description = document.querySelector('meta[name="description"]');
+                        if (description) description.setAttribute('content', name);
+                      }
+                      var iconUrl = typeof branding.iconUrl === 'string' ? branding.iconUrl.trim() : '';
+                      if (iconUrl) {
+                        document.querySelectorAll('link[rel="icon"], link[rel="shortcut icon"], link[rel="apple-touch-icon"]').forEach(function(link) {
+                          link.href = iconUrl;
+                        });
+                      }
+                    })
+                    .catch(function() {});
+                } catch {}
+              })();
+            `,
+          }}
+        />
         <Script
           id="theme-init"
           strategy="beforeInteractive"

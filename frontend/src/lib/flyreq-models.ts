@@ -50,8 +50,18 @@ export interface FlyreqModelRegistry {
   defaults: DefaultModels;
 }
 
-const REGISTRY_KEY = 'flyreq-model-registry';
-const DEFAULT_FLYREQ_IMAGE_MODEL_ID = 'flyreq-gpt-image-2';
+export const MODEL_REGISTRY_STORAGE_KEY = 'flyreq-model-registry';
+export const MODEL_REGISTRY_UPDATED_EVENT = 'flyreq-model-registry-updated';
+export const RKAPI_BASE_URL = 'https://api.rkai6.com';
+export const RKAPI_DEFAULT_IMAGE_REVERSE_ID = 'rkapi-reverse-image';
+export const RKAPI_DEFAULT_IMAGE_4K_ID = 'rkapi-4k-image';
+export const RKAPI_DEFAULT_TEXT_MODEL_ID = 'rkapi-text';
+export const RKAPI_TEXT_MODEL_NAME = 'RKAPI';
+const RKAPI_DEFAULT_IMAGE_MODEL_ID = 'gpt-image-2';
+const RKAPI_DEFAULT_TEXT_MODEL_VALUE = 'gpt-5.6-sol';
+const RKAPI_DEFAULT_IMAGE_REVERSE_NAME = 'RKAPI-逆向';
+const RKAPI_DEFAULT_IMAGE_4K_NAME = 'RKAPI-4k';
+const LEGACY_DEFAULT_IMAGE_MODEL_IDS = new Set(['flyreq-gpt-image-2']);
 
 export const BUILTIN_IMAGE_PRESET_OPTIONS = Object.values(BUILTIN_IMAGE_PRESETS).map((preset) => ({
   value: preset.id,
@@ -61,16 +71,16 @@ export const BUILTIN_IMAGE_PRESET_OPTIONS = Object.values(BUILTIN_IMAGE_PRESETS)
 export const DEFAULT_TEXT_MODEL_TEMPLATES = [
   {
     protocol: 'openai' as const,
-    name: 'GPT 5.4 Mini',
-    modelId: 'gpt-5.4-mini',
-    baseUrl: 'https://api.openai.com',
+    name: RKAPI_TEXT_MODEL_NAME,
+    modelId: RKAPI_DEFAULT_TEXT_MODEL_VALUE,
+    baseUrl: RKAPI_BASE_URL,
     note: 'OpenAI Response',
   },
   {
     protocol: 'google' as const,
-    name: 'Gemini 2.5 Flash',
+    name: RKAPI_TEXT_MODEL_NAME,
     modelId: 'gemini-2.5-flash',
-    baseUrl: 'https://generativelanguage.googleapis.com',
+    baseUrl: RKAPI_BASE_URL,
     note: 'Google Gemini',
   },
 ];
@@ -90,13 +100,26 @@ export const DEFAULT_DEFAULTS: DefaultModels = {
 
 export const DEFAULT_IMAGE_MODELS: ImageModelConfig[] = [
   {
-    id: DEFAULT_FLYREQ_IMAGE_MODEL_ID,
+    id: RKAPI_DEFAULT_IMAGE_REVERSE_ID,
     protocol: 'openai',
-    name: 'FlyReq',
-    modelId: '',
-    usesPresetModelId: true,
+    name: RKAPI_DEFAULT_IMAGE_REVERSE_NAME,
+    modelId: RKAPI_DEFAULT_IMAGE_MODEL_ID,
     apiKey: '',
-    baseUrl: 'https://flyreq.com',
+    baseUrl: RKAPI_BASE_URL,
+    builtinPreset: 'gpt-image-2',
+    maxRefImages: 16,
+    maxOutputSize: '4K',
+    supportsAdvancedParams: true,
+    supportsTemperature: false,
+    streamImages: true,
+  },
+  {
+    id: RKAPI_DEFAULT_IMAGE_4K_ID,
+    protocol: 'openai',
+    name: RKAPI_DEFAULT_IMAGE_4K_NAME,
+    modelId: RKAPI_DEFAULT_IMAGE_MODEL_ID,
+    apiKey: '',
+    baseUrl: RKAPI_BASE_URL,
     builtinPreset: 'gpt-image-2',
     maxRefImages: 16,
     maxOutputSize: '4K',
@@ -106,10 +129,38 @@ export const DEFAULT_IMAGE_MODELS: ImageModelConfig[] = [
   },
 ];
 
+export const DEFAULT_TEXT_MODELS: TextModelConfig[] = [
+  {
+    id: RKAPI_DEFAULT_TEXT_MODEL_ID,
+    protocol: 'openai',
+    name: RKAPI_TEXT_MODEL_NAME,
+    modelId: RKAPI_DEFAULT_TEXT_MODEL_VALUE,
+    apiKey: '',
+    baseUrl: RKAPI_BASE_URL,
+    note: 'OpenAI Response',
+  },
+];
+
 /** 部署级下发的首次图片模型配置不携带 API Key。 */
 export type DeploymentDefaultImageModelConfig = Omit<ImageModelConfig, 'apiKey'>;
 
-let deploymentDefaultImageModel: ImageModelConfig = { ...DEFAULT_IMAGE_MODELS[0] };
+let deploymentDefaultImageModels: ImageModelConfig[] = DEFAULT_IMAGE_MODELS.map((model) => ({ ...model }));
+
+export function getRkapiImageModelName(id: string): string {
+  if (id === RKAPI_DEFAULT_IMAGE_REVERSE_ID) return RKAPI_DEFAULT_IMAGE_REVERSE_NAME;
+  if (id === RKAPI_DEFAULT_IMAGE_4K_ID) return RKAPI_DEFAULT_IMAGE_4K_NAME;
+  return RKAPI_TEXT_MODEL_NAME;
+}
+
+export function applyImageModelToDefaultTasks(defaults: DefaultModels, modelId: string): DefaultModels {
+  if (modelId === RKAPI_DEFAULT_IMAGE_4K_ID) {
+    return { ...defaults, textToImage: modelId };
+  }
+  if (modelId === RKAPI_DEFAULT_IMAGE_REVERSE_ID) {
+    return { ...defaults, imageToImage: modelId };
+  }
+  return { ...defaults, textToImage: modelId, imageToImage: modelId };
+}
 
 export function isXaiImaginePresetId(presetId: string): boolean {
   return presetId === 'grok-imagine-image' || presetId === 'grok-imagine-image-quality';
@@ -174,16 +225,19 @@ function normalizeImageModelConfig(raw: Partial<ImageModelConfig>): ImageModelCo
     ? preset.protocol
     : (isProviderProtocol(raw.protocol) ? raw.protocol : preset.protocol);
   const configuredModelId = String(raw.modelId || '').trim();
-  const usesPresetModelId = raw.usesPresetModelId === true
-    || (Boolean(raw.builtinPreset) && (!configuredModelId || configuredModelId === preset.modelId));
+  const shouldUsePresetModelId = !configuredModelId && (
+    raw.usesPresetModelId === true
+    || Boolean(raw.builtinPreset)
+    || isBuiltinImagePresetId(raw.id)
+  );
   return {
     id,
     protocol,
-    name: String(raw.name || '').trim(),
-    modelId: usesPresetModelId ? '' : configuredModelId,
-    usesPresetModelId: usesPresetModelId || undefined,
+    name: getRkapiImageModelName(id),
+    modelId: configuredModelId || (shouldUsePresetModelId ? preset.modelId : ''),
+    usesPresetModelId: undefined,
     apiKey: String(raw.apiKey || '').trim(),
-    baseUrl: String(raw.baseUrl || preset.baseUrl).trim(),
+    baseUrl: RKAPI_BASE_URL,
     builtinPreset: presetId,
     maxRefImages: isXaiImagine
       ? preset.maxRefImages
@@ -197,7 +251,7 @@ function normalizeImageModelConfig(raw: Partial<ImageModelConfig>): ImageModelCo
       ? (typeof raw.supportsAdvancedParams === 'boolean' ? raw.supportsAdvancedParams : preset.supportsAdvancedParams)
       : false,
     supportsTemperature: protocol === 'google'
-      ? (typeof raw.supportsTemperature === 'boolean' ? raw.supportsTemperature : Boolean(usesPresetModelId && preset.supportsTemperature))
+      ? (typeof raw.supportsTemperature === 'boolean' ? raw.supportsTemperature : Boolean(shouldUsePresetModelId && preset.supportsTemperature))
       : false,
     streamImages: protocol === 'openai' && preset.id === 'gpt-image-2'
       ? Boolean(raw.streamImages ?? preset.streamImages)
@@ -212,19 +266,35 @@ function normalizeImageModelConfig(raw: Partial<ImageModelConfig>): ImageModelCo
  */
 export function applyDeploymentDefaultImageModel(config?: Partial<DeploymentDefaultImageModelConfig>): void {
   if (!config) {
-    deploymentDefaultImageModel = { ...DEFAULT_IMAGE_MODELS[0] };
+    deploymentDefaultImageModels = DEFAULT_IMAGE_MODELS.map((model) => ({ ...model }));
     return;
   }
-  const normalized = normalizeImageModelConfig({ ...DEFAULT_IMAGE_MODELS[0], ...config, apiKey: '' });
-  deploymentDefaultImageModel = normalized || { ...DEFAULT_IMAGE_MODELS[0] };
+  deploymentDefaultImageModels = DEFAULT_IMAGE_MODELS.map((model) => {
+    const maxOutputSize = model.id === RKAPI_DEFAULT_IMAGE_4K_ID
+      ? model.maxOutputSize
+      : config.maxOutputSize;
+    return normalizeImageModelConfig({
+      ...model,
+      ...config,
+      id: model.id,
+      name: model.name,
+      baseUrl: RKAPI_BASE_URL,
+      apiKey: '',
+      maxOutputSize,
+    }) || { ...model };
+  });
 }
 
 /**
  * 创建当前部署生效的首次图片模型副本，避免调用方修改全局默认对象。
- * @returns 仅包含一个首次默认图片模型的数组。
+ * @returns 当前生效的 RKAPI 默认图片模型数组。
  */
 function getDeploymentDefaultImageModels(): ImageModelConfig[] {
-  return [{ ...deploymentDefaultImageModel }];
+  return deploymentDefaultImageModels.map((model) => ({ ...model }));
+}
+
+function getDeploymentDefaultTextModels(): TextModelConfig[] {
+  return DEFAULT_TEXT_MODELS.map((model) => ({ ...model }));
 }
 
 function normalizeTextModelConfig(raw: Partial<TextModelConfig>): TextModelConfig | null {
@@ -235,12 +305,53 @@ function normalizeTextModelConfig(raw: Partial<TextModelConfig>): TextModelConfi
   return {
     id,
     protocol,
-    name: String(raw.name || '').trim(),
-    modelId: String(raw.modelId || '').trim(),
+    name: RKAPI_TEXT_MODEL_NAME,
+    modelId: String(raw.modelId || '').trim() || template.modelId,
     apiKey: String(raw.apiKey || '').trim(),
-    baseUrl: String(raw.baseUrl || template.baseUrl).trim(),
+    baseUrl: RKAPI_BASE_URL,
     note: typeof raw.note === 'string' ? raw.note : template.note,
   };
+}
+
+function isLegacyDefaultImageModel(model: Pick<ImageModelConfig, 'id'>): boolean {
+  return LEGACY_DEFAULT_IMAGE_MODEL_IDS.has(model.id);
+}
+
+function createRkapiDefaultImageModel(defaultModel: ImageModelConfig, legacySeed?: ImageModelConfig): ImageModelConfig {
+  const maxOutputSize = defaultModel.id === RKAPI_DEFAULT_IMAGE_4K_ID
+    ? defaultModel.maxOutputSize
+    : (legacySeed?.maxOutputSize ?? defaultModel.maxOutputSize);
+  const seeded = normalizeImageModelConfig({
+    ...defaultModel,
+    apiKey: legacySeed?.apiKey || defaultModel.apiKey,
+    modelId: legacySeed?.modelId || defaultModel.modelId,
+    maxRefImages: legacySeed?.maxRefImages ?? defaultModel.maxRefImages,
+    maxOutputSize,
+    supportsAdvancedParams: legacySeed?.supportsAdvancedParams ?? defaultModel.supportsAdvancedParams,
+    streamImages: legacySeed?.streamImages ?? defaultModel.streamImages,
+  });
+  return seeded || { ...defaultModel, apiKey: legacySeed?.apiKey || defaultModel.apiKey };
+}
+
+function ensureRkapiDefaultImageModels(models: ImageModelConfig[]): ImageModelConfig[] {
+  const legacySeed = models.find(isLegacyDefaultImageModel);
+  const next = models.filter((model) => !isLegacyDefaultImageModel(model));
+  for (const defaultModel of getDeploymentDefaultImageModels()) {
+    if (!next.some((model) => model.id === defaultModel.id)) {
+      next.push(createRkapiDefaultImageModel(defaultModel, legacySeed));
+    }
+  }
+  return next.filter((item, index, list) => list.findIndex((candidate) => candidate.id === item.id) === index);
+}
+
+function ensureRkapiDefaultTextModels(models: TextModelConfig[]): TextModelConfig[] {
+  const next = [...models];
+  for (const defaultModel of getDeploymentDefaultTextModels()) {
+    if (!next.some((model) => model.id === defaultModel.id)) {
+      next.push({ ...defaultModel });
+    }
+  }
+  return next.filter((item, index, list) => list.findIndex((candidate) => candidate.id === item.id) === index);
 }
 
 function isCompleteImageModel(model: Partial<ImageModelConfig>): model is ImageModelConfig {
@@ -273,30 +384,43 @@ function ensureImageModels(raw?: unknown): ImageModelConfig[] {
     .map((item) => normalizeImageModelConfig((item || {}) as Partial<ImageModelConfig>))
     .filter((item): item is ImageModelConfig => Boolean(item))
     .filter((item, index, list) => list.findIndex((candidate) => candidate.id === item.id) === index);
-  return models.length > 0 ? models : getDeploymentDefaultImageModels();
+  return models.length > 0 ? ensureRkapiDefaultImageModels(models) : getDeploymentDefaultImageModels();
 }
 
 function ensureTextModels(raw?: unknown): TextModelConfig[] {
-  if (!Array.isArray(raw)) return [];
-  return raw
+  if (!Array.isArray(raw) || raw.length === 0) return getDeploymentDefaultTextModels();
+  const models = raw
     .map((item) => normalizeTextModelConfig((item || {}) as Partial<TextModelConfig>))
     .filter((item): item is TextModelConfig => Boolean(item))
     .filter((item, index, list) => list.findIndex((candidate) => candidate.id === item.id) === index);
+  return models.length > 0 ? ensureRkapiDefaultTextModels(models) : getDeploymentDefaultTextModels();
+}
+
+function getPreferredImageDefault(completeImageModels: ImageModelConfig[], task: keyof Pick<DefaultModels, 'textToImage' | 'imageToImage'>): string {
+  const preferredId = task === 'textToImage' ? RKAPI_DEFAULT_IMAGE_4K_ID : RKAPI_DEFAULT_IMAGE_REVERSE_ID;
+  return completeImageModels.some((model) => model.id === preferredId)
+    ? preferredId
+    : completeImageModels[0]?.id || '';
+}
+
+function getPreferredTextDefault(completeTextModels: TextModelConfig[]): string {
+  return completeTextModels.some((model) => model.id === RKAPI_DEFAULT_TEXT_MODEL_ID)
+    ? RKAPI_DEFAULT_TEXT_MODEL_ID
+    : completeTextModels[0]?.id || '';
 }
 
 function ensureDefaults(raw: Partial<DefaultModels> | undefined, imageModels: ImageModelConfig[], textModels: TextModelConfig[]): DefaultModels {
   const completeImageModels = imageModels.filter(isCompleteImageModel);
   const completeTextModels = textModels.filter(isCompleteTextModel);
-  const firstImageModelId = completeImageModels[0]?.id || '';
-  const firstTextModelId = completeTextModels[0]?.id || '';
+  const preferredTextModelId = getPreferredTextDefault(completeTextModels);
   const next = { ...DEFAULT_DEFAULTS, ...raw };
 
-  if (!completeImageModels.some((model) => model.id === next.textToImage)) next.textToImage = firstImageModelId;
-  if (!completeImageModels.some((model) => model.id === next.imageToImage)) next.imageToImage = firstImageModelId;
-  if (!completeTextModels.some((model) => model.id === next.reversePrompt)) next.reversePrompt = firstTextModelId;
-  if (!completeTextModels.some((model) => model.id === next.agent)) next.agent = firstTextModelId;
-  if (!completeTextModels.some((model) => model.id === next.promptOptimize)) next.promptOptimize = firstTextModelId;
-  if (!completeTextModels.some((model) => model.id === next.imageDescribe)) next.imageDescribe = firstTextModelId;
+  if (!completeImageModels.some((model) => model.id === next.textToImage)) next.textToImage = getPreferredImageDefault(completeImageModels, 'textToImage');
+  if (!completeImageModels.some((model) => model.id === next.imageToImage)) next.imageToImage = getPreferredImageDefault(completeImageModels, 'imageToImage');
+  if (!completeTextModels.some((model) => model.id === next.reversePrompt)) next.reversePrompt = preferredTextModelId;
+  if (!completeTextModels.some((model) => model.id === next.agent)) next.agent = preferredTextModelId;
+  if (!completeTextModels.some((model) => model.id === next.promptOptimize)) next.promptOptimize = preferredTextModelId;
+  if (!completeTextModels.some((model) => model.id === next.imageDescribe)) next.imageDescribe = preferredTextModelId;
 
   return next;
 }
@@ -304,8 +428,16 @@ function ensureDefaults(raw: Partial<DefaultModels> | undefined, imageModels: Im
 function getInitialRegistry(): FlyreqModelRegistry {
   return {
     imageModels: getDeploymentDefaultImageModels(),
-    textModels: [],
-    defaults: DEFAULT_DEFAULTS,
+    textModels: getDeploymentDefaultTextModels(),
+    defaults: {
+      ...DEFAULT_DEFAULTS,
+      textToImage: RKAPI_DEFAULT_IMAGE_4K_ID,
+      imageToImage: RKAPI_DEFAULT_IMAGE_REVERSE_ID,
+      reversePrompt: RKAPI_DEFAULT_TEXT_MODEL_ID,
+      agent: RKAPI_DEFAULT_TEXT_MODEL_ID,
+      promptOptimize: RKAPI_DEFAULT_TEXT_MODEL_ID,
+      imageDescribe: RKAPI_DEFAULT_TEXT_MODEL_ID,
+    },
   };
 }
 
@@ -322,7 +454,7 @@ export function loadRegistry(): FlyreqModelRegistry {
   if (!storage) return getInitialRegistry();
 
   try {
-    const raw = storage.getItem(REGISTRY_KEY);
+    const raw = storage.getItem(MODEL_REGISTRY_STORAGE_KEY);
     if (!raw) {
       return getInitialRegistry();
     }
@@ -349,7 +481,13 @@ export function saveRegistry(registry: FlyreqModelRegistry): void {
     defaults: ensureDefaults(registry.defaults, imageModels, textModels),
   };
 
-  storage.setItem(REGISTRY_KEY, JSON.stringify(normalized));
+  storage.setItem(MODEL_REGISTRY_STORAGE_KEY, JSON.stringify(normalized));
+  window.dispatchEvent(new Event(MODEL_REGISTRY_UPDATED_EVENT));
+}
+
+export function notifyModelRegistryUpdated(): void {
+  if (typeof window === 'undefined') return;
+  window.dispatchEvent(new Event(MODEL_REGISTRY_UPDATED_EVENT));
 }
 
 export function getImageModelById(registry: FlyreqModelRegistry, id: string): ImageModelConfig | undefined {

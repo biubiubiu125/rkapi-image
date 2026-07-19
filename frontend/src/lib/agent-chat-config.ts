@@ -6,8 +6,8 @@ import type { GptImageBackground, GptImageOutputFormat, GptImageQuality, GptImag
 import type { Locale } from '@/lib/i18n';
 
 // 默认值仅用于初始化，实际使用时从注册表读取
-export const AGENT_TEXT_MODEL_FALLBACK = 'gpt-5.4-mini';
-export const AGENT_DEFAULT_IMAGE_MODEL_FALLBACK = 'flyreq-gpt-image-2';
+export const AGENT_TEXT_MODEL_FALLBACK = 'rkapi-text';
+export const AGENT_DEFAULT_IMAGE_MODEL_FALLBACK = 'rkapi-4k-image';
 
 // ===== 上下文系统数据结构 =====
 
