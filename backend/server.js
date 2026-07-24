@@ -83,6 +83,25 @@ const DEFAULT_IMAGE_MODEL_KEY_GUIDE = {
   ctaLabel: '打开 RKAPI',
   url: 'https://api.rkai6.com',
 };
+function readPackageVersion(packagePath) {
+  try {
+    const version = require(packagePath).version;
+    return typeof version === 'string' && version.trim() ? version.trim() : null;
+  } catch {
+    return null;
+  }
+}
+
+function resolveAppVersion() {
+  if (typeof process.env.APP_VERSION === 'string' && process.env.APP_VERSION.trim()) {
+    return process.env.APP_VERSION.trim();
+  }
+  return readPackageVersion(path.join(__dirname, '..', 'package.json'))
+    || readPackageVersion(path.join(__dirname, 'package.json'))
+    || '0.0.0';
+}
+
+const APP_VERSION = resolveAppVersion();
 const DEFAULT_PLATFORM_BRANDING = {
   platformName: 'RKAPI Image',
   logoUrl: '/favicon.png',
@@ -90,7 +109,7 @@ const DEFAULT_PLATFORM_BRANDING = {
   icon192Url: '/icon-192.png',
   icon512Url: '/icon-512.png',
   maskableIconUrl: '/icon-maskable-512.png',
-  platformVersion: process.env.APP_VERSION || require(path.join(__dirname, '..', 'package.json')).version || '0.0.0',
+  platformVersion: APP_VERSION,
 };
 const DEFAULT_IMAGE_MODEL_DEPLOYMENT_CONFIG = {
   id: 'rkapi-4k-image',
@@ -111,7 +130,7 @@ const BUILTIN_IMAGE_PRESET_IDS = new Set([
   'gemini-3.1-flash-lite-image', 'gpt-image-2', 'grok-imagine-image', 'grok-imagine-image-quality',
 ]);
 const RKAPI_GATEWAY_BASE_URL = 'https://api.rkai6.com';
-const DEFAULT_OUTBOUND_USER_AGENT = 'RKAPI-Image/1.5.1';
+const DEFAULT_OUTBOUND_USER_AGENT = `RKAPI-Image/${APP_VERSION}`;
 const MAX_REMOTE_IMAGE_BYTES = 64 * 1024 * 1024;
 const MAX_REMOTE_IMAGE_REDIRECTS = 5;
 const MAX_UPSTREAM_ERROR_BODY_CHARS = 1000;
@@ -495,6 +514,8 @@ const DEFAULT_GPT_IMAGE_ADVANCED_PARAMS = {
   outputFormat: 'png',
 };
 const PROMPT_GALLERY_PASSWORD_SALT = 'flyreq-pg-2026';
+const PROMPT_GALLERY_ACCESS_TOKEN_TTL_MS = 12 * 60 * 60 * 1000;
+const PROMPT_GALLERY_ACCESS_COOKIE = 'rkapi_prompt_gallery_token';
 const CUSTOM_IMAGE_SIZE_LIMITS = {
   multiple: 16,
   maxAspectRatio: 3,
@@ -514,6 +535,7 @@ const taskSources = new Map(); // taskId -> { ip, apiKeyHash }
 const taskAbortControllers = new Map();
 const cancelledTaskIds = new Set();
 const rateLimitBuckets = new Map(); // key -> { windowStart: number, count: number }
+const promptGalleryAccessTokens = new Map(); // token -> { expiresAt, passwordHash }
 const pendingCountByIp = new Map(); // ip -> count
 const pendingCountByApiKeyHash = new Map(); // apiKeyHash -> count
 const xaiImagineNextRequestAtByApiKeyHash = new Map(); // apiKeyHash -> next request start timestamp
@@ -623,6 +645,95 @@ function verifyTaskReadToken(taskId, readToken) {
 
 function sendInvalidTaskReadToken(res) {
   sendJson(res, 403, { error: '任务读取凭证无效', code: 'INVALID_TASK_TOKEN' });
+}
+
+function resolvePromptGalleryMode(env = getRuntimeEnv()) {
+  const rawMode = String(env.PROMPT_GALLERY_MODE || '2').trim();
+  return ['1', '2', '3'].includes(rawMode) ? rawMode : '2';
+}
+
+function safeEqualHex(left, right) {
+  const leftValue = String(left || '');
+  const rightValue = String(right || '');
+  if (!leftValue || leftValue.length !== rightValue.length) return false;
+  const leftBuffer = Buffer.from(leftValue, 'hex');
+  const rightBuffer = Buffer.from(rightValue, 'hex');
+  return leftBuffer.length > 0 && leftBuffer.length === rightBuffer.length && timingSafeEqual(leftBuffer, rightBuffer);
+}
+
+function verifyPromptGalleryPassword(password, expected) {
+  return safeEqualHex(hashPromptGalleryPassword(password), hashPromptGalleryPassword(expected));
+}
+
+function cleanupPromptGalleryAccessTokens(now = Date.now()) {
+  for (const [token, entry] of promptGalleryAccessTokens) {
+    if (!entry || entry.expiresAt <= now) promptGalleryAccessTokens.delete(token);
+  }
+}
+
+function issuePromptGalleryAccessToken(expected) {
+  cleanupPromptGalleryAccessTokens();
+  const token = randomBytes(24).toString('base64url');
+  promptGalleryAccessTokens.set(token, {
+    expiresAt: Date.now() + PROMPT_GALLERY_ACCESS_TOKEN_TTL_MS,
+    passwordHash: hashPromptGalleryPassword(expected),
+  });
+  return token;
+}
+
+function getCookieValue(req, name) {
+  const rawCookie = req?.headers?.cookie;
+  const cookies = Array.isArray(rawCookie) ? rawCookie.join(';') : String(rawCookie || '');
+  for (const part of cookies.split(';')) {
+    const separatorIndex = part.indexOf('=');
+    if (separatorIndex <= 0) continue;
+    const key = part.slice(0, separatorIndex).trim();
+    if (key !== name) continue;
+    try {
+      return decodeURIComponent(part.slice(separatorIndex + 1).trim());
+    } catch {
+      return '';
+    }
+  }
+  return '';
+}
+
+function buildPromptGalleryAccessCookie(token) {
+  const maxAge = Math.floor(PROMPT_GALLERY_ACCESS_TOKEN_TTL_MS / 1000);
+  return `${PROMPT_GALLERY_ACCESS_COOKIE}=${encodeURIComponent(token)}; Path=/api/flyreq; Max-Age=${maxAge}; SameSite=Strict; HttpOnly`;
+}
+
+function getPromptGalleryAccessToken(req) {
+  const headerValue = req?.headers?.['x-rkapi-prompt-gallery-token'] || req?.headers?.['x-flyreq-prompt-gallery-token'];
+  if (Array.isArray(headerValue)) return headerValue[0] || '';
+  return String(headerValue || '').trim() || getCookieValue(req, PROMPT_GALLERY_ACCESS_COOKIE);
+}
+
+function authorizePromptGalleryDataRequest(req, env = getRuntimeEnv()) {
+  const mode = resolvePromptGalleryMode(env);
+  if (mode === '1') return true;
+  if (mode === '3') return false;
+
+  const expected = String(env.PROMPT_GALLERY_PASSWORD || '').trim();
+  if (!expected) return true;
+
+  cleanupPromptGalleryAccessTokens();
+  const token = getPromptGalleryAccessToken(req);
+  if (!token) return false;
+  const entry = promptGalleryAccessTokens.get(token);
+  if (!entry || entry.expiresAt <= Date.now()) {
+    promptGalleryAccessTokens.delete(token);
+    return false;
+  }
+  return safeEqualHex(entry.passwordHash, hashPromptGalleryPassword(expected));
+}
+
+function sendPromptGalleryAccessDenied(res, env = getRuntimeEnv()) {
+  const mode = resolvePromptGalleryMode(env);
+  sendJson(res, 403, {
+    error: mode === '3' ? '提示词广场已关闭' : '提示词广场未授权',
+    code: mode === '3' ? 'PROMPT_GALLERY_DISABLED' : 'PROMPT_GALLERY_LOCKED',
+  });
 }
 
 /**
@@ -857,6 +968,37 @@ function enforceRateLimit(req, body, config, requestedTasks = 1) {
   }
   applyRateLimit(`ip:${ip}`, config.maxRequestsPerIp, config.rateLimitWindowMs, taskCost);
   applyRateLimit(`api:${apiKeyHash}`, config.maxRequestsPerApiKey, config.rateLimitWindowMs, taskCost);
+  return { ip, apiKeyHash };
+}
+
+function normalizeRateLimitScope(scope) {
+  const normalized = String(scope || '').trim().replace(/[^a-zA-Z0-9:_-]/g, '-');
+  return normalized || 'api';
+}
+
+function enforceScopedApiRateLimit(req, { scope, apiKey, includeApiKey = true, requestedRequests = 1 } = {}) {
+  const config = getLimitConfig();
+  const rateLimitScope = normalizeRateLimitScope(scope);
+  const ip = getClientIp(req);
+  const requestCost = normalizeRateLimitCost(requestedRequests);
+  const ipBucket = `scoped:${rateLimitScope}:ip:${ip}`;
+  const ipLimit = checkRateLimit(ipBucket, config.maxRequestsPerIp, config.rateLimitWindowMs, requestCost);
+  if (!ipLimit.allowed) {
+    throw createHttpError(429, 'RATE_LIMITED', LIMIT_ERROR_MESSAGES.rateLimited, Math.max(config.retryAfterSeconds, ipLimit.retryAfterSeconds));
+  }
+
+  const apiKeyValue = String(apiKey || '');
+  const apiKeyHash = includeApiKey && apiKeyValue ? hashApiKey(apiKeyValue) : '';
+  const apiKeyBucket = apiKeyHash ? `scoped:${rateLimitScope}:api:${apiKeyHash}` : '';
+  if (apiKeyBucket) {
+    const apiKeyLimit = checkRateLimit(apiKeyBucket, config.maxRequestsPerApiKey, config.rateLimitWindowMs, requestCost);
+    if (!apiKeyLimit.allowed) {
+      throw createHttpError(429, 'RATE_LIMITED', LIMIT_ERROR_MESSAGES.rateLimited, Math.max(config.retryAfterSeconds, apiKeyLimit.retryAfterSeconds));
+    }
+  }
+
+  applyRateLimit(ipBucket, config.maxRequestsPerIp, config.rateLimitWindowMs, requestCost);
+  if (apiKeyBucket) applyRateLimit(apiKeyBucket, config.maxRequestsPerApiKey, config.rateLimitWindowMs, requestCost);
   return { ip, apiKeyHash };
 }
 
@@ -1662,24 +1804,29 @@ function serveStatic(req, res, pathname) {
   return false;
 }
 
-const MAX_REQUEST_BODY_BYTES = 10 * 1024 * 1024; // 10MB
+const SMALL_JSON_BODY_BYTES = 1 * 1024 * 1024;
+const TASK_REQUEST_BODY_BYTES = 50 * 1024 * 1024;
+const TEXT_PROXY_REQUEST_BODY_BYTES = TASK_REQUEST_BODY_BYTES;
 
-function readJsonBody(req) {
+function readJsonBody(req, { maxBytes = SMALL_JSON_BODY_BYTES } = {}) {
   return new Promise((resolve, reject) => {
     let raw = '';
+    let rawBytes = 0;
     let aborted = false;
     req.setEncoding('utf8');
     req.on('data', chunk => {
       if (aborted) return;
-      raw += chunk;
-      if (raw.length > MAX_REQUEST_BODY_BYTES) {
+      rawBytes += Buffer.byteLength(chunk, 'utf8');
+      if (rawBytes > maxBytes) {
         aborted = true;
         raw = ''; // 释放已缓冲内存
         // 不再 req.destroy()：直接重置连接会让客户端收到 ERR_CONNECTION_RESET，
         // 看不到任何错误信息。改为排空剩余入站数据，并以 413 优雅返回（catch -> sendHttpError）。
         req.resume();
         reject(createHttpError(413, 'PAYLOAD_TOO_LARGE', '请求体过大：参考图过多或分辨率过高，请减少参考图数量或降低分辨率后重试。'));
+        return;
       }
+      raw += chunk;
     });
     req.on('end', () => {
       if (aborted) return;
@@ -3153,6 +3300,10 @@ async function handleApi(req, res, parsedUrl) {
     }
 
     if (req.method === 'GET' && apiPathname === '/api/flyreq/prompts') {
+      if (!authorizePromptGalleryDataRequest(req)) {
+        sendPromptGalleryAccessDenied(res);
+        return true;
+      }
       const promptsPath = path.join(__dirname, 'prompts.json');
       try {
         if (!fs.existsSync(promptsPath)) {
@@ -3169,6 +3320,10 @@ async function handleApi(req, res, parsedUrl) {
     }
 
     if (req.method === 'GET' && apiPathname === '/api/flyreq/blacklist') {
+      if (!authorizePromptGalleryDataRequest(req)) {
+        sendPromptGalleryAccessDenied(res);
+        return true;
+      }
       const blacklistPath = path.join(__dirname, 'blacklist.json');
       try {
         if (!fs.existsSync(blacklistPath)) {
@@ -3194,8 +3349,7 @@ async function handleApi(req, res, parsedUrl) {
 
     if (req.method === 'GET' && apiPathname === '/api/flyreq/config') {
       const env = getRuntimeEnv();
-      const rawMode = String(env.PROMPT_GALLERY_MODE || '2').trim();
-      const mode = ['1', '2', '3'].includes(rawMode) ? rawMode : '2';
+      const mode = resolvePromptGalleryMode(env);
       sendJson(
         res,
         200,
@@ -3218,16 +3372,26 @@ async function handleApi(req, res, parsedUrl) {
 
     if (req.method === 'POST' && apiPathname === '/api/flyreq/prompt-gallery/verify') {
       const env = getRuntimeEnv();
+      if (resolvePromptGalleryMode(env) === '3') {
+        sendJson(res, 403, { ok: false, error: '提示词广场已关闭', code: 'PROMPT_GALLERY_DISABLED' });
+        return true;
+      }
       const expected = String(env.PROMPT_GALLERY_PASSWORD || '').trim();
       if (!expected) {
         sendJson(res, 200, { ok: true });
         return true;
       }
 
-      const body = await readJsonBody(req);
+      enforceScopedApiRateLimit(req, { scope: 'prompt-gallery-verify', includeApiKey: false });
+      const body = await readJsonBody(req, { maxBytes: SMALL_JSON_BODY_BYTES });
       const password = String(body?.password || '');
-      const ok = hashPromptGalleryPassword(password) === hashPromptGalleryPassword(expected);
-      sendJson(res, 200, { ok });
+      const ok = verifyPromptGalleryPassword(password, expected);
+      if (!ok) {
+        sendJson(res, 200, { ok });
+        return true;
+      }
+      const token = issuePromptGalleryAccessToken(expected);
+      sendJson(res, 200, { ok, token }, { 'Set-Cookie': buildPromptGalleryAccessCookie(token) });
       return true;
     }
 
@@ -3290,7 +3454,7 @@ async function handleApi(req, res, parsedUrl) {
     if (req.method === 'POST' && apiPathname === '/api/flyreq/proxy/text') {
       let proxyAbort = null;
       try {
-        const body = await readJsonBody(req);
+        const body = await readJsonBody(req, { maxBytes: TEXT_PROXY_REQUEST_BODY_BYTES });
         const protocol = validateProxyProtocol(body?.protocol);
         const { baseUrl, apiKey, model, stream, requestBody } = body;
         if (!apiKey) {
@@ -3306,6 +3470,7 @@ async function handleApi(req, res, parsedUrl) {
           return true;
         }
 
+        enforceScopedApiRateLimit(req, { scope: 'proxy-text', apiKey });
         const fixedBaseUrl = resolveFixedRkapiGatewayBaseUrl(protocol, baseUrl);
         const normalizedBaseUrl = resolveAndLogOutboundBaseUrl('文本代理', protocol, fixedBaseUrl).baseUrl;
         let targetUrl;
@@ -3396,6 +3561,8 @@ async function handleApi(req, res, parsedUrl) {
           sendJson(res, 504, { error: '代理请求上游超时' });
         } else if (isHttpError(error) && error.code === 'INVALID_PROTOCOL') {
           sendJson(res, 400, { error: '协议类型无效，必须为 google 或 openai' });
+        } else if (isHttpError(error)) {
+          sendHttpError(res, error);
         } else {
           sendJson(res, 502, { error: normalizeError(error) });
         }
@@ -3408,7 +3575,7 @@ async function handleApi(req, res, parsedUrl) {
     // ===== 模型检查代理（统一使用 /v1/models） =====
     if (req.method === 'POST' && apiPathname === '/api/flyreq/proxy/models') {
       try {
-        const body = await readJsonBody(req);
+        const body = await readJsonBody(req, { maxBytes: SMALL_JSON_BODY_BYTES });
         const apiKey = String(body?.apiKey || '');
         const protocol = validateProxyProtocol(body?.protocol);
         const baseUrl = resolveFixedRkapiGatewayBaseUrl(protocol, body?.baseUrl);
@@ -3422,6 +3589,7 @@ async function handleApi(req, res, parsedUrl) {
           return true;
         }
 
+        enforceScopedApiRateLimit(req, { scope: 'proxy-models', apiKey });
         const normalizedBaseUrl = resolveAndLogOutboundBaseUrl('模型列表', protocol, baseUrl).baseUrl;
         let modelsUrl;
         let headers;
@@ -3443,6 +3611,8 @@ async function handleApi(req, res, parsedUrl) {
       } catch (error) {
         if (isHttpError(error) && error.code === 'INVALID_PROTOCOL') {
           sendJson(res, 400, { error: '协议类型无效，必须为 google 或 openai' });
+        } else if (isHttpError(error)) {
+          sendHttpError(res, error);
         } else {
           sendJson(res, 502, { error: normalizeError(error) });
         }
@@ -3452,14 +3622,14 @@ async function handleApi(req, res, parsedUrl) {
 
     // 批量创建端点：请求体包含公共参数和 parallelCount，响应按图片序号返回独立 taskIds。
     if (req.method === 'POST' && apiPathname === '/api/flyreq/tasks/batch') {
-      const body = await readJsonBody(req);
+      const body = await readJsonBody(req, { maxBytes: TASK_REQUEST_BODY_BYTES });
       const tasks = createTaskBatch(body, req);
       sendJson(res, 202, { tasks, taskIds: tasks.map(task => task.taskId) });
       return true;
     }
 
     if (req.method === 'POST' && apiPathname === '/api/flyreq/tasks') {
-      const body = await readJsonBody(req);
+      const body = await readJsonBody(req, { maxBytes: TASK_REQUEST_BODY_BYTES });
       sendJson(res, 202, createTask(body, req));
       return true;
     }

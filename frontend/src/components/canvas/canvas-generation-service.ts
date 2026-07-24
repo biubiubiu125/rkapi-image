@@ -5,7 +5,7 @@
  * 仅使用 host 的任务链路（createFlyreqTask / getFlyreqTask）。
  * 视频/音频不在范围内；图生图无 mask（队列不支持）。
  */
-import { createFlyreqTask, getFlyreqTask, normalizeFlyreqTaskAccess, resolveImageTaskProvider, type FlyreqTaskAccess, type FlyreqTaskResponse, type FlyreqTaskStatus, type ImageReference } from "@/lib/flyreq-task-client";
+import { createFlyreqTask, getFlyreqTask, normalizeFlyreqTaskAccess, resolveImageTaskProvider, validateCreateFlyreqTaskBody, type CreateFlyreqTaskInput, type FlyreqTaskAccess, type FlyreqTaskResponse, type FlyreqTaskStatus, type ImageReference } from "@/lib/flyreq-task-client";
 import { normalizeModel } from "@/lib/model-capabilities";
 import { compressReferenceDataUrl } from "./lib/image-utils";
 import { uploadImage } from "./lib/image-storage";
@@ -35,7 +35,7 @@ const MAX_WAIT_MS = 30 * 60 * 1000;
 
 async function toImageReference(image: ReferenceImage): Promise<ImageReference | null> {
   if (!image.dataUrl || image.dataUrl.length < 100) return null; // 过滤空/无效 dataUrl
-  // 发送前压缩，避免未压缩 PNG 把请求体顶过后端 10MB 上限导致连接重置
+  // 发送前压缩，避免未压缩 PNG 把请求体顶过后端请求体上限导致连接重置
   const { dataUrl, mimeType } = await compressReferenceDataUrl(image.dataUrl);
   const data = dataUrl.includes(",") ? dataUrl.split(",")[1] : dataUrl;
   return { data, mimeType: mimeType || image.type || "image/png" };
@@ -57,10 +57,11 @@ export async function submitNodeGeneration(args: {
   if (!apiKey) throw new CanvasApiKeyMissingError();
 
   const imageRefs = (await Promise.all(args.referenceImages.map(toImageReference))).filter((ref): ref is ImageReference => ref !== null);
-  return normalizeFlyreqTaskAccess(await createFlyreqTask({
+  const taskPayload = {
     apiKey,
     baseUrl: provider.baseUrl,
     protocol: provider.protocol,
+    imageApiFlavor: provider.imageApiFlavor,
     mode: imageRefs.length > 0 ? "image-to-image" : "text-to-image",
     prompt: args.prompt,
     outputSize: args.config.outputSize,
@@ -75,7 +76,9 @@ export async function submitNodeGeneration(args: {
     streamImages: provider.streamImages,
     parallelCount: 1,
     images: imageRefs,
-  }));
+  } satisfies CreateFlyreqTaskInput;
+  validateCreateFlyreqTaskBody(taskPayload);
+  return normalizeFlyreqTaskAccess(await createFlyreqTask(taskPayload));
 }
 
 /** 轮询单个任务直到终态；通过 onStatus 回调实时通知调用方。 */
@@ -137,10 +140,11 @@ export async function generateCanvasImages(args: {
   if (!apiKey) throw new CanvasApiKeyMissingError();
 
   const imageRefs = (await Promise.all(args.referenceImages.map(toImageReference))).filter((ref): ref is ImageReference => ref !== null);
-  const taskAccess = normalizeFlyreqTaskAccess(await createFlyreqTask({
+  const taskPayload = {
     apiKey,
     baseUrl: provider.baseUrl,
     protocol: provider.protocol,
+    imageApiFlavor: provider.imageApiFlavor,
     mode: imageRefs.length > 0 ? "image-to-image" : "text-to-image",
     prompt: args.prompt,
     outputSize: args.config.outputSize,
@@ -155,7 +159,9 @@ export async function generateCanvasImages(args: {
     streamImages: provider.streamImages,
     parallelCount: args.config.count,
     images: imageRefs,
-  }));
+  } satisfies CreateFlyreqTaskInput;
+  validateCreateFlyreqTaskBody(taskPayload);
+  const taskAccess = normalizeFlyreqTaskAccess(await createFlyreqTask(taskPayload));
 
   const images = await pollNodeTask(taskAccess.taskId, taskAccess.readToken, (s) => args.onStatus?.(s), args.signal);
   return images;

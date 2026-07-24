@@ -274,6 +274,15 @@ export function AgentChatWorkspace({ wideMode = false, disabled = false, onConfi
         }]);
   }, []);
 
+  const prepareAndAddUpload = useCallback(async (file: File, source?: PendingUpload['source']) => {
+    const prepared = await prepareUploadImage(file);
+    if (prepared.processedSize > MAX_UPLOAD_SIZE_BYTES) {
+      showToast(t('workbench.fileTooLarge', { name: file.name }), 'error');
+      return;
+    }
+    addPreparedUpload({ ...prepared, source });
+  }, [addPreparedUpload, showToast, t]);
+
   const handleCheckNow = useCallback(async () => {
     if (agent.isSyncing || onCooldown) return;
     setOnCooldown(true);
@@ -311,13 +320,12 @@ export function AgentChatWorkspace({ wideMode = false, disabled = false, onConfi
         const blob = await getAssetBlob(asset.id);
         if (!blob) continue;
         const file = new File([blob], asset.name, { type: asset.mimeType || blob.type || 'image/png' });
-        const prepared = await prepareUploadImage(file);
-        addPreparedUpload({ ...prepared, source: 'asset' });
+        await prepareAndAddUpload(file, 'asset');
       }
     } finally {
       setUploading(false);
     }
-  }, [addPreparedUpload, agent.hasApiKey]);
+  }, [agent.hasApiKey, prepareAndAddUpload]);
 
   const applyTextAsset = useCallback((asset: TextAsset) => {
     const editor = editorRef.current;
@@ -362,24 +370,12 @@ export function AgentChatWorkspace({ wideMode = false, disabled = false, onConfi
     try {
       for (const file of Array.from(fileList)) {
         if (!file.type.startsWith('image/')) continue;
-        if (file.size > MAX_UPLOAD_SIZE_BYTES) continue;
-        const prepared = await prepareUploadImage(file);
-        const uploadId = prepared.id || generateUUID();
-        setUploads(prev => prev.some(u => u.id === uploadId)
-          ? prev
-          : [...prev, {
-              id: uploadId,
-              name: prepared.name,
-              preview: prepared.preview,
-              dataUrl: prepared.dataUrl,
-              mimeType: prepared.mimeType,
-              badge: getOptimizationBadge(prepared.originalSize, prepared.processedSize, prepared.cacheHit),
-            }]);
+        await prepareAndAddUpload(file);
       }
     } finally {
       setUploading(false);
     }
-  }, [agent.hasApiKey]);
+  }, [agent.hasApiKey, prepareAndAddUpload]);
 
   /** 接受 File[]（来自粘贴事件），复用 handleFiles 的逻辑 */
   const handleFileArray = useCallback(async (files: File[]) => {
@@ -392,24 +388,12 @@ export function AgentChatWorkspace({ wideMode = false, disabled = false, onConfi
     try {
       for (const file of files) {
         if (!file.type.startsWith('image/')) continue;
-        if (file.size > MAX_UPLOAD_SIZE_BYTES) continue;
-        const prepared = await prepareUploadImage(file);
-        const uploadId = prepared.id || generateUUID();
-        setUploads(prev => prev.some(u => u.id === uploadId)
-          ? prev
-          : [...prev, {
-              id: uploadId,
-              name: prepared.name,
-              preview: prepared.preview,
-              dataUrl: prepared.dataUrl,
-              mimeType: prepared.mimeType,
-              badge: getOptimizationBadge(prepared.originalSize, prepared.processedSize, prepared.cacheHit),
-            }]);
+        await prepareAndAddUpload(file);
       }
     } finally {
       setUploading(false);
     }
-  }, [agent.hasApiKey]);
+  }, [agent.hasApiKey, prepareAndAddUpload]);
 
   // Ctrl+V 粘贴图片
   useEffect(() => {

@@ -32,7 +32,7 @@ export interface ModelStatus {
 const MODEL_CHECK_TIMEOUT = 30000;
 const TASK_REQUEST_TIMEOUT = 30000;
 const CREATE_TASK_TIMEOUT = 60000;
-const CREATE_TASK_MAX_BODY_BYTES = 10 * 1024 * 1024 - 128 * 1024;
+const CREATE_TASK_MAX_BODY_BYTES = 50 * 1024 * 1024 - 128 * 1024;
 
 export type FlyreqTaskMode = 'text-to-image' | 'image-to-image';
 export type FlyreqTaskStatus = 'queued' | '排队中' | 'processing' | 'completed' | 'failed' | 'expired';

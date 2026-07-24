@@ -4,6 +4,7 @@ const path = require('path');
 const ROOT = path.resolve(__dirname, '..');
 const FRONTEND_DIR = path.join(ROOT, 'frontend');
 const BACKEND_DIR = path.join(ROOT, 'backend');
+const BACKEND_PACKAGE_LOCK_RELATIVE_PATH = 'backend/package-lock.json';
 const TEMP_DIR = path.join(ROOT, 'temp');
 const ZIP_PATH = path.join(ROOT, 'out.zip');
 
@@ -61,6 +62,24 @@ const rootPkg = {
   dependencies: backendPkg.dependencies,
 };
 fs.writeFileSync(path.join(TEMP_DIR, 'package.json'), JSON.stringify(rootPkg, null, 2) + '\n');
+const backendLock = JSON.parse(fs.readFileSync(path.join(ROOT, BACKEND_PACKAGE_LOCK_RELATIVE_PATH), 'utf8'));
+const rootLockPackage = {
+  ...(backendLock.packages?.[''] || {}),
+  name: rootPkg.name,
+  version: appVersion,
+  dependencies: backendPkg.dependencies,
+};
+delete rootLockPackage.devDependencies;
+const rootLock = {
+  ...backendLock,
+  name: rootPkg.name,
+  version: appVersion,
+  packages: {
+    ...(backendLock.packages || {}),
+    '': rootLockPackage,
+  },
+};
+fs.writeFileSync(path.join(TEMP_DIR, 'package-lock.json'), JSON.stringify(rootLock, null, 2) + '\n');
 fs.writeFileSync(path.join(TEMP_DIR, 'start.js'), [
   "process.env.NODE_ENV = 'production';",
   `process.env.APP_VERSION = process.env.APP_VERSION || ${JSON.stringify(appVersion)};`,

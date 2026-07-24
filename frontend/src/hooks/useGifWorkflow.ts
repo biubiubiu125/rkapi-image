@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { createFlyreqTask, getFlyreqTask, normalizeFlyreqTaskAccess, resolveImageTaskProvider, type ImageReference } from '@/lib/flyreq-task-client';
+import { createFlyreqTask, getFlyreqTask, normalizeFlyreqTaskAccess, resolveImageTaskProvider, validateCreateFlyreqTaskBody, type CreateFlyreqTaskInput, type ImageReference } from '@/lib/flyreq-task-client';
 import { ackServerTaskWithRetry, cancelServerTaskWithRetry } from '@/lib/server-task-ack';
 import { flyreqTaskSocket } from '@/lib/flyreq-task-socket';
 import { generateUUID } from '@/lib/uuid';
@@ -375,11 +375,6 @@ export function useGifWorkflow(): UseGifWorkflowResult {
     setIsApiKeyMissing(false);
 
     const previousJob = jobRef.current;
-    clearSubscription();
-    cancelGifServerTask(previousJob);
-    revokeResolvedUrls();
-    setGridImageUrl(null);
-    setGifBlob(null);
 
     const template = await loadGifTemplate();
     const refsForSubmit = input.refImages.slice(0, 6);
@@ -395,6 +390,27 @@ export function useGifWorkflow(): UseGifWorkflowResult {
       loop: input.loop,
       closedLoop: input.closedLoop,
     });
+    const taskPayload = {
+      apiKey: provider.apiKey,
+      baseUrl: provider.baseUrl,
+      protocol: provider.protocol,
+      imageApiFlavor: provider.imageApiFlavor,
+      mode: 'image-to-image',
+      prompt: finalPrompt,
+      outputSize: GIF_GRID_OUTPUT_SIZE,
+      customSize: GIF_GRID_CUSTOM_SIZE,
+      aspectRatio: GIF_GRID_ASPECT_RATIO,
+      temperature: 1,
+      model: provider.modelId,
+      gptImageQuality: advancedParams.quality,
+      gptImageStyle: advancedParams.style,
+      gptImageBackground: advancedParams.background,
+      gptImageOutputFormat: advancedParams.outputFormat,
+      streamImages: provider.streamImages,
+      parallelCount: 1,
+      images: buildImageReferences(template, refsForSubmit),
+    } satisfies CreateFlyreqTaskInput;
+    validateCreateFlyreqTaskBody(taskPayload);
 
     const next: ActiveGifJob = {
       id: generateUUID(),
@@ -414,34 +430,16 @@ export function useGifWorkflow(): UseGifWorkflowResult {
       createdAt: nowIso(),
       updatedAt: nowIso(),
     };
-    persistJob(next);
-    setStartedAt(Date.now());
 
-    void cleanupJobAssets(previousJob);
+    if (!previousJob) {
+      persistJob(next);
+      setStartedAt(Date.now());
+    }
 
     let createdServerTaskId: string | null = null;
     let createdServerTaskReadToken: string | undefined;
     try {
-      // TODO: 从模型注册表读取实际的 baseUrl 和 protocol
-      const serverTask = normalizeFlyreqTaskAccess(await createFlyreqTask({
-        apiKey: provider.apiKey,
-        baseUrl: provider.baseUrl,
-        protocol: provider.protocol,
-        mode: 'image-to-image',
-        prompt: finalPrompt,
-        outputSize: GIF_GRID_OUTPUT_SIZE,
-        customSize: GIF_GRID_CUSTOM_SIZE,
-        aspectRatio: GIF_GRID_ASPECT_RATIO,
-        temperature: 1,
-        model: provider.modelId,
-        gptImageQuality: advancedParams.quality,
-        gptImageStyle: advancedParams.style,
-        gptImageBackground: advancedParams.background,
-        gptImageOutputFormat: advancedParams.outputFormat,
-        streamImages: provider.streamImages,
-        parallelCount: 1,
-        images: buildImageReferences(template, refsForSubmit),
-      }));
+      const serverTask = normalizeFlyreqTaskAccess(await createFlyreqTask(taskPayload));
       createdServerTaskId = serverTask.taskId;
       createdServerTaskReadToken = serverTask.readToken;
 
@@ -452,10 +450,22 @@ export function useGifWorkflow(): UseGifWorkflowResult {
         updatedAt: nowIso(),
       };
       persistJob(withTaskId);
+      clearSubscription();
+      if (previousJob) {
+        cancelGifServerTask(previousJob);
+        void cleanupJobAssets(previousJob);
+        setStartedAt(Date.now());
+      }
+      revokeResolvedUrls();
+      setGridImageUrl(null);
+      setGifBlob(null);
       subscribeServerTask(serverTask.taskId, serverTask.readToken);
     } catch (error) {
       if (createdServerTaskId) {
         void cancelServerTaskWithRetry(createdServerTaskId, createdServerTaskReadToken);
+      }
+      if (jobRef.current?.id !== next.id) {
+        throw error;
       }
       const message = error instanceof Error ? error.message : String(error);
       const failedJob: ActiveGifJob = {

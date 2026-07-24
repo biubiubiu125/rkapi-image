@@ -56,33 +56,39 @@ jobs:
             base_version="${package_version}"
           fi
 
-          IFS='.' read -r major minor patch <<< "${base_version}"
+          current_commit_tag="$(git tag --points-at HEAD --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | head -n 1)"
+          if [[ -n "${current_commit_tag}" ]]; then
+            next="${current_commit_tag}"
+            echo "Reusing release tag already pointing at source commit: ${next}"
+          else
+            IFS='.' read -r major minor patch <<< "${base_version}"
 
-          bump="${{ github.event_name == 'workflow_dispatch' && inputs.bump || 'patch' }}"
-          case "${bump}" in
-            major)
-              major=$((major + 1))
-              minor=0
-              patch=0
-              ;;
-            minor)
-              minor=$((minor + 1))
-              patch=0
-              ;;
-            patch)
-              patch=$((patch + 1))
-              ;;
-            *)
-              echo "Unsupported bump type: ${bump}" >&2
-              exit 1
-              ;;
-          esac
+            bump="${{ github.event_name == 'workflow_dispatch' && inputs.bump || 'patch' }}"
+            case "${bump}" in
+              major)
+                major=$((major + 1))
+                minor=0
+                patch=0
+                ;;
+              minor)
+                minor=$((minor + 1))
+                patch=0
+                ;;
+              patch)
+                patch=$((patch + 1))
+                ;;
+              *)
+                echo "Unsupported bump type: ${bump}" >&2
+                exit 1
+                ;;
+            esac
 
-          next="v${major}.${minor}.${patch}"
-          while git rev-parse -q --verify "refs/tags/${next}" >/dev/null; do
-            patch=$((patch + 1))
             next="v${major}.${minor}.${patch}"
-          done
+            while git rev-parse -q --verify "refs/tags/${next}" >/dev/null; do
+              patch=$((patch + 1))
+              next="v${major}.${minor}.${patch}"
+            done
+          fi
 
           echo "latest_tag=${latest_tag}" >> "$GITHUB_OUTPUT"
           echo "package_version=${package_version}" >> "$GITHUB_OUTPUT"
@@ -114,13 +120,21 @@ jobs:
           cache-dependency-path: |
             package-lock.json
             frontend/package-lock.json
+            backend/package-lock.json
 
-      - name: Install zip package dependencies
+      - name: Install release dependencies
         shell: bash
         run: |
           set -euo pipefail
           npm ci
           npm ci --prefix frontend
+          npm ci --prefix backend --include=optional
+
+      - name: Validate release build
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run test:run
 
       - name: Build zip package
         shell: bash
@@ -139,6 +153,26 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create and push tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${{ steps.version.outputs.tag }}"
+          source_sha="${{ steps.source.outputs.sha }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git rev-parse -q --verify "refs/tags/${tag}" >/dev/null; then
+            tag_sha="$(git rev-list -n 1 "${tag}")"
+            if [[ "${tag_sha}" != "${source_sha}" ]]; then
+              echo "Tag ${tag} points to ${tag_sha}, expected ${source_sha}" >&2
+              exit 1
+            fi
+            echo "Tag ${tag} already exists on source commit; reusing."
+            exit 0
+          fi
+          git tag -a "${tag}" -m "Release ${tag}"
+          git push origin "${tag}"
 
       - name: Build and push Docker image
         uses: docker/build-push-action@v6
@@ -161,23 +195,15 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Create and push tag
-        shell: bash
-        run: |
-          set -euo pipefail
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git tag -a "${{ steps.version.outputs.tag }}" -m "Release ${{ steps.version.outputs.tag }}"
-          git push origin "${{ steps.version.outputs.tag }}"
-
       - name: Create draft GitHub release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.version.outputs.tag }}
           name: RKAPI Image ${{ steps.version.outputs.tag }}
-          target_commitish: ${{ github.ref_name }}
+          target_commitish: ${{ steps.source.outputs.sha }}
           generate_release_notes: true
           draft: true
+          overwrite_files: true
           files: out.zip
           body: |
             Docker images have been published to GitHub Container Registry:

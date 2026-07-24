@@ -18,8 +18,9 @@ backend/rkapi-images/
 backend/rkapi-tasks.sqlite
 backend/rkapi-tasks.sqlite-wal
 backend/rkapi-tasks.sqlite-shm
-.env
-backend/.env
-backend/.env.local
-frontend/.env
-frontend/.env.local
+.env*
+backend/.env*
+frontend/.env*
+!.env.example
+!backend/.env.example
+!frontend/.env.example

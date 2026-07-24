@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { hasConfiguredTextModel } from '@/lib/settings-storage';
 import { generateUUID } from '@/lib/uuid';
-import { createFlyreqTask, getFlyreqTask, normalizeFlyreqTaskAccess, resolveImageTaskProvider, type ImageReference } from '@/lib/flyreq-task-client';
+import { createFlyreqTask, getFlyreqTask, normalizeFlyreqTaskAccess, resolveImageTaskProvider, validateCreateFlyreqTaskBody, type CreateFlyreqTaskInput, type ImageReference } from '@/lib/flyreq-task-client';
 import { ackServerTaskWithRetry, cancelServerTaskWithRetry } from '@/lib/server-task-ack';
 import { fetchImageAsBlob } from '@/lib/image-downloader';
 import {
@@ -285,9 +285,6 @@ export function useAgentChat() {
     if (!configured?.apiKey || !configured.baseUrl || !configured.modelId) {
       throw new Error('请先在设置中完成 Agent 默认文本模型配置');
     }
-    if (configured.protocol !== 'openai') {
-      throw new Error('当前 Agent 仅支持 OpenAI Response 文本模型');
-    }
     return configured;
   }, []);
 
@@ -395,13 +392,6 @@ export function useAgentChat() {
     setMessages(prev => [...prev, message]);
   }, []);
 
-  const registerImage = useCallback((record: AgentImageRecord) => {
-    setImages(prev => [...prev, record]);
-    void putImageRecord(record).catch(error => {
-      console.warn('[agent] 图片记录持久化失败', error);
-    });
-  }, []);
-
   const persistAndRegisterImage = useCallback(async (record: AgentImageRecord) => {
     await putImageRecord(record);
     setImages(prev => [...prev, record]);
@@ -445,11 +435,8 @@ export function useAgentChat() {
     describeSignal?: AbortSignal,
   ): Promise<AgentImageRecord> => {
     const imgId = nextImgId();
-    // 上传图片（有 contentHash）已在 prepareUploadImage 时存于 flyreq-upload-cache，
-    // 不再重复存到 flyreq-image-db，节省空间；生成图片无 contentHash 则照常存储。
-    if (source === 'generated' || !contentHash) {
-      await storeAgentImageBytes(imgId, blob);
-    }
+    // Agent 图片必须能在后续图生图时取回字节；上传缓存只是共享优化，不作为唯一存储。
+    await storeAgentImageBytes(imgId, blob);
 
     let description = '';
     try {
@@ -479,13 +466,9 @@ export function useAgentChat() {
       height: dims?.height && dims.height > 0 ? dims.height : undefined,
       createdAt: Date.now(),
     };
-    if (source === 'generated') {
-      await persistAndRegisterImage(record);
-    } else {
-      registerImage(record);
-    }
+    await persistAndRegisterImage(record);
     return record;
-  }, [getAgentTextModelConfig, locale, nextImgId, persistAndRegisterImage, registerImage]);
+  }, [getAgentTextModelConfig, locale, nextImgId, persistAndRegisterImage]);
 
   /** 重新生成已有图片的描述 */
   const redescribeImage = useCallback(async (imgId: string): Promise<string> => {
@@ -655,8 +638,15 @@ export function useAgentChat() {
     }
 
     const uploadedIds = linkedIds;
-    const refSuffix = imageReferences && imageReferences.length > 0
-      ? `\n[引用图片: ${imageReferences.join(', ')}]`
+    const referencedIds = (imageReferences || []).map(id => id.trim()).filter(Boolean);
+    if (trimmed.length === 0 && uploadedIds.length === 0 && referencedIds.length === 0) {
+      setError(current => current || '图片处理失败，请重新上传后再试');
+      setPhase('idle');
+      return;
+    }
+
+    const refSuffix = referencedIds.length > 0
+      ? `\n[引用图片: ${referencedIds.join(', ')}]`
       : '';
     const noteSuffix = uploadedIds.length > 0 ? `\n[已上传图片: ${uploadedIds.join(', ')}]` : '';
     const userMessage: AgentMessage = {
@@ -1003,7 +993,6 @@ export function useAgentChat() {
     };
     proposalRef.current = approvedProposal;
     setProposal(null);
-    void clearPendingProposal();
     setPhase('generating');
     setGeneratingStartedAt(startedAt);
     setGenerationDraft({
@@ -1019,17 +1008,26 @@ export function useAgentChat() {
     let pendingGenerationPersisted = false;
     try {
       const references: ImageReference[] = [];
+      const missingReferenceIds: string[] = [];
       for (const imgId of selectedImageIds) {
         const bytes = await getAgentImageBase64(imgId);
-        if (bytes) references.push({ data: bytes.data, mimeType: bytes.mimeType });
+        if (bytes) {
+          references.push({ data: bytes.data, mimeType: bytes.mimeType });
+        } else {
+          missingReferenceIds.push(imgId);
+        }
+      }
+      if (missingReferenceIds.length > 0) {
+        throw new Error(`参考图本地数据缺失，无法继续图生图：${missingReferenceIds.join(', ')}`);
       }
       const mode = references.length > 0 ? 'image-to-image' : 'text-to-image';
       const provider = resolveImageTaskProvider(model);
 
-      const taskAccess = normalizeFlyreqTaskAccess(await createFlyreqTask({
+      const taskPayload = {
         apiKey: provider.apiKey,
         baseUrl: provider.baseUrl,
         protocol: provider.protocol,
+        imageApiFlavor: provider.imageApiFlavor,
         mode,
         prompt,
         outputSize: params.outputSize,
@@ -1044,7 +1042,10 @@ export function useAgentChat() {
         streamImages: provider.streamImages,
         parallelCount: params.parallelCount,
         images: references,
-      }));
+      } satisfies CreateFlyreqTaskInput;
+      validateCreateFlyreqTaskBody(taskPayload);
+
+      const taskAccess = normalizeFlyreqTaskAccess(await createFlyreqTask(taskPayload));
       createdTaskId = taskAccess.taskId;
       createdTaskReadToken = taskAccess.readToken;
       const pendingGeneration: PendingGenerationData = {
@@ -1071,6 +1072,7 @@ export function useAgentChat() {
       setGenerationDraft(prev => prev ? { ...prev, taskId: taskAccess.taskId } : prev);
       await savePendingGeneration(pendingGeneration);
       pendingGenerationPersisted = true;
+      void clearPendingProposal();
 
       const task = await pollTask(taskAccess.taskId, taskAccess.readToken);
       if (!mountedRef.current) return;
@@ -1254,7 +1256,7 @@ export function useAgentChat() {
     pollWakeRef.current?.();
     describeAbortRef.current?.abort();
     cancelPendingGenerationTask(pending);
-    await clearAgentSession();
+    await clearAgentSession(images.map(img => img.imgId));
     pendingGenerationRef.current = null;
     setMessages([]);
     setImages([]);
@@ -1269,7 +1271,7 @@ export function useAgentChat() {
     setError(null);
     seqRef.current = 0;
     setPhase('idle');
-  }, [cancelPendingGenerationTask, flushAndCancelRaf]);
+  }, [cancelPendingGenerationTask, flushAndCancelRaf, images]);
 
   /** 根据消息中的 proposalData 重新打开提案编辑 */
   const reeditProposal = useCallback((messageId: string) => {

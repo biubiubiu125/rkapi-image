@@ -7,6 +7,8 @@ services:
     container_name: rkapi-image
     environment:
       NODE_ENV: production
+      PORT: 3001
+      HOSTNAME: 0.0.0.0
       RKAPI_IMAGE_TASK_DB: /app/backend/data/rkapi-tasks.sqlite
       RKAPI_IMAGE_IMAGE_DIR: /app/backend/data/rkapi-images
     ports:

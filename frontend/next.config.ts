@@ -1,6 +1,6 @@
 import type { NextConfig } from "next";
 import path from "node:path";
-import withPWA from "next-pwa";
+import withPWA from "@ducanh2912/next-pwa";
 
 const dev = process.env.NODE_ENV !== "production";
 

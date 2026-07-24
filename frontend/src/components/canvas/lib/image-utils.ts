@@ -55,7 +55,7 @@ export function dataUrlToFile(image: ReferenceImage) {
 }
 
 // 参考图压缩参数：与图生图 upload-image-cache 保持一致，避免画布未压缩 PNG 把
-// 请求体顶过后端 10MB 上限导致连接重置。
+// 请求体顶过后端请求体上限导致连接重置。
 const REFERENCE_MAX_SIDE = 2560;
 const REFERENCE_MAX_PIXELS = 5_000_000;
 const REFERENCE_JPEG_QUALITY = 0.86;

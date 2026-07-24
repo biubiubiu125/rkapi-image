@@ -161,18 +161,36 @@ export async function deleteAgentImageBytes(imgId: string): Promise<void> {
 
 // ===== 清空会话（清空重开） =====
 
-export async function clearAgentSession(): Promise<void> {
-  const db = await openAgentDB();
-  if (!db) return;
-
+function readAllImageIds(db: IDBDatabase): Promise<string[]> {
   return new Promise((resolve) => {
-    const tx = db.transaction([MESSAGES_STORE, IMAGES_STORE, META_STORE], 'readwrite');
-    tx.objectStore(MESSAGES_STORE).clear();
-    tx.objectStore(IMAGES_STORE).clear();
-    tx.objectStore(META_STORE).clear();
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => resolve();
+    const tx = db.transaction(IMAGES_STORE, 'readonly');
+    const req = tx.objectStore(IMAGES_STORE).getAllKeys();
+    req.onsuccess = () => resolve(req.result.map(key => String(key)));
+    req.onerror = () => resolve([]);
+    tx.onerror = () => resolve([]);
   });
+}
+
+export async function clearAgentSession(imageIds?: string[]): Promise<void> {
+  const db = await openAgentDB();
+  const idsToDelete = Array.isArray(imageIds)
+    ? imageIds
+    : db
+      ? await readAllImageIds(db)
+      : [];
+
+  if (db) {
+    await new Promise((resolve) => {
+      const tx = db.transaction([MESSAGES_STORE, IMAGES_STORE, META_STORE], 'readwrite');
+      tx.objectStore(MESSAGES_STORE).clear();
+      tx.objectStore(IMAGES_STORE).clear();
+      tx.objectStore(META_STORE).clear();
+      tx.oncomplete = () => resolve(undefined);
+      tx.onerror = () => resolve(undefined);
+    });
+  }
+
+  await Promise.allSettled(idsToDelete.map(imgId => deleteAgentImageBytes(imgId)));
 }
 
 // ===== Pending Proposal 持久化（刷新恢复「等待你确认」状态）=====
