@@ -72,13 +72,19 @@ export function saveActiveGifJob(job: ActiveGifJob | null): boolean {
       localStorage.removeItem(STORAGE_KEY);
       return true;
     }
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(job));
+    const persistedJob = job.serverTaskAcked === true
+      ? { ...job, serverTaskReadToken: undefined }
+      : job;
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(persistedJob));
     return true;
   } catch {
     if (!job?.serverTaskId && !job?.gridImageRef) return false;
     try {
+      const persistedJob = job.serverTaskAcked === true
+        ? { ...job, serverTaskReadToken: undefined }
+        : job;
       localStorage.setItem(STORAGE_KEY, JSON.stringify({
-        ...job,
+        ...persistedJob,
         refImages: [],
       }));
       return true;

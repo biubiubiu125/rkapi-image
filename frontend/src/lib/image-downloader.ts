@@ -1,4 +1,5 @@
 import { openImageDb, BLOBS_STORE } from '@/lib/image-db';
+import { buildFlyreqImageFetchRequest } from '@/lib/flyreq-image-fetch';
 
 const MAX_FALLBACK_STORE_SIZE = 50;
 
@@ -101,6 +102,13 @@ function getPercent(loadedBytes: number, totalBytes?: number): number | undefine
   return Math.min(100, Math.max(0, Math.round((loadedBytes / totalBytes) * 100)));
 }
 
+function assertImageResponseContentType(response: Response): void {
+  const contentType = response.headers.get('content-type')?.split(';', 1)[0]?.trim().toLowerCase() || '';
+  if (contentType && !contentType.startsWith('image/') && contentType !== 'application/octet-stream') {
+    throw new Error(`response is not an image: ${contentType}`);
+  }
+}
+
 function createIdleTimeout(controller: AbortController): { reset: () => void; clear: () => void } {
   let timeout: ReturnType<typeof setTimeout> | undefined;
   const clear = () => {
@@ -156,6 +164,7 @@ export async function fetchImageAsBlob(
   url: string,
   maxRetries = 2,
   onProgress?: BlobDownloadProgressHandler,
+  options: { readToken?: string } = {},
 ): Promise<Blob> {
   let lastError: Error | undefined;
   for (let attempt = 0; attempt < maxRetries; attempt++) {
@@ -163,8 +172,10 @@ export async function fetchImageAsBlob(
     const idleTimeout = createIdleTimeout(controller);
     try {
       idleTimeout.reset();
-      const response = await fetch(url, { signal: controller.signal });
+      const request = buildFlyreqImageFetchRequest(url, options.readToken, { signal: controller.signal });
+      const response = await fetch(request.url, request.init);
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      assertImageResponseContentType(response);
       idleTimeout.reset();
       const blob = await readResponseAsBlob(response, progress => {
         idleTimeout.reset();
@@ -295,6 +306,7 @@ export interface DownloadResult {
 export interface DownloadAndStoreImagesOptions {
   maxRetries?: number;
   onProgress?: ImageDownloadProgressHandler;
+  readToken?: string;
 }
 
 function createInitialDownloadItems(imageRefs: string[]): ImageDownloadProgressItem[] {
@@ -331,9 +343,14 @@ export async function downloadAndStoreImages(
     };
     try {
       emit({ index: i, status: 'downloading', loadedBytes: 0 });
-      const blob = await fetchImageAsBlob(url, options.maxRetries ?? 2, progress => {
-        emit({ index: i, status: 'downloading', ...progress });
-      });
+      const blob = await fetchImageAsBlob(
+        url,
+        options.maxRetries ?? 2,
+        progress => {
+          emit({ index: i, status: 'downloading', ...progress });
+        },
+        { readToken: options.readToken },
+      );
       const totalBytes = items[i]?.totalBytes || blob.size || undefined;
       const persisted = await storeImageBlob(jobId, i, blob);
       if (!persisted) {

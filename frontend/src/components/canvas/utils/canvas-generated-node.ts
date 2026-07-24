@@ -50,6 +50,7 @@ export function applyGeneratedImageToCanvasNodes(
         ...node.metadata,
         ...toGeneratedImageMetadata(image, extra),
         generationTaskId: node.metadata?.generationTaskId,
+        generationTaskReadToken: node.metadata?.generationTaskReadToken,
         generationStartedAt: node.metadata?.generationStartedAt,
       },
     };

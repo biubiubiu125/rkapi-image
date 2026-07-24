@@ -4,6 +4,7 @@ import { finalizeCompletedServerTask, getTaskSseMetadata, type SubmitActions } f
 import type { StoredJob } from '@/lib/job-store';
 import { classifyTaskFailure } from '@/lib/task-failure';
 import type { FlyreqTaskResponse } from '@/lib/flyreq-task-client';
+import { ackServerTaskWithRetry } from '@/lib/server-task-ack';
 
 function isWaitingJob(job: StoredJob): boolean {
   return job.status === 'processing' || job.status === 'queued' || job.status === '排队中';
@@ -21,6 +22,20 @@ function handleCompletedTaskFinalizationError(
     completedAt: task.completedAt,
     ...getTaskSseMetadata(task),
   }).catch(() => undefined);
+}
+
+function ackTerminalFailedTaskAfterLocalPersist(job: StoredJob, actions: SubmitActions): void {
+  if (!job.serverTaskId || job.serverTaskAcked === true) return;
+  void ackServerTaskWithRetry(job.serverTaskId, job.serverTaskReadToken)
+    .then(acked => {
+      if (!acked) return;
+      actions.replaceJob(job.id, current => ({
+        ...current,
+        serverTaskAcked: true,
+        serverTaskReadToken: undefined,
+      }));
+    })
+    .catch(() => undefined);
 }
 
 /**
@@ -90,7 +105,9 @@ export function useServerTaskPolling(
           const { terminal } = classifyTaskFailure(task);
           const message = task.error || task.warning
             || (task.status === 'expired' ? '该任务已超出取回时间' : '后端任务失败');
-          void actions.failJob(jobId, message, { terminal, completedAt: task.completedAt, ...getTaskSseMetadata(task) });
+          void actions.failJob(jobId, message, { terminal, completedAt: task.completedAt, ...getTaskSseMetadata(task) })
+            .then(() => ackTerminalFailedTaskAfterLocalPersist(actions.getJob?.(jobId) ?? currentJob, actions))
+            .catch(() => undefined);
           return;
         }
         if (task.status === 'processing') {

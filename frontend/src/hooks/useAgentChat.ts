@@ -204,6 +204,25 @@ function proposalDataFromPendingGeneration(data: PendingGenerationData): AgentPr
   };
 }
 
+function proposalFromPendingGeneration(data: PendingGenerationData): AgentProposal {
+  return {
+    action: data.proposal?.action ?? (data.selectedImageIds.length > 0 ? 'edit' : 'generate'),
+    prompt: data.proposal.prompt,
+    referencedImageIds: data.selectedImageIds,
+    reason: data.proposal?.reason ?? '',
+    requestedAspectRatio: data.proposal?.requestedAspectRatio,
+    suggestedAspectRatio: data.proposal?.suggestedAspectRatio ?? data.aspectRatio,
+    requestedOutputSize: data.proposal?.requestedOutputSize ?? data.outputSize,
+    temperature: data.temperature,
+    gptImageQuality: data.gptImageQuality,
+    gptImageStyle: data.gptImageStyle,
+    gptImageBackground: data.gptImageBackground,
+    gptImageOutputFormat: data.gptImageOutputFormat,
+    parallelCount: data.parallelCount,
+    requestedModelId: data.proposal?.requestedModelId,
+  };
+}
+
 /**
  * 按最后一个上下文分隔点切片：分隔点之前的对话和图片对模型不可见。
  * 界面仍展示全部消息，这里只影响喂给模型的上下文。
@@ -225,9 +244,9 @@ function sliceActiveContext(
   };
 }
 
-async function resultImageToBlob(ref: string): Promise<Blob> {
-  if (ref.startsWith('URL:')) return fetchImageAsBlob(ref.slice(4));
-  if (ref.startsWith('MULTI_URL:')) return fetchImageAsBlob(ref.slice(10).split('|||')[0]);
+async function resultImageToBlob(ref: string, readToken?: string): Promise<Blob> {
+  if (ref.startsWith('URL:')) return fetchImageAsBlob(ref.slice(4), 2, undefined, { readToken });
+  if (ref.startsWith('MULTI_URL:')) return fetchImageAsBlob(ref.slice(10).split('|||')[0], 2, undefined, { readToken });
   if (ref.startsWith('data:')) {
     const base64 = ref.split(',')[1] || '';
     const mime = ref.slice(5).split(';')[0] || 'image/png';
@@ -765,7 +784,7 @@ export function useAgentChat() {
 
     // 先下载所有图片
     setPhase('loading');
-    const blobs = await Promise.allSettled(allImages.map(ref => resultImageToBlob(ref)));
+    const blobs = await Promise.allSettled(allImages.map(ref => resultImageToBlob(ref, ctx.taskReadToken)));
 
     // 再生成缩略图 + 视觉描述
     setPhase('describing');
@@ -880,6 +899,9 @@ export function useAgentChat() {
         setProposal(null);
         setPhase('generating');
       } else {
+        if (isAgentTaskTerminalError(err)) {
+          await ackServerTaskWithRetry(data.taskId, data.taskReadToken);
+        }
         void clearPendingGeneration();
         pendingGenerationRef.current = null;
         setGeneratingTaskId(null);
@@ -935,7 +957,23 @@ export function useAgentChat() {
         }
         return 'completed';
       }
-      if (task.status === 'failed' || task.status === 'expired') return 'failed';
+      if (task.status === 'failed' || task.status === 'expired') {
+        const pending = pendingGenerationRef.current;
+        if (pending?.taskId === taskId) {
+          const message = task.error || task.warning || (task.status === 'expired' ? '该任务已超出取回时间' : '生图任务失败');
+          pollAbortRef.current = true;
+          await ackServerTaskWithRetry(taskId, pending.taskReadToken);
+          await clearPendingGeneration();
+          pendingGenerationRef.current = null;
+          setGeneratingTaskId(null);
+          setGeneratingStartedAt(null);
+          setGenerationDraft(null);
+          setProposal(proposalFromPendingGeneration(pending));
+          setPhase('proposal');
+          setError(message);
+        }
+        return 'failed';
+      }
       if (task.status === 'processing') return 'processing';
       return 'queued';
     } catch (err) {
@@ -1103,15 +1141,19 @@ export function useAgentChat() {
         taskWarning: task.warning,
       });
     } catch (err) {
+      const isTerminalTaskError = isAgentTaskTerminalError(err);
       const canKeepPendingGeneration = Boolean(
         createdTaskId &&
         pendingGenerationPersisted &&
         pendingGenerationRef.current?.taskId === createdTaskId &&
-        !isAgentTaskTerminalError(err) &&
+        !isTerminalTaskError &&
         !isAgentTaskStoppedError(err)
       );
       if (createdTaskId && !canKeepPendingGeneration && isLocalPersistenceError(err)) {
         void cancelServerTaskWithRetry(createdTaskId, createdTaskReadToken);
+      }
+      if (createdTaskId && pendingGenerationPersisted && isTerminalTaskError) {
+        await ackServerTaskWithRetry(createdTaskId, createdTaskReadToken);
       }
       if (canKeepPendingGeneration) {
         const recoverableTaskId = createdTaskId!;

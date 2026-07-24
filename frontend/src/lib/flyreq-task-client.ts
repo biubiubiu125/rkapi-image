@@ -16,6 +16,7 @@ import {
 import {
   normalizeModelBaseUrl,
 } from '@/lib/model-endpoints';
+import { FLYREQ_TASK_TOKEN_HEADER } from '@/lib/flyreq-image-fetch';
 
 export interface ImageReference {
   data: string;
@@ -285,11 +286,9 @@ function isAbortError(error: unknown): boolean {
   );
 }
 
-function buildTaskAccessUrl(pathname: string, readToken?: string): string {
+function buildTaskAccessHeaders(readToken?: string): HeadersInit | undefined {
   const token = String(readToken || '').trim();
-  if (!token) return pathname;
-  const separator = pathname.includes('?') ? '&' : '?';
-  return `${pathname}${separator}token=${encodeURIComponent(token)}`;
+  return token ? { [FLYREQ_TASK_TOKEN_HEADER]: token } : undefined;
 }
 
 function normalizeModelCheckError(error: unknown): Error {
@@ -381,9 +380,6 @@ export async function createFlyreqTasks(input: CreateFlyreqTaskInput): Promise<F
     : Array.isArray(data?.taskIds)
       ? data.taskIds.map(taskId => normalizeFlyreqTaskAccess(taskId))
       : [];
-  if (tasks.length !== input.parallelCount || tasks.some(task => !task.taskId)) {
-    throw new Error('创建任务失败：后端未返回完整任务 ID 列表');
-  }
   return tasks;
 }
 
@@ -495,9 +491,10 @@ export function resolveTextTaskProvider(modelId: string): { apiKey: string; base
 }
 
 export async function getFlyreqTask(taskId: string, readToken?: string): Promise<FlyreqTaskResponse> {
-  const response = await fetchWithTimeout(buildTaskAccessUrl(`/api/flyreq/tasks/${encodeURIComponent(taskId)}`, readToken), {
+  const response = await fetchWithTimeout(`/api/flyreq/tasks/${encodeURIComponent(taskId)}`, {
     method: 'GET',
     cache: 'no-store',
+    headers: buildTaskAccessHeaders(readToken),
   }, TASK_REQUEST_TIMEOUT);
   return parseTaskResponse(response);
 }
@@ -511,8 +508,9 @@ export async function getFlyreqQueueStatus(): Promise<FlyreqQueueStatus> {
 }
 
 export async function ackFlyreqTask(taskId: string, readToken?: string): Promise<void> {
-  const response = await fetchWithTimeout(buildTaskAccessUrl(`/api/flyreq/tasks/${encodeURIComponent(taskId)}/ack`, readToken), {
+  const response = await fetchWithTimeout(`/api/flyreq/tasks/${encodeURIComponent(taskId)}/ack`, {
     method: 'POST',
+    headers: buildTaskAccessHeaders(readToken),
   }, TASK_REQUEST_TIMEOUT);
   const data = await parseTaskResponse<AckTaskResponse>(response);
   if (!data?.acknowledged) {
@@ -521,8 +519,9 @@ export async function ackFlyreqTask(taskId: string, readToken?: string): Promise
 }
 
 export async function cancelFlyreqTask(taskId: string, readToken?: string): Promise<void> {
-  const response = await fetchWithTimeout(buildTaskAccessUrl(`/api/flyreq/tasks/${encodeURIComponent(taskId)}/cancel`, readToken), {
+  const response = await fetchWithTimeout(`/api/flyreq/tasks/${encodeURIComponent(taskId)}/cancel`, {
     method: 'POST',
+    headers: buildTaskAccessHeaders(readToken),
   }, TASK_REQUEST_TIMEOUT);
   const data = await parseTaskResponse<CancelTaskResponse>(response);
   if (!data?.ok) {

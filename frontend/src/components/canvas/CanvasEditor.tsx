@@ -31,7 +31,7 @@ import { buildNodeGenerationContext, buildNodeGenerationInputs, hydrateNodeGener
 import { buildNodeMentionReferences } from "./utils/canvas-resource-references";
 import { fitNodeSize } from "./utils/canvas-node-size";
 import { applyGeneratedImageToCanvasNodes } from "./utils/canvas-generated-node";
-import { collectImageStorageKeys, deleteStoredImages, getImageBlob, imageToDataUrl, resolveImageUrl, uploadImage, type UploadedImage } from "./lib/image-storage";
+import { collectImageStorageKeys, deleteStoredImages, fetchImageBlobFromSource, getImageBlob, imageToDataUrl, resolveImageUrl, uploadImage, type UploadedImage } from "./lib/image-storage";
 import { imageReferenceLabel } from "./lib/image-reference-prompt";
 import { compressReferenceDataUrl, readFileAsDataUrl } from "./lib/image-utils";
 import { CanvasNodeType, type CanvasConnection, type CanvasGenerationConfig, type CanvasNodeData, type CanvasNodeMetadata, type ContextMenuState, type ConnectionHandle, type Position, type SelectionBox, type ViewportTransform } from "./types";
@@ -144,7 +144,7 @@ function isRecoverableCanvasTaskError(message: string, hasTaskId: boolean): bool
   if (!hasTaskId) return false;
   if (isLocalCanvasResultSaveError(message)) return true;
   const normalized = message.toLowerCase();
-  return normalized.includes("network") || normalized.includes("fetch") || message.includes("网络");
+  return normalized.includes("network") || normalized.includes("fetch") || message.includes("网络") || message.includes("超时");
 }
 
 async function importPromptGalleryImage(url: string, promptContent: string) {
@@ -442,6 +442,50 @@ export function CanvasEditor({ projectId, onBack, onRequireApiKey, showToast, sh
     commitCanvasSnapshot({ ...snapshot, nodes: result.nodes });
     await flushCanvasStorePersistence();
   }, [commitCanvasSnapshot]);
+
+  const clearGenerationTaskReadToken = useCallback((nodeId: string) => {
+    patchNode(nodeId, (node) => ({
+      ...node,
+      metadata: {
+        ...node.metadata,
+        generationTaskReadToken: undefined,
+      },
+    }));
+    void flushCanvasStorePersistence().catch(error => {
+      console.warn('[canvas] 清理生成任务读取凭证失败', error);
+    });
+  }, [patchNode]);
+
+  const markCanvasGenerationError = useCallback(async (
+    nodeId: string,
+    taskId: string | undefined,
+    taskReadToken: string | undefined,
+    errorDetails: string | undefined,
+    recoverableGenerationTask: boolean,
+  ) => {
+    patchNode(nodeId, (node) => ({
+      ...node,
+      metadata: {
+        ...node.metadata,
+        status: "error",
+        generationTaskId: node.metadata?.generationTaskId ?? taskId,
+        generationTaskReadToken: node.metadata?.generationTaskReadToken ?? taskReadToken,
+        recoverableGenerationTask: recoverableGenerationTask ? true : false,
+        errorDetails: errorDetails || "生成失败",
+      },
+    }));
+
+    try {
+      await flushCanvasStorePersistence();
+    } catch (error) {
+      console.warn('[canvas] 生成错误状态保存失败，服务端任务保留', error);
+      return;
+    }
+    if (recoverableGenerationTask || !taskId) return;
+
+    const acked = await ackServerTaskWithRetry(taskId, taskReadToken);
+    if (acked) clearGenerationTaskReadToken(nodeId);
+  }, [clearGenerationTaskReadToken, patchNode]);
 
   const createImageNode = useCallback((position: Position, partial?: Partial<CanvasNodeData>): CanvasNodeData => {
     const spec = getNodeSpec(CanvasNodeType.Image);
@@ -808,7 +852,7 @@ export function CanvasEditor({ projectId, onBack, onRequireApiKey, showToast, sh
         let blob: Blob | null = key ? await getImageBlob(key) : null;
         if (!blob) {
           const url = nodeImageUrl(node);
-          if (url) blob = await (await fetch(url)).blob();
+          if (url) blob = await fetchImageBlobFromSource(url, { readToken: node.metadata?.generationTaskReadToken });
         }
         if (!blob) {
           showToast("无法读取图片", "error");
@@ -891,7 +935,8 @@ export function CanvasEditor({ projectId, onBack, onRequireApiKey, showToast, sh
         const image = images[0];
         if (image) {
           await persistGeneratedImageNode(nodeId, image, { prompt: promptText });
-          await ackServerTaskWithRetry(taskAccess.taskId, taskAccess.readToken);
+          const acked = await ackServerTaskWithRetry(taskAccess.taskId, taskAccess.readToken);
+          if (acked) clearGenerationTaskReadToken(nodeId);
         }
       } catch (error) {
         if (controller.signal.aborted) {
@@ -906,16 +951,7 @@ export function CanvasEditor({ projectId, onBack, onRequireApiKey, showToast, sh
           const errorDetails = createdTaskId ? `${message}（任务 ID：${createdTaskId}）` : message;
           const persistedTaskId = Boolean(createdTaskId && canvasSnapshotRef.current.nodes.find(item => item.id === nodeId)?.metadata?.generationTaskId);
           const recoverableGenerationTask = isRecoverableCanvasTaskError(message, persistedTaskId);
-          patchNode(nodeId, (node) => ({
-            ...node,
-            metadata: {
-              ...node.metadata,
-              status: "error",
-              generationTaskId: node.metadata?.generationTaskId ?? createdTaskId ?? undefined,
-              recoverableGenerationTask: recoverableGenerationTask ? true : false,
-              errorDetails,
-            },
-          }));
+          await markCanvasGenerationError(nodeId, createdTaskId ?? undefined, createdTaskReadToken, errorDetails, recoverableGenerationTask);
         }
       } finally {
         if (activeGenerationsRef.current.get(nodeId) === controller) {
@@ -929,7 +965,7 @@ export function CanvasEditor({ projectId, onBack, onRequireApiKey, showToast, sh
         if (!hasActive) setBusy(sourceNodeId, false);
       }
     },
-    [onRequireApiKey, patchNode, persistGeneratedImageNode, setBusy],
+    [clearGenerationTaskReadToken, markCanvasGenerationError, onRequireApiKey, patchNode, persistGeneratedImageNode, setBusy],
   );
 
   const runGeneration = useCallback(
@@ -1054,12 +1090,13 @@ export function CanvasEditor({ projectId, onBack, onRequireApiKey, showToast, sh
           activeGenerationsRef.current.get(node.id)?.abort();
           activeGenerationsRef.current.delete(node.id);
           await persistGeneratedImageNode(node.id, image, { prompt: node.metadata?.prompt });
-          await ackServerTaskWithRetry(taskId, taskReadToken);
+          const acked = await ackServerTaskWithRetry(taskId, taskReadToken);
+          if (acked) clearGenerationTaskReadToken(node.id);
           showToast("已取回生成结果", "success");
           return;
         }
         if (result.status === "failed" || result.status === "expired") {
-          patchNode(node.id, (n) => ({ ...n, metadata: { ...n.metadata, status: "error", recoverableGenerationTask: isLocalCanvasResultSaveError(result.error), errorDetails: result.error || "生成失败" } }));
+          await markCanvasGenerationError(node.id, taskId, taskReadToken, result.error, isLocalCanvasResultSaveError(result.error));
           showToast("任务已失败", "error");
           return;
         }
@@ -1070,7 +1107,7 @@ export function CanvasEditor({ projectId, onBack, onRequireApiKey, showToast, sh
         showToast("获取进度失败", "error");
       }
     },
-    [patchNode, persistGeneratedImageNode, showToast],
+    [clearGenerationTaskReadToken, markCanvasGenerationError, patchNode, persistGeneratedImageNode, showToast],
   );
 
   // 刷新页面后恢复进行中的生成任务（检查已有 taskId 的状态）
@@ -1106,11 +1143,12 @@ export function CanvasEditor({ projectId, onBack, onRequireApiKey, showToast, sh
           if (result.status === "completed" && result.images?.length) {
             const image = result.images[0];
             await persistGeneratedImageNode(node.id, image, { prompt: node.metadata?.prompt });
-            await ackServerTaskWithRetry(taskId, taskReadToken);
+            const acked = await ackServerTaskWithRetry(taskId, taskReadToken);
+            if (acked) clearGenerationTaskReadToken(node.id);
             return;
           }
           if (result.status === "failed" || result.status === "expired") {
-            patchNode(node.id, (n) => ({ ...n, metadata: { ...n.metadata, status: "error", recoverableGenerationTask: isLocalCanvasResultSaveError(result.error), errorDetails: result.error } }));
+            await markCanvasGenerationError(node.id, taskId, taskReadToken, result.error, isLocalCanvasResultSaveError(result.error));
             return;
           }
 
@@ -1128,14 +1166,16 @@ export function CanvasEditor({ projectId, onBack, onRequireApiKey, showToast, sh
           if (images.length) {
             const image = images[0];
             await persistGeneratedImageNode(node.id, image, { prompt: node.metadata?.prompt });
-            await ackServerTaskWithRetry(taskId, taskReadToken);
+            const acked = await ackServerTaskWithRetry(taskId, taskReadToken);
+            if (acked) clearGenerationTaskReadToken(node.id);
           }
-        } catch {
+        } catch (error) {
           if (controller.signal.aborted) {
             queueRecoveredServerTaskCancel();
             return;
           }
-          patchNode(node.id, (n) => ({ ...n, metadata: { ...n.metadata, status: "error", recoverableGenerationTask: Boolean(node.metadata?.generationTaskId), errorDetails: "恢复生成状态失败" } }));
+          const message = error instanceof Error ? error.message : "恢复生成状态失败";
+          await markCanvasGenerationError(node.id, taskId, taskReadToken, message, isRecoverableCanvasTaskError(message, true));
         } finally {
           if (activeGenerationsRef.current.get(node.id) === controller) {
             activeGenerationsRef.current.delete(node.id);

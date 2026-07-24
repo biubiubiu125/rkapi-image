@@ -3,7 +3,7 @@
 import { addImageAsset, findImageAssetByBlob, getAssetBlob, getAssetFileExtension, touchImageAsset, type AssetSourceKind, type ImageAsset } from '@/lib/asset-store';
 import { getAgentImageBytes } from '@/lib/agent-context-store';
 import { getImageSrc, type RefImageData } from '@/lib/job-store';
-import { getStoredBlob } from '@/lib/image-downloader';
+import { fetchImageAsBlob, getStoredBlob } from '@/lib/image-downloader';
 import { getOptimizationBadge, prepareUploadImage } from '@/lib/upload-image-cache';
 
 export interface ImageActionPayload {
@@ -20,6 +20,7 @@ export interface ImageActionPayload {
     imageRef: string;
     imageIndex: number;
   };
+  readToken?: string;
   mimeType?: string;
   sourceKind: AssetSourceKind;
   sourceLabel?: string;
@@ -160,9 +161,7 @@ async function resolveStoredRefToBlob(payload: ImageActionPayload): Promise<Blob
   const src = stripImageRef(ref.imageRef);
   if (src.startsWith('data:')) return dataUrlToBlob(src);
   if (src) {
-    const response = await fetch(src);
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    return response.blob();
+    return fetchImageAsBlob(src, 2, undefined, { readToken: payload.readToken });
   }
   return null;
 }
@@ -185,9 +184,7 @@ export async function resolveImagePayloadToBlob(payload: ImageActionPayload): Pr
     if (payload.src.startsWith('data:')) return dataUrlToBlob(payload.src);
     const src = stripImageRef(payload.src);
     if (src.startsWith('data:')) return dataUrlToBlob(src);
-    const response = await fetch(src);
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    return response.blob();
+    return fetchImageAsBlob(src, 2, undefined, { readToken: payload.readToken });
   }
   throw new Error('无法读取图片');
 }

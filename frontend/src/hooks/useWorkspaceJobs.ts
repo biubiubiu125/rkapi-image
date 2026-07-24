@@ -60,7 +60,7 @@ export function useWorkspaceJobs() {
         const ackedTaskIds = new Set(taskIds);
         persistJobs(prev => prev.map(job => (
           job.serverTaskId && ackedTaskIds.has(job.serverTaskId)
-            ? { ...job, serverTaskAcked: true, warning: undefined }
+            ? { ...job, serverTaskAcked: true, serverTaskReadToken: undefined, warning: undefined }
             : job
         )));
       },

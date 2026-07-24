@@ -32,14 +32,50 @@ export function readFileAsDataUrl(file: File) {
   });
 }
 
+function inferImageMimeType(source: string) {
+  return source.match(/^data:([^;]+)/)?.[1] || "image/png";
+}
+
 export function readImageMeta(dataUrl: string) {
   return new Promise<{ width: number; height: number; mimeType: string }>((resolve) => {
     const image = new Image();
-    const done = () => resolve({ width: image.naturalWidth || 1024, height: image.naturalHeight || 1024, mimeType: dataUrl.match(/^data:([^;]+)/)?.[1] || "image/png" });
+    const done = () => resolve({ width: image.naturalWidth || 1024, height: image.naturalHeight || 1024, mimeType: inferImageMimeType(dataUrl) });
     image.onload = done;
     image.onerror = done;
     setTimeout(done, 3000);
     image.src = dataUrl;
+  });
+}
+
+export function readImageMetaStrict(source: string) {
+  return new Promise<{ width: number; height: number; mimeType: string }>((resolve, reject) => {
+    const image = new Image();
+    let settled = false;
+    function cleanup() {
+      clearTimeout(timer);
+      image.onload = null;
+      image.onerror = null;
+    }
+    function finish(error?: Error) {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      if (error) {
+        reject(error);
+        return;
+      }
+      const width = image.naturalWidth || image.width;
+      const height = image.naturalHeight || image.height;
+      if (!width || !height) {
+        reject(new Error("image decode failed"));
+        return;
+      }
+      resolve({ width, height, mimeType: inferImageMimeType(source) });
+    }
+    image.onload = () => finish();
+    image.onerror = () => finish(new Error("image decode failed"));
+    const timer = setTimeout(() => finish(new Error("image decode timeout")), 3000);
+    image.src = source;
   });
 }
 

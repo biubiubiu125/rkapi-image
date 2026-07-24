@@ -3,7 +3,8 @@
 import localforage from "localforage";
 
 import { nanoid } from "nanoid";
-import { readImageMeta } from "./image-utils";
+import { buildFlyreqImageFetchRequest } from "@/lib/flyreq-image-fetch";
+import { readImageMetaStrict } from "./image-utils";
 
 export type UploadedImage = {
   url: string;
@@ -17,15 +18,49 @@ export type UploadedImage = {
 const store = localforage.createInstance({ name: "flyreq-image", storeName: "canvas_image_files" });
 const objectUrls = new Map<string, string>();
 
+export type UploadImageOptions = {
+  readToken?: string;
+};
+
+function normalizeContentType(value: string | null | undefined) {
+  return String(value || "").split(";", 1)[0].trim().toLowerCase();
+}
+
+function isImageContentType(contentType: string) {
+  return contentType.startsWith("image/") || contentType === "application/octet-stream";
+}
+
+function assertImageContentType(contentType: string) {
+  if (contentType && !isImageContentType(contentType)) {
+    throw new Error(`response is not an image: ${contentType}`);
+  }
+}
+
+export async function fetchImageBlobFromSource(source: string, options: UploadImageOptions = {}): Promise<Blob> {
+  const request = buildFlyreqImageFetchRequest(source, options.readToken);
+  const response = await fetch(request.url, request.init);
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  assertImageContentType(normalizeContentType(response.headers.get("content-type")));
+  const blob = await response.blob();
+  assertImageContentType(normalizeContentType(blob.type));
+  return blob;
+}
+
 /** 本地存储图片 blob（命名沿用 uploadImage，但全程纯前端 IndexedDB，不上传服务端）。 */
-export async function uploadImage(input: string | Blob): Promise<UploadedImage> {
-  const blob = typeof input === "string" ? await (await fetch(input)).blob() : input;
+export async function uploadImage(input: string | Blob, options: UploadImageOptions = {}): Promise<UploadedImage> {
+  const blob = typeof input === "string" ? await fetchImageBlobFromSource(input, options) : input;
+  assertImageContentType(normalizeContentType(blob.type));
   const storageKey = `image:${nanoid()}`;
-  await store.setItem(storageKey, blob);
   const url = URL.createObjectURL(blob);
-  objectUrls.set(storageKey, url);
-  const meta = await readImageMeta(url);
-  return { url, storageKey, width: meta.width, height: meta.height, bytes: blob.size, mimeType: blob.type || meta.mimeType };
+  try {
+    const meta = await readImageMetaStrict(url);
+    await store.setItem(storageKey, blob);
+    objectUrls.set(storageKey, url);
+    return { url, storageKey, width: meta.width, height: meta.height, bytes: blob.size, mimeType: blob.type || meta.mimeType };
+  } catch (error) {
+    URL.revokeObjectURL(url);
+    throw error;
+  }
 }
 
 export async function resolveImageUrl(storageKey?: string, fallback = "") {

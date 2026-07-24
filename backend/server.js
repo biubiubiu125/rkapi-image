@@ -133,6 +133,7 @@ const RKAPI_GATEWAY_BASE_URL = 'https://api.rkai6.com';
 const DEFAULT_OUTBOUND_USER_AGENT = `RKAPI-Image/${APP_VERSION}`;
 const MAX_REMOTE_IMAGE_BYTES = 64 * 1024 * 1024;
 const MAX_REMOTE_IMAGE_REDIRECTS = 5;
+const MAX_UPSTREAM_PROXY_BODY_BYTES = 4 * 1024 * 1024;
 const MAX_UPSTREAM_ERROR_BODY_CHARS = 1000;
 const MAX_UPSTREAM_ERROR_MESSAGE_CHARS = 1200;
 
@@ -1889,6 +1890,22 @@ function buildUpstreamHttpErrorMessage(status, responseText) {
   return `${getUpstreamHttpErrorPrefix(status)}：${sanitizeUpstreamErrorBody(responseText)}`;
 }
 
+async function readUpstreamJsonOrErrorBody(response, signal) {
+  const text = await readResponseTextWithAbort(response, signal, MAX_UPSTREAM_PROXY_BODY_BYTES);
+  if (text) {
+    try {
+      return JSON.parse(text);
+    } catch {
+      return {
+        error: response.ok
+          ? sanitizeUpstreamErrorBody(text)
+          : buildUpstreamHttpErrorMessage(response.status, text),
+      };
+    }
+  }
+  return response.ok ? null : { error: `上游返回 ${response.status}` };
+}
+
 function validateEnumValue(value, validValues, fieldName) {
   if (value === undefined || value === null || value === '') return undefined;
   if (!validValues.has(value)) {
@@ -2481,7 +2498,7 @@ function notifyImageSseResponse(options) {
   }
 }
 
-async function readResponseTextWithAbort(response, signal) {
+async function readResponseTextWithAbort(response, signal, maxBytes = Infinity) {
   const controller = new AbortController();
   const abortFromExternalSignal = () => {
     if (!controller.signal.aborted) {
@@ -2497,10 +2514,15 @@ async function readResponseTextWithAbort(response, signal) {
 
   try {
     throwIfAborted(controller.signal);
+    const contentLength = parsePositiveContentLength(response.headers.get('content-length'));
+    if (Number.isFinite(maxBytes) && contentLength !== undefined && contentLength > maxBytes) {
+      throw createHttpError(502, 'UPSTREAM_RESPONSE_TOO_LARGE', `上游响应体超过 ${maxBytes} bytes`);
+    }
     if (response.body && typeof response.body.getReader === 'function') {
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let text = '';
+      let totalBytes = 0;
       const cancelReader = () => {
         void reader.cancel(getAbortSignalReason(controller.signal)).catch(() => undefined);
       };
@@ -2511,7 +2533,14 @@ async function readResponseTextWithAbort(response, signal) {
           const { done, value } = await reader.read();
           throwIfAborted(controller.signal);
           if (done) break;
-          if (value) text += decoder.decode(value, { stream: true });
+          if (value) {
+            totalBytes += value.byteLength;
+            if (Number.isFinite(maxBytes) && totalBytes > maxBytes) {
+              await reader.cancel().catch(() => undefined);
+              throw createHttpError(502, 'UPSTREAM_RESPONSE_TOO_LARGE', `上游响应体超过 ${maxBytes} bytes`);
+            }
+            text += decoder.decode(value, { stream: true });
+          }
         }
         return text + decoder.decode();
       } finally {
@@ -2519,7 +2548,11 @@ async function readResponseTextWithAbort(response, signal) {
         reader.releaseLock();
       }
     }
-    return await response.text();
+    const text = await response.text();
+    if (Number.isFinite(maxBytes) && Buffer.byteLength(text, 'utf8') > maxBytes) {
+      throw createHttpError(502, 'UPSTREAM_RESPONSE_TOO_LARGE', `上游响应体超过 ${maxBytes} bytes`);
+    }
+    return text;
   } finally {
     if (signal) signal.removeEventListener('abort', abortFromExternalSignal);
     clearTimeout(timeout);
@@ -2951,11 +2984,8 @@ async function runTask(taskId) {
   }
 }
 
-function appendTaskReadTokenToImageRef(ref, readToken) {
-  if (!readToken || typeof ref !== 'string' || !ref.startsWith('URL:/api/flyreq/images/')) return ref;
-  const rawUrl = ref.slice(4);
-  const separator = rawUrl.includes('?') ? '&' : '?';
-  return `URL:${rawUrl}${separator}token=${encodeURIComponent(readToken)}`;
+function appendTaskReadTokenToImageRef(ref, _readToken) {
+  return ref;
 }
 
 function appendTaskReadTokenToResult(result, readToken) {
@@ -3064,7 +3094,7 @@ function checkHealth() {
   return {
     ok: row?.ok === 1,
     database: 'ok',
-    imageDir: IMAGE_DIR,
+    imageStorage: 'ok',
     time: new Date().toISOString(),
   };
 }
@@ -3551,8 +3581,7 @@ async function handleApi(req, res, parsedUrl) {
           return true;
         }
 
-        let data = null;
-        try { data = await upstream.json(); } catch { /* ignore */ }
+        const data = await readUpstreamJsonOrErrorBody(upstream, proxyAbort.signal);
         sendJson(res, upstream.status, data || { error: `上游返回 ${upstream.status}` });
       } catch (error) {
         if (proxyAbort?.signal.aborted) {
@@ -3574,6 +3603,7 @@ async function handleApi(req, res, parsedUrl) {
 
     // ===== 模型检查代理（统一使用 /v1/models） =====
     if (req.method === 'POST' && apiPathname === '/api/flyreq/proxy/models') {
+      let proxyAbort = null;
       try {
         const body = await readJsonBody(req, { maxBytes: SMALL_JSON_BODY_BYTES });
         const apiKey = String(body?.apiKey || '');
@@ -3604,18 +3634,22 @@ async function handleApi(req, res, parsedUrl) {
           headers = { Authorization: `Bearer ${apiKey}` };
         }
 
-        const response = await fetchWithTimeout(modelsUrl, { method: 'GET', headers });
-        let data = null;
-        try { data = await response.json(); } catch { /* ignore */ }
-        sendJson(res, response.status, data);
+        proxyAbort = createRequestAbortSignal(req, res);
+        const response = await fetchWithTimeout(modelsUrl, { method: 'GET', headers, signal: proxyAbort.signal });
+        const data = await readUpstreamJsonOrErrorBody(response, proxyAbort.signal);
+        sendJson(res, response.status, data || { error: `上游返回 ${response.status}` });
       } catch (error) {
-        if (isHttpError(error) && error.code === 'INVALID_PROTOCOL') {
+        if (proxyAbort?.signal.aborted) {
+          if (!res.writableEnded) res.end();
+        } else if (isHttpError(error) && error.code === 'INVALID_PROTOCOL') {
           sendJson(res, 400, { error: '协议类型无效，必须为 google 或 openai' });
         } else if (isHttpError(error)) {
           sendHttpError(res, error);
         } else {
           sendJson(res, 502, { error: normalizeError(error) });
         }
+      } finally {
+        if (proxyAbort) proxyAbort.cleanup();
       }
       return true;
     }

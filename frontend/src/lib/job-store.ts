@@ -1,4 +1,5 @@
 import type { GptImageBackground, GptImageOutputFormat, GptImageQuality, GptImageStyle } from '@/lib/model-capabilities';
+import { stripFlyreqImageReadTokenFromRef } from '@/lib/flyreq-image-fetch';
 import { makeStoredBlobRef, type ImageDownloadProgressItem } from '@/lib/image-downloader';
 import { openImageDb, IMG_STORE } from '@/lib/image-db';
 
@@ -153,7 +154,7 @@ export function getStoredJobDisplayPrompt(job: StoredJob): string {
 
 function toPersistedImageRefs(result: StoredJob): string[] | undefined {
   return result.images?.map((image, index) => (
-    image.startsWith('blob:') ? makeStoredBlobRef(result.id, index) : image
+    image.startsWith('blob:') ? makeStoredBlobRef(result.id, index) : stripFlyreqImageReadTokenFromRef(image)
   ));
 }
 
@@ -229,9 +230,15 @@ export function saveJobs(jobs: StoredJob[]): boolean {
   if (typeof window === 'undefined') return true;
 
   const lightweight = jobs.map(({ ...job }) => {
+    if (job.serverTaskAcked === true) {
+      delete job.serverTaskReadToken;
+    }
     if (!canPersistRemoteImageRefsInJobsStorage(job)) {
       delete job.imageData;
       delete job.images;
+    } else {
+      job.images = job.images?.map(stripFlyreqImageReadTokenFromRef);
+      if (job.imageData) job.imageData = stripFlyreqImageReadTokenFromRef(job.imageData);
     }
     delete job.refImages;
     delete job.blobUrls;

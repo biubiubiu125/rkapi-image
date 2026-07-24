@@ -464,6 +464,7 @@ export function GifGenerationWorkspace({ wideMode = false, hasApiKey, onConfigur
       storedRef: workflow.job.gridImageRef
         ? { jobId: workflow.job.id, imageRef: workflow.job.gridImageRef, imageIndex: 0 }
         : undefined,
+      readToken: workflow.job.serverTaskReadToken,
       sourceKind: 'gif',
       sourceLabel: 'GIF 网格图',
       sourceRef: workflow.job.id,

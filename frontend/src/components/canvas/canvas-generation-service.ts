@@ -98,7 +98,7 @@ export async function pollNodeTask(
       if (task.status !== "completed" || images.length === 0) {
         throw new Error(task.error || (task.status === "expired" ? "该任务已超出取回时间" : "生成失败"));
       }
-      const stored = await storeCompletedImages(images);
+      const stored = await storeCompletedImages(images, readToken);
       if (stored.length === 0) throw new Error("生成结果保存失败");
       return stored;
     }
@@ -112,7 +112,7 @@ export async function checkExistingTask(taskId: string, readToken?: string): Pro
   const task = await getFlyreqTask(taskId, readToken);
   if (task.status === "completed") {
     const images = task.result?.images || [];
-    const stored = images.length > 0 ? await storeCompletedImages(images) : [];
+    const stored = images.length > 0 ? await storeCompletedImages(images, readToken) : [];
     if (stored.length === 0) {
       return { status: "failed", error: "生成结果保存失败" };
     }
@@ -168,16 +168,16 @@ export async function generateCanvasImages(args: {
 }
 
 /** 结果可能是 data URL 或 `URL:/api/flyreq/images/...`；统一下载为 blob 存入本地 IndexedDB。 */
-async function storeCompletedImages(images: string[]): Promise<CanvasGeneratedImage[]> {
-  const stored = (await Promise.all(images.map(storeResultImage))).filter((item): item is CanvasGeneratedImage => Boolean(item));
+async function storeCompletedImages(images: string[], readToken?: string): Promise<CanvasGeneratedImage[]> {
+  const stored = (await Promise.all(images.map(image => storeResultImage(image, readToken)))).filter((item): item is CanvasGeneratedImage => Boolean(item));
   return stored.length === images.length ? stored : [];
 }
 
-async function storeResultImage(image: string): Promise<CanvasGeneratedImage | null> {
+async function storeResultImage(image: string, readToken?: string): Promise<CanvasGeneratedImage | null> {
   const realUrl = image.startsWith("URL:") ? image.slice(4) : image;
   if (!realUrl) return null;
   try {
-    const stored = await uploadImage(realUrl);
+    const stored = await uploadImage(realUrl, { readToken });
     return { storageKey: stored.storageKey, url: stored.url, width: stored.width, height: stored.height, mimeType: stored.mimeType, bytes: stored.bytes };
   } catch {
     return null;

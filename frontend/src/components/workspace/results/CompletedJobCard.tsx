@@ -8,7 +8,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { useImageLazyLoad } from '@/hooks/useImageLazyLoad';
 import { getBatchImageMarker, getImageSrc, getStoredJobDisplayPrompt, type StoredJob } from '@/lib/job-store';
-import { resolveStoredImageRef, revokeBlobUrls } from '@/lib/image-downloader';
+import { fetchImageAsBlob, resolveStoredImageRef, revokeBlobUrls } from '@/lib/image-downloader';
 import { formatDuration, formatJobDateTime, getJobDurationSeconds } from '@/lib/job-time';
 import { getModelDisplayName, getOutputSizeLabel, getSupportsTemperature } from '@/lib/model-capabilities';
 import { getEffectiveImagePrompt } from '@/lib/prompt-variants';
@@ -78,6 +78,17 @@ function getDownloadProgressSummary(progress: StoredJob['imageDownloadProgress']
   };
 }
 
+function isProtectedFlyreqImageRef(image: string, readToken?: string): boolean {
+  if (!readToken || !(image.startsWith('URL:') || image.startsWith('MULTI_URL:'))) return false;
+  const src = getImageSrc(image);
+  return src.startsWith('/api/flyreq/images/');
+}
+
+function getRenderableImageSrc(image: string, readToken?: string): string | undefined {
+  if (isProtectedFlyreqImageRef(image, readToken)) return undefined;
+  return getImageSrc(image) || undefined;
+}
+
 export const CompletedJobCard = memo(function CompletedJobCard({ job, onClear, onRetry, onRetryDownload }: CompletedJobCardProps) {
   const { t } = useI18n();
   const [imgCopied, setImgCopied] = useState(false);
@@ -99,11 +110,12 @@ export const CompletedJobCard = memo(function CompletedJobCard({ job, onClear, o
     id: `${job.id}-${index}`,
     name: `flyreq-image-${job.id.slice(0, 8)}${sourceImages.length > 1 ? `-${index + 1}` : ''}`,
     storedRef: { jobId: job.id, imageRef, imageIndex: index },
+    readToken: job.serverTaskReadToken,
     sourceKind: job.mode === 'image-to-image' ? 'image-to-image' : 'text-to-image',
     sourceLabel: job.mode === 'image-to-image' ? t('task.imageToImageHistory') : t('task.textToImageHistory'),
     sourceRef: `${job.id}:${index}`,
     prompt: job.prompt,
-  })), [job.id, job.mode, job.prompt, sourceImages, t]);
+  })), [job.id, job.mode, job.prompt, job.serverTaskReadToken, sourceImages, t]);
 
   /** 是否存在仍以远程 URL 形式呈现的图片（即首次本地缓存失败、需要"重新下载"补齐）。 */
   const needsRedownload = useMemo(
@@ -169,6 +181,19 @@ export const CompletedJobCard = memo(function CompletedJobCard({ job, onClear, o
     const image = images[index] || sourceImages[index];
     if (!image) return undefined;
     if (image.startsWith('blob:') && image !== sourceImages[index]) return image;
+    if ((image.startsWith('URL:') || image.startsWith('MULTI_URL:')) && job.serverTaskReadToken) {
+      const src = getImageSrc(image);
+      if (!src) return image;
+      try {
+        const blob = await fetchImageAsBlob(src, 1, undefined, { readToken: job.serverTaskReadToken });
+        const blobUrl = URL.createObjectURL(blob);
+        resolvedBlobUrlsRef.current.push(blobUrl);
+        setImages(prev => prev.map((item, itemIndex) => (itemIndex === index ? blobUrl : item)));
+        return blobUrl;
+      } catch {
+        return image;
+      }
+    }
     if (!image.startsWith('IDB:') && !image.startsWith('blob:')) return image;
 
     const resolved = await resolveStoredImageRef(job.id, image, index);
@@ -178,7 +203,7 @@ export const CompletedJobCard = memo(function CompletedJobCard({ job, onClear, o
     }
 
     return resolved.image;
-  }, [images, job.id, sourceImages]);
+  }, [images, job.id, job.serverTaskReadToken, sourceImages]);
 
   const resolveImagesAt = useCallback(async (indexes: number[]): Promise<string[]> => {
     const resolved = await Promise.all(indexes.map(index => resolveImageAt(index)));
@@ -342,7 +367,7 @@ export const CompletedJobCard = memo(function CompletedJobCard({ job, onClear, o
                 {visiblePreviewImages.map((image, index) => (
                   <img
                     key={`${job.id}-${index}`}
-                    src={lazyLoad.isVisible ? (getImageSrc(image) || undefined) : undefined}
+                    src={lazyLoad.isVisible ? getRenderableImageSrc(image, job.serverTaskReadToken) : undefined}
                     alt={t('task.generatedImage', { index: index + 1 })}
                     className={`absolute h-full w-full object-cover transition-all duration-300 ${
                       loadedImageIndices.has(index) ? 'opacity-100' : 'opacity-0'
@@ -364,7 +389,7 @@ export const CompletedJobCard = memo(function CompletedJobCard({ job, onClear, o
               ) : (
                 <>
                 <img
-                  src={lazyLoad.isVisible ? (getImageSrc(images[0]) || undefined) : undefined}
+                  src={lazyLoad.isVisible ? getRenderableImageSrc(images[0], job.serverTaskReadToken) : undefined}
                   alt={t('task.generatedImage', { index: 1 })}
                   className={`h-full w-full object-cover transition-opacity duration-300 ${lazyLoad.isLoaded ? 'opacity-100' : 'opacity-0'}`}
                   onLoad={(event) => handleImageLoad(0, images[0], event)}

@@ -37,6 +37,7 @@ import { Shuffle, Settings, User, Wallpaper, PanelLeftClose, PanelLeftOpen } fro
 import { getFlyreqTask } from '@/lib/flyreq-task-client';
 import { finalizeCompletedServerTask, getTaskSseMetadata } from '@/lib/workspace-task-service';
 import { classifyTaskFailure } from '@/lib/task-failure';
+import { ackServerTaskWithRetry } from '@/lib/server-task-ack';
 import { compareStoredJobsByDisplayOrder, type RefImageData, type StoredJob } from '@/lib/job-store';
 import { subscribeImageActionToasts, subscribeUseAsImageReference } from '@/lib/image-actions';
 import {
@@ -156,7 +157,18 @@ export function WorkspaceShell() {
         const { terminal } = classifyTaskFailure(task);
         const message = task.error || task.warning
           || (task.status === 'expired' ? (locale === 'zh' ? '该任务已超出取回时间' : 'This task has expired') : t('history.failed'));
-        void submitActions.failJob(job.id, message, { terminal, completedAt: task.completedAt, ...getTaskSseMetadata(task) });
+        await submitActions.failJob(job.id, message, { terminal, completedAt: task.completedAt, ...getTaskSseMetadata(task) });
+        const latestJob = submitActions.getJob?.(job.id) ?? job;
+        if (latestJob.serverTaskId && latestJob.serverTaskAcked !== true) {
+          const acked = await ackServerTaskWithRetry(latestJob.serverTaskId, latestJob.serverTaskReadToken);
+          if (acked) {
+            submitActions.replaceJob(job.id, current => ({
+              ...current,
+              serverTaskAcked: true,
+              serverTaskReadToken: undefined,
+            }));
+          }
+        }
         showToast(locale === 'zh' ? `任务失败：${message}` : `Task failed: ${message}`, 'error');
       } else if (task.status === 'processing') {
         submitActions.replaceJob(job.id, cur => ({

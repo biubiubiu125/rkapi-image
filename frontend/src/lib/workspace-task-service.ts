@@ -8,6 +8,7 @@ import {
   type ImageReference,
   type CreateFlyreqTaskInput,
 } from '@/lib/flyreq-task-client';
+import { stripFlyreqImageReadTokenFromRef } from '@/lib/flyreq-image-fetch';
 import { ackServerTaskWithRetry, cancelServerTaskWithRetry } from '@/lib/server-task-ack';
 import type { ModelId } from '@/lib/gemini-config';
 import type { AspectRatio, OutputSize, StoredJob } from '@/lib/job-store';
@@ -76,6 +77,7 @@ export interface SubmitActions {
 
 const INITIAL_JOB_PERSISTENCE_ERROR = '浏览器本地持久存储不可用';
 const SERVER_TASK_ID_PERSISTENCE_ERROR = '浏览器本地持久存储不可用，服务端任务 ID 未保存';
+const SERVER_TASK_ID_MISSING_ERROR = '服务端未返回任务 ID';
 
 function addInitialJobs(jobs: StoredJob[], actions: SubmitActions): boolean {
   if (actions.addJobs) return actions.addJobs(jobs);
@@ -92,10 +94,16 @@ async function persistServerTaskIds(
   onError: (message: string) => void,
 ): Promise<boolean> {
   const failed: Array<{ job: StoredJob; serverTask: FlyreqTaskAccess }> = [];
+  const missing: StoredJob[] = [];
 
   jobs.forEach((job, imageIndex) => {
-    const serverTask = normalizeFlyreqTaskAccess(serverTasks[imageIndex]);
+    const rawServerTask = serverTasks[imageIndex];
+    const serverTask = rawServerTask ? normalizeFlyreqTaskAccess(rawServerTask) : null;
     const serverTaskId = serverTask?.taskId || '';
+    if (!serverTaskId) {
+      missing.push(job);
+      return;
+    }
     const persisted = actions.replaceJob(job.id, current => ({
       ...current,
       status: '排队中',
@@ -105,15 +113,25 @@ async function persistServerTaskIds(
     if (persisted === false && serverTask) failed.push({ job, serverTask });
   });
 
-  if (failed.length === 0) return true;
+  if (failed.length === 0 && missing.length === 0) return true;
 
   await Promise.all(failed.map(item => cancelServerTaskWithRetry(item.serverTask.taskId, item.serverTask.readToken)));
 
-  const taskIds = failed.map(item => item.serverTask.taskId).join(', ');
-  const message = `${SERVER_TASK_ID_PERSISTENCE_ERROR}（任务 ID：${taskIds}）`;
+  const messageParts: string[] = [];
+  if (failed.length > 0) {
+    const taskIds = failed.map(item => item.serverTask.taskId).join(', ');
+    messageParts.push(`${SERVER_TASK_ID_PERSISTENCE_ERROR}（任务 ID：${taskIds}）`);
+  }
+  if (missing.length > 0) {
+    messageParts.push(`${SERVER_TASK_ID_MISSING_ERROR}（缺少 ${missing.length}/${jobs.length} 个任务）`);
+  }
+  const message = messageParts.join('；');
   onError(message);
   for (const item of failed) {
     await actions.failJob(item.job.id, message);
+  }
+  for (const job of missing) {
+    await actions.failJob(job.id, message);
   }
   return false;
 }
@@ -182,7 +200,7 @@ async function confirmServerTaskAck(job: StoredJob, actions: SubmitActions): Pro
   }
 
   try {
-    await actions.completeJob(job.id, { ...job, serverTaskAcked: true });
+    await actions.completeJob(job.id, { ...job, serverTaskAcked: true, serverTaskReadToken: undefined });
   } catch (error) {
     console.warn('[workspace-task] 本地 ack 状态持久化失败', error);
   }
@@ -360,6 +378,7 @@ export async function finalizeCompletedServerTask(
   actions: SubmitActions
 ): Promise<void> {
   const images = task.result?.images || [];
+  const sanitizedImages = images.map(stripFlyreqImageReadTokenFromRef);
   const createdAt = task.createdAt || job.created_at;
   const completedAt = task.completedAt || new Date().toISOString();
   const sseMetadata = getTaskSseMetadata(task);
@@ -374,8 +393,8 @@ export async function finalizeCompletedServerTask(
         status: 'completed',
         created_at: createdAt,
         completed_at: completedAt,
-        images,
-        imageData: images[0],
+        images: sanitizedImages,
+        imageData: sanitizedImages[0],
         warning: task.warning,
         serverTaskAcked: false,
         imageDownloadProgress: undefined,
@@ -391,19 +410,20 @@ export async function finalizeCompletedServerTask(
       status: 'completed',
       created_at: createdAt,
       completed_at: completedAt,
-      images,
-      imageData: images[0],
+      images: sanitizedImages,
+      imageData: sanitizedImages[0],
       warning: task.warning,
       serverTaskAcked: false,
       blobUrls: undefined,
-      imageDownloadProgress: createInitialImageDownloadProgress(images),
+      imageDownloadProgress: createInitialImageDownloadProgress(sanitizedImages),
     });
 
     const result: DownloadResult = await downloadAndStoreImages(job.id, images, {
+      readToken: job.serverTaskReadToken,
       onProgress: item => applyImageDownloadProgress(actions, job.id, images, item),
     });
     const finalImages = images.map((img, index) => (
-      img.startsWith('URL:') && result.blobUrls[index] ? result.blobUrls[index] : img
+      img.startsWith('URL:') && result.blobUrls[index] ? result.blobUrls[index] : stripFlyreqImageReadTokenFromRef(img)
     ));
     const blobUrls = result.blobUrls.filter(url => url && url.startsWith('blob:'));
     const remainingUrlCount = finalImages.filter(img => img.startsWith('URL:')).length;
@@ -436,8 +456,8 @@ export async function finalizeCompletedServerTask(
         status: 'completed',
         created_at: createdAt,
         completed_at: completedAt,
-        images,
-        imageData: images[0],
+        images: sanitizedImages,
+        imageData: sanitizedImages[0],
         warning: '本地结果元数据保存失败，已保留远程 URL 结果。可点击「重新下载」重试缓存，或尽快保存图片（约 12 小时后服务端清理）。',
         serverTaskAcked: false,
         blobUrls: undefined,
@@ -503,10 +523,11 @@ export async function retryDownloadCachedImages(
   }));
 
   const result = await downloadAndStoreImages(job.id, sourceImages, {
+    readToken: job.serverTaskReadToken,
     onProgress: item => applyImageDownloadProgress(actions, job.id, sourceImages, item),
   });
   const mergedImages = sourceImages.map((image, index) => (
-    image.startsWith('URL:') && result.blobUrls[index] ? result.blobUrls[index] : image
+    image.startsWith('URL:') && result.blobUrls[index] ? result.blobUrls[index] : stripFlyreqImageReadTokenFromRef(image)
   ));
   const newBlobUrls = result.blobUrls.filter(url => url && url.startsWith('blob:'));
 
