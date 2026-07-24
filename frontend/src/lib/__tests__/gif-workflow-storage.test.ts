@@ -91,7 +91,11 @@ beforeEach(() => {
   });
   mockedValidateCreateFlyreqTaskBody.mockImplementation(() => undefined);
   mockedCreateFlyreqTask.mockResolvedValue('task-1');
-  vi.stubGlobal('fetch', vi.fn(async () => new Response(new Blob(['template'], { type: 'image/png' }), { status: 200 })));
+  vi.stubGlobal('fetch', vi.fn(async () => ({
+    ok: true,
+    status: 200,
+    blob: async () => new window.Blob(['template'], { type: 'image/png' }),
+  } as Response)));
 });
 
 describe('GIF grid image storage', () => {
