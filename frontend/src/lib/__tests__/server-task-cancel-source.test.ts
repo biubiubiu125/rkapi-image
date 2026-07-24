@@ -52,7 +52,7 @@ describe('server task cancellation closure', () => {
       serverSource.indexOf('\nfunction drainQueue'),
     );
 
-    expect(serverSource).toContain('async function readResponseTextWithAbort(response, signal)');
+    expect(serverSource).toContain('async function readResponseTextWithAbort(response, signal, maxBytes = Infinity)');
     expect(parseSource).toContain('parseGptImageResponse(response, signal)');
     expect(parseSource).toContain('readResponseTextWithAbort(response, signal)');
     expect(parseSource).not.toContain('await response.text()');

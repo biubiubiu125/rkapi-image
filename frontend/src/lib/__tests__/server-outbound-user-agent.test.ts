@@ -25,7 +25,7 @@ function loadOutboundUserAgentHelpers(): {
     throw new Error('Unable to locate outbound User-Agent helpers in backend/server.js');
   }
 
-  const defaultConstant = serverSource.slice(defaultConstantStart, defaultConstantEnd);
+  const defaultConstant = `const APP_VERSION = '1.5.1';\n${serverSource.slice(defaultConstantStart, defaultConstantEnd)}`;
   const envHelper = `
 function getRuntimeEnvValue(env, key) {
   const currentValue = env['RKAPI_IMAGE_' + key];

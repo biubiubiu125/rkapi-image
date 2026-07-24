@@ -12,7 +12,7 @@ const serverSource = fs.readFileSync(
 describe('backend model list proxy', () => {
   it('accepts model check credentials through POST body instead of URL query', () => {
     expect(serverSource).toContain("req.method === 'POST' && apiPathname === '/api/flyreq/proxy/models'");
-    expect(serverSource).toContain('const body = await readJsonBody(req)');
+    expect(serverSource).toContain('const body = await readJsonBody(req, { maxBytes: SMALL_JSON_BODY_BYTES })');
     expect(serverSource).toContain("const apiKey = String(body?.apiKey || '')");
     expect(serverSource).not.toContain("parsed.searchParams.get('apiKey')");
   });

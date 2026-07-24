@@ -1,7 +1,7 @@
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { downloadAndStoreImages } from '@/lib/image-downloader';
-import { createFlyreqTask, getFlyreqTask, resolveImageTaskProvider } from '@/lib/flyreq-task-client';
+import { createFlyreqTask, getFlyreqTask, resolveImageTaskProvider, validateCreateFlyreqTaskBody } from '@/lib/flyreq-task-client';
 import { ackServerTaskWithRetry, cancelServerTaskWithRetry } from '@/lib/server-task-ack';
 import { flyreqTaskSocket } from '@/lib/flyreq-task-socket';
 import { loadActiveGifJob, saveActiveGifJob, type ActiveGifJob } from '@/lib/gif-job-store';
@@ -23,6 +23,7 @@ vi.mock('@/lib/flyreq-task-client', () => ({
     typeof access === 'string' ? { taskId: access } : access
   )),
   resolveImageTaskProvider: vi.fn(),
+  validateCreateFlyreqTaskBody: vi.fn(),
 }));
 
 vi.mock('@/lib/flyreq-task-socket', () => ({
@@ -40,6 +41,7 @@ const mockedDownloadAndStoreImages = vi.mocked(downloadAndStoreImages);
 const mockedCreateFlyreqTask = vi.mocked(createFlyreqTask);
 const mockedGetFlyreqTask = vi.mocked(getFlyreqTask);
 const mockedResolveImageTaskProvider = vi.mocked(resolveImageTaskProvider);
+const mockedValidateCreateFlyreqTaskBody = vi.mocked(validateCreateFlyreqTaskBody);
 const mockedAckServerTaskWithRetry = vi.mocked(ackServerTaskWithRetry);
 const mockedCancelServerTaskWithRetry = vi.mocked(cancelServerTaskWithRetry);
 const mockedSubscribeTask = vi.mocked(flyreqTaskSocket.subscribeTask);
@@ -87,6 +89,7 @@ beforeEach(() => {
     protocol: 'openai',
     modelId: 'gpt-image-2',
   });
+  mockedValidateCreateFlyreqTaskBody.mockImplementation(() => undefined);
   mockedCreateFlyreqTask.mockResolvedValue('task-1');
   vi.stubGlobal('fetch', vi.fn(async () => new Response(new Blob(['template'], { type: 'image/png' }), { status: 200 })));
 });

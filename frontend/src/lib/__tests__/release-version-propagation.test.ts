@@ -82,8 +82,10 @@ describe('发布版本到 UI 的传递', () => {
     expect(dockerImageWorkflow).toContain('docker/build-push-action@v6');
     expect(dockerImageWorkflow).toContain('push: true');
     expect(dockerImageWorkflow).toContain('type=raw,value=latest');
-    expect(dockerImageWorkflow).toContain('- name: Read package version');
-    expect(dockerImageWorkflow).toContain("node -p \"require('./package.json').version\"");
+    expect(dockerImageWorkflow).toContain('- name: Resolve image version');
+    expect(dockerImageWorkflow).toContain(`package_version="$(node -p "require('./package.json').version")"`);
+    expect(dockerImageWorkflow).toContain('short_sha="$(git rev-parse --short=12 HEAD)"');
+    expect(dockerImageWorkflow).toContain('version="${package_version}-main.${short_sha}"');
     expect(dockerImageWorkflow).toContain('APP_VERSION=${{ steps.version.outputs.version }}');
     expect(dockerImageWorkflow).not.toContain('APP_VERSION=${{ github.ref_name }}');
     expect(dockerImageWorkflow).not.toContain('enable={{is_default_branch}}');
@@ -103,11 +105,11 @@ describe('发布版本到 UI 的传递', () => {
 
     expect(releaseTriggers).not.toContain('push:');
     expect(releaseTriggers).toContain('workflow_dispatch:');
-    expect(releaseWorkflow).toContain('git push origin "${{ steps.version.outputs.tag }}"');
+    expect(releaseWorkflow).toContain('git push origin "${tag}"');
     expect(releaseWorkflow).toContain('files: out.zip');
   });
 
-  it('keeps manual release artifacts atomic by publishing Docker before tag and release creation', () => {
+  it('keeps manual release artifacts atomic by tagging before Docker and release creation', () => {
     const buildZipIndex = releaseWorkflow.indexOf('- name: Build zip package');
     const createTagIndex = releaseWorkflow.indexOf('- name: Create and push tag');
     const createDraftReleaseIndex = releaseWorkflow.indexOf('- name: Create draft GitHub release');
@@ -115,9 +117,9 @@ describe('发布版本到 UI 的传递', () => {
     const publishReleaseIndex = releaseWorkflow.indexOf('- name: Publish GitHub release');
 
     expect(buildZipIndex).toBeGreaterThan(-1);
-    expect(dockerPushIndex).toBeGreaterThan(buildZipIndex);
-    expect(createTagIndex).toBeGreaterThan(dockerPushIndex);
-    expect(createDraftReleaseIndex).toBeGreaterThan(createTagIndex);
+    expect(createTagIndex).toBeGreaterThan(buildZipIndex);
+    expect(dockerPushIndex).toBeGreaterThan(createTagIndex);
+    expect(createDraftReleaseIndex).toBeGreaterThan(dockerPushIndex);
     expect(publishReleaseIndex).toBeGreaterThan(createDraftReleaseIndex);
     expect(releaseWorkflow).toContain('draft: true');
     expect(releaseWorkflow).toContain('--draft=false');

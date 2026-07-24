@@ -17,6 +17,10 @@ function makeCreateTaskInput(overrides: Partial<CreateFlyreqTaskInput> = {}): Cr
   };
 }
 
+function makeReferenceData(megabytes: number): string {
+  return 'a'.repeat(megabytes * 1024 * 1024);
+}
+
 describe('flyreq task client', () => {
   afterEach(() => {
     vi.unstubAllGlobals();
@@ -36,7 +40,7 @@ describe('flyreq task client', () => {
     });
   });
 
-  it('returns task id with read token for single task creation and uses token on follow-up requests', async () => {
+  it('returns task id with read token for single task creation and uses token header on follow-up requests', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify({
         taskId: 'task-1',
@@ -59,8 +63,14 @@ describe('flyreq task client', () => {
     await getFlyreqTask('task-1', 'token-1');
     await ackFlyreqTask('task-1', 'token-1');
 
-    expect(fetchMock.mock.calls[1][0]).toBe('/api/flyreq/tasks/task-1?token=token-1');
-    expect(fetchMock.mock.calls[2][0]).toBe('/api/flyreq/tasks/task-1/ack?token=token-1');
+    expect(fetchMock.mock.calls[1][0]).toBe('/api/flyreq/tasks/task-1');
+    expect(fetchMock.mock.calls[1][1]).toMatchObject({
+      headers: { 'X-Flyreq-Task-Token': 'token-1' },
+    });
+    expect(fetchMock.mock.calls[2][0]).toBe('/api/flyreq/tasks/task-1/ack');
+    expect(fetchMock.mock.calls[2][1]).toMatchObject({
+      headers: { 'X-Flyreq-Task-Token': 'token-1' },
+    });
   });
 
   it('returns task ids with read tokens for batch creation', async () => {
@@ -105,8 +115,11 @@ describe('flyreq task client', () => {
 
     await cancelFlyreqTask('task-1', 'token-1');
 
-    expect(fetchMock.mock.calls[0][0]).toBe('/api/flyreq/tasks/task-1/cancel?token=token-1');
-    expect(fetchMock.mock.calls[0][1]).toMatchObject({ method: 'POST' });
+    expect(fetchMock.mock.calls[0][0]).toBe('/api/flyreq/tasks/task-1/cancel');
+    expect(fetchMock.mock.calls[0][1]).toMatchObject({
+      method: 'POST',
+      headers: { 'X-Flyreq-Task-Token': 'token-1' },
+    });
   });
 
   it('rejects an oversized single task body before calling fetch', async () => {
@@ -114,7 +127,7 @@ describe('flyreq task client', () => {
     vi.stubGlobal('fetch', fetchMock);
 
     await expect(createFlyreqTask(makeCreateTaskInput({
-      images: [{ data: 'a'.repeat(10 * 1024 * 1024), mimeType: 'image/png' }],
+      images: [{ data: makeReferenceData(50), mimeType: 'image/png' }],
     }))).rejects.toThrow('请求体过大');
 
     expect(fetchMock).not.toHaveBeenCalled();
@@ -126,7 +139,7 @@ describe('flyreq task client', () => {
 
     await expect(createFlyreqTasks(makeCreateTaskInput({
       parallelCount: 2,
-      images: [{ data: 'a'.repeat(10 * 1024 * 1024), mimeType: 'image/png' }],
+      images: [{ data: makeReferenceData(50), mimeType: 'image/png' }],
     }))).rejects.toThrow('请求体过大');
 
     expect(fetchMock).not.toHaveBeenCalled();
