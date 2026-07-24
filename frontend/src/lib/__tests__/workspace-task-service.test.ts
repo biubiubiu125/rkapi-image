@@ -519,14 +519,14 @@ describe('submitImageToImage', () => {
     expect(onError).toHaveBeenCalledWith('浏览器本地持久存储不可用');
   });
 
-  it('rejects oversized image submissions before local jobs are created', async () => {
+  it('rejects image submissions above the 50MB request cap before local jobs are created', async () => {
     const job = makeJob({ mode: 'image-to-image' });
     const { actions } = createActions(job);
     const onError = vi.fn();
 
     const submitted = await submitImageToImage({
       prompt: 'oversized refs',
-      files: [{ id: 'ref-1', name: 'reference.png', dataUrl: `data:image/png;base64,${'a'.repeat(10 * 1024 * 1024)}`, mimeType: 'image/png' }],
+      files: [{ id: 'ref-1', name: 'reference.png', dataUrl: `data:image/png;base64,${'a'.repeat(50 * 1024 * 1024)}`, mimeType: 'image/png' }],
       outputSize: '1K',
       aspectRatio: '1:1',
       temperature: 1,
